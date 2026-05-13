@@ -852,9 +852,9 @@ function updateKoppenBlur() {
   const pane = map.getPane('koppenPane');
   if (!pane) return;
   const z = map.getZoom();
-  // 1km-resolution tiles are meaningful through zoom 10; fade above that
-  const opacity = z <= 10 ? 1 : z === 11 ? 0.6 : z === 12 ? 0.25 : 0;
-  pane.style.filter  = '';
+  const blur    = z <= 3 ? 0 : z <= 5 ? 1 : z <= 6 ? 2 : 3;
+  const opacity = z <= 5 ? 1 : z === 6 ? 0.9 : z === 7 ? 0.65 : z === 8 ? 0.35 : 0;
+  pane.style.filter  = blur > 0 ? `blur(${blur}px)` : '';
   pane.style.opacity = opacity;
 }
 
@@ -903,12 +903,13 @@ function buildMapControls() {
         satelliteActive = !satelliteActive;
         if (satelliteActive) {
           map.removeLayer(darkTiles); satTiles.addTo(map);
-          if (koppenLayer) koppenLayer.setOpacity(0.45);
+          if (koppenLayer) koppenLayer.setStyle({ fillOpacity: 0.22 });
         } else {
           map.removeLayer(satTiles); darkTiles.addTo(map);
-          if (koppenLayer) koppenLayer.setOpacity(0.7);
+          if (koppenLayer) koppenLayer.setStyle({ fillOpacity: 0.35 });
         }
         btn.classList.toggle('active', satelliteActive);
+        if (koppenLayer) koppenLayer.bringToBack();
       });
       return btn;
     }
@@ -926,7 +927,7 @@ function buildMapControls() {
         koppenVisible = !koppenVisible;
         if (koppenLayer) {
           koppenVisible ? koppenLayer.addTo(map) : map.removeLayer(koppenLayer);
-          if (koppenVisible) updateKoppenBlur();
+          if (koppenVisible) { koppenLayer.bringToBack(); updateKoppenBlur(); }
         }
         btn.classList.toggle('active', koppenVisible);
       });
@@ -946,20 +947,42 @@ function koppenCodeFromProps(props) {
   return props.CODE || props.code || props.Cls || props.GRIDCODE || props.Koppen || null;
 }
 
-function loadKoppen() {
-  // Beck et al. 2023, 1km resolution, 1991–2020 period
-  // Served as a public ArcGIS tiled image service
-  koppenLayer = L.tileLayer(
-    'https://tiledimageservices5.arcgis.com/mNckzT6paf5LITSG/arcgis/rest/services/Koppen1991_2020/ImageServer/tile/{z}/{y}/{x}',
-    {
-      pane:        'koppenPane',
-      opacity:     satelliteActive ? 0.45 : 0.7,
-      maxZoom:     20,
-      attribution: '© <a href="https://www.gloh2o.org/koppen/">Beck et al. 2023</a> Köppen-Geiger'
+async function loadKoppen() {
+  let data = null;
+
+  try {
+    const res = await fetch(KOPPEN_URL_LOCAL);
+    if (res.ok) data = await res.json();
+  } catch { /* no local file */ }
+
+  if (!data) {
+    try {
+      const res = await fetch(KOPPEN_URL_FALLBACK);
+      if (res.ok) data = await res.json();
+    } catch { /* CDN also unavailable */ }
+  }
+
+  if (!data) return;
+
+  koppenLayer = L.geoJSON(data, {
+    pane: 'koppenPane',
+    style: f => ({
+      fillColor:   KOPPEN_COLORS[koppenCodeFromProps(f.properties)] || '#888',
+      fillOpacity: satelliteActive ? 0.22 : 0.35,
+      color:       'transparent',
+      weight:      0
+    }),
+    onEachFeature: (f, layer) => {
+      const code = koppenCodeFromProps(f.properties);
+      if (code) layer.bindTooltip(
+        `<strong>${code}</strong> — ${KOPPEN_LABELS[code] || ''}`,
+        { sticky: true, className: 'koppen-tooltip' }
+      );
     }
-  );
+  });
 
   if (koppenVisible) koppenLayer.addTo(map);
+  koppenLayer.bringToBack();
   updateKoppenBlur();
 }
 
