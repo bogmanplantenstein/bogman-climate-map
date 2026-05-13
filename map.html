@@ -11,6 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/georaster"></script>
 <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
+<link rel="preload" href="./koppen_geiger_tif/1991_2020/koppen_geiger_0p1.tif" as="fetch" crossorigin="anonymous">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -768,7 +769,7 @@ const ENTRY_LABELS = {
 //  STATE
 // ═══════════════════════════════════════════════════════════
 
-let map, darkTiles, satTiles, koppenLayer, regionHighlight;
+let map, darkTiles, darkLabelsTiles, satTiles, koppenLayer, regionHighlight;
 let satelliteActive = false;
 let koppenVisible   = true;
 
@@ -887,9 +888,19 @@ function initMap() {
   map.getPane('koppenPane').style.zIndex = 250;
   map.on('zoomend', updateKoppenBlur);
 
+  // Labels pane sits above the Köppen overlay so country names are always readable
+  map.createPane('labelsPane');
+  map.getPane('labelsPane').style.zIndex = 350;
+  map.getPane('labelsPane').style.pointerEvents = 'none';
+
   darkTiles = L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
     { attribution: '© <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>', subdomains: 'abcd', maxZoom: 20 }
+  ).addTo(map);
+
+  darkLabelsTiles = L.tileLayer(
+    'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
+    { pane: 'labelsPane', subdomains: 'abcd', maxZoom: 20 }
   ).addTo(map);
 
   satTiles = L.tileLayer(
@@ -919,11 +930,11 @@ function buildMapControls() {
       L.DomEvent.on(btn, 'click', () => {
         satelliteActive = !satelliteActive;
         if (satelliteActive) {
-          map.removeLayer(darkTiles); satTiles.addTo(map);
-          if (koppenLayer) koppenLayer.setOpacity(0.45);
+          map.removeLayer(darkTiles); map.removeLayer(darkLabelsTiles); satTiles.addTo(map);
+          if (koppenLayer) koppenLayer.setOpacity(0.35);
         } else {
-          map.removeLayer(satTiles); darkTiles.addTo(map);
-          if (koppenLayer) koppenLayer.setOpacity(0.7);
+          map.removeLayer(satTiles); darkTiles.addTo(map); darkLabelsTiles.addTo(map);
+          if (koppenLayer) koppenLayer.setOpacity(0.55);
         }
         btn.classList.toggle('active', satelliteActive);
       });
@@ -976,8 +987,8 @@ async function loadKoppen() {
   koppenLayer = new GeoRasterLayer({
     georaster,
     pane:       'koppenPane',
-    opacity:    satelliteActive ? 0.45 : 0.7,
-    resolution: 256,
+    opacity:    satelliteActive ? 0.35 : 0.55,
+    resolution: 64,
     pixelValuesToColorFn: values => {
       const v = values[0];
       if (!v || v < 1 || v > 30) return null;
