@@ -614,6 +614,53 @@ html, body {
 }
 .leaflet-control-attribution a { color: var(--text-muted) !important; }
 
+/* ── Köppen Legend Panel ─────────────────────────────────── */
+.koppen-legend-wrap { position: relative; }
+.koppen-legend-panel {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: 38px;
+  width: 210px;
+  max-height: 72vh;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+  z-index: 800;
+}
+.koppen-legend-panel.open { display: block; }
+.legend-group-label {
+  padding: 6px 10px 4px;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  border-top: 1px solid var(--border);
+}
+.koppen-legend-panel .legend-group-label:first-child { border-top: none; }
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 2px 10px 2px 12px;
+}
+.legend-swatch {
+  width: 11px; height: 11px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  opacity: 0.9;
+}
+.legend-code {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 10px;
+  color: var(--text-primary);
+  width: 30px;
+  flex-shrink: 0;
+}
+.legend-desc { font-size: 11px; color: var(--text-muted); }
+
 /* ── Mobile ──────────────────────────────────────────────── */
 @media (max-width: 768px) {
   #side-panel {
@@ -962,8 +1009,63 @@ function buildMapControls() {
     }
   });
 
+  const LEGEND_GROUPS = [
+    { label: 'Tropical (A)', zones: [
+      [1,'Af','Rainforest'],[2,'Am','Monsoon'],[3,'Aw','Savannah']
+    ]},
+    { label: 'Arid (B)', zones: [
+      [4,'BWh','Hot Desert'],[5,'BWk','Cold Desert'],
+      [6,'BSh','Hot Steppe'],[7,'BSk','Cold Steppe']
+    ]},
+    { label: 'Temperate (C)', zones: [
+      [8,'Csa','Med. Hot Summer'],[9,'Csb','Med. Warm Summer'],[10,'Csc','Med. Cold Summer'],
+      [11,'Cwa','Dry Winter, Hot'],[12,'Cwb','Dry Winter, Warm'],[13,'Cwc','Dry Winter, Cold'],
+      [14,'Cfa','Humid Subtropical'],[15,'Cfb','Oceanic'],[16,'Cfc','Subpolar Oceanic']
+    ]},
+    { label: 'Cold (D)', zones: [
+      [17,'Dsa','Dry Summer, Hot'],[18,'Dsb','Dry Summer, Warm'],
+      [19,'Dsc','Dry Summer, Cold'],[20,'Dsd','Dry Summer, Very Cold'],
+      [21,'Dwa','Dry Winter, Hot'],[22,'Dwb','Dry Winter, Warm'],
+      [23,'Dwc','Dry Winter, Cold'],[24,'Dwd','Dry Winter, Very Cold'],
+      [25,'Dfa','No Dry Season, Hot'],[26,'Dfb','No Dry Season, Warm'],
+      [27,'Dfc','Subarctic'],[28,'Dfd','Very Cold Subarctic']
+    ]},
+    { label: 'Polar (E)', zones: [
+      [29,'ET','Tundra'],[30,'EF','Ice Cap']
+    ]}
+  ];
+
+  const LegendCtrl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const wrap  = L.DomUtil.create('div', 'koppen-legend-wrap');
+      const btn   = L.DomUtil.create('button', 'map-btn', wrap);
+      btn.title   = 'Köppen colour key';
+      btn.innerHTML = '≡';
+      const panel = L.DomUtil.create('div', 'koppen-legend-panel', wrap);
+
+      let html = '';
+      for (const group of LEGEND_GROUPS) {
+        html += `<div class="legend-group-label">${group.label}</div>`;
+        for (const [idx, code, desc] of group.zones) {
+          const [r,g,b] = BECK_COLORS[idx];
+          html += `<div class="legend-row"><span class="legend-swatch" style="background:rgb(${r},${g},${b})"></span><span class="legend-code">${code}</span><span class="legend-desc">${desc}</span></div>`;
+        }
+      }
+      panel.innerHTML = html;
+
+      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
+      L.DomEvent.on(btn, 'click', () => {
+        const open = panel.classList.toggle('open');
+        btn.classList.toggle('active', open);
+      });
+      return wrap;
+    }
+  });
+
   new TileCtrl().addTo(map);
   new KoppenCtrl().addTo(map);
+  new LegendCtrl().addTo(map);
 }
 
 // ═══════════════════════════════════════════════════════════
