@@ -1,0 +1,1672 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Bogman Climate Map</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+:root {
+  --bg:           #0d1117;
+  --bg-panel:     #161b22;
+  --bg-elevated:  #1f2937;
+  --border:       #30363d;
+  --text-primary: #e6edf3;
+  --text-muted:   #8b949e;
+  --accent:       #3fb950;
+  --accent-dim:   #1a4a2a;
+  --danger:       #f85149;
+  --warning:      #d29922;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* ── Loading bar ─────────────────────────────────────────── */
+#loading-bar-wrap {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  z-index: 9999;
+  background: rgba(63,185,80,0.12);
+}
+#loading-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.35s ease;
+  border-radius: 0 2px 2px 0;
+}
+
+/* ── App shell ───────────────────────────────────────────── */
+#bmg-map-app {
+  display: flex;
+  width: 100%;
+  height: 100vh;
+  position: relative;
+  overflow: hidden;
+  background: var(--bg);
+}
+
+#map-container {
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  transition: flex 0.3s ease;
+  position: relative;
+}
+
+#map { width: 100%; height: 100%; }
+
+/* ── Side panel ──────────────────────────────────────────── */
+#side-panel {
+  width: 0;
+  height: 100%;
+  flex-shrink: 0;
+  overflow: hidden;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  transition: width 0.3s ease;
+  display: flex;
+  flex-direction: column;
+}
+#side-panel.open {
+  width: 40%;
+  min-width: 320px;
+  max-width: 520px;
+}
+
+#panel-drag-handle {
+  width: 44px; height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  margin: 10px auto 0;
+  display: none;
+  flex-shrink: 0;
+}
+
+#panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+#panel-close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  transition: color 0.15s;
+}
+#panel-close:hover { color: var(--text-primary); }
+
+.temp-toggle {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  font-size: 11px;
+}
+.temp-toggle button {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  padding: 3px 9px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.temp-toggle button.active {
+  background: var(--accent-dim);
+  color: var(--accent);
+}
+
+#panel-scroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 18px 18px 24px;
+}
+#panel-scroll::-webkit-scrollbar { width: 4px; }
+#panel-scroll::-webkit-scrollbar-track { background: transparent; }
+#panel-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+/* ── Panel content ───────────────────────────────────────── */
+.p-species-name {
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 20px;
+  color: var(--text-primary);
+  line-height: 1.3;
+  margin-bottom: 3px;
+}
+.p-common-name {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.p-location {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+  line-height: 1.5;
+}
+
+.badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 14px;
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 4px;
+  font-size: 11px;
+  border: 1px solid rgba(255,255,255,0.1);
+  white-space: nowrap;
+}
+.badge-koppen {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 500;
+}
+.badge-muted {
+  background: var(--bg-elevated);
+  color: var(--text-muted);
+}
+
+.section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 14px 0;
+}
+.section-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 7px;
+}
+.description-text {
+  font-size: 13px;
+  color: var(--text-primary);
+  line-height: 1.65;
+  margin-bottom: 14px;
+}
+
+/* ── Climate stats ───────────────────────────────────────── */
+.climate-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.climate-stat {
+  background: var(--bg-elevated);
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+.climate-stat-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 3px;
+}
+.climate-stat-value {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.climate-stat-unit {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-left: 1px;
+}
+.climate-pending {
+  background: var(--bg-elevated);
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  padding: 14px;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+
+.expand-btn {
+  width: 100%;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  padding: 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  margin-bottom: 2px;
+}
+.expand-btn:hover {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#climate-expanded { display: none; }
+#climate-expanded.open { display: block; }
+
+.chart-wrap {
+  position: relative;
+  height: 190px;
+  margin: 14px 0;
+}
+
+/* ── Climate table ───────────────────────────────────────── */
+.climate-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 16px;
+}
+.climate-table th {
+  color: var(--text-muted);
+  text-align: left;
+  padding: 4px 6px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 500;
+  font-size: 10px;
+  text-transform: uppercase;
+}
+.climate-table td {
+  padding: 5px 6px;
+  border-bottom: 1px solid rgba(48,54,61,0.5);
+  color: var(--text-primary);
+}
+.climate-table tr:last-child td { border-bottom: none; }
+.climate-table .annual-row td {
+  color: var(--accent);
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+
+/* ── Gallery link ────────────────────────────────────────── */
+.gallery-link {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 6px;
+  text-decoration: none;
+  font-size: 13px;
+  margin-top: 14px;
+  transition: background 0.15s;
+}
+.gallery-link:hover { background: #234f2e; }
+
+/* ── Map overlay controls ────────────────────────────────── */
+.map-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px; height: 34px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-size: 15px;
+  transition: background 0.15s;
+  user-select: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+}
+.map-btn:hover { background: var(--bg-elevated); }
+.map-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+/* ── Filter toggle + panel ───────────────────────────────── */
+#filter-toggle {
+  position: absolute;
+  top: 10px; left: 10px;
+  z-index: 1001;
+}
+
+#filter-panel {
+  position: absolute;
+  top: 54px; left: 10px;
+  z-index: 1000;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 210px;
+  max-width: 240px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+  display: none;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+}
+#filter-panel.open { display: block; }
+#filter-panel::-webkit-scrollbar { width: 3px; }
+#filter-panel::-webkit-scrollbar-thumb { background: var(--border); }
+
+#filter-panel-inner { padding: 12px; }
+
+.filter-group-title {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+  margin-top: 10px;
+}
+.filter-group-title:first-child { margin-top: 0; }
+
+.filter-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 2px 0;
+  user-select: none;
+}
+.filter-label input[type=checkbox] {
+  accent-color: var(--accent);
+  width: 13px; height: 13px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.genus-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.filter-count {
+  color: var(--text-muted);
+  font-size: 11px;
+  margin-left: auto;
+}
+
+#filter-reset {
+  width: 100%;
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 5px;
+  border-radius: 4px;
+  cursor: pointer;
+  margin-top: 10px;
+  transition: color 0.15s, border-color 0.15s;
+  display: none;
+}
+#filter-reset:hover { color: var(--text-primary); border-color: var(--text-muted); }
+
+/* ── Unmapped toggle + panel ─────────────────────────────── */
+#unmapped-toggle {
+  position: absolute;
+  bottom: 10px; left: 10px;
+  z-index: 1001;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 6px 11px;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  transition: background 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+#unmapped-toggle:hover { background: var(--bg-elevated); color: var(--text-primary); }
+
+#unmapped-panel {
+  position: absolute;
+  bottom: 54px; left: 10px;
+  z-index: 1000;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 330px;
+  max-height: 380px;
+  display: none;
+  flex-direction: column;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+}
+#unmapped-panel.open { display: flex; }
+
+#unmapped-header {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+}
+#unmapped-header span {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.copy-csv-btn {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 3px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.copy-csv-btn:hover { color: var(--text-primary); }
+
+#unmapped-list {
+  overflow-y: auto;
+  flex: 1;
+}
+#unmapped-list::-webkit-scrollbar { width: 3px; }
+#unmapped-list::-webkit-scrollbar-thumb { background: var(--border); }
+
+.unmapped-row {
+  display: flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-bottom: 1px solid rgba(48,54,61,0.4);
+  gap: 7px;
+  font-size: 12px;
+}
+.unmapped-row:last-child { border-bottom: none; }
+.unmapped-name {
+  font-family: 'Lora', serif;
+  font-style: italic;
+  flex: 1;
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unmapped-country {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.unmapped-icons { display: flex; gap: 2px; flex-shrink: 0; }
+.unmapped-icon { font-size: 10px; opacity: 0.55; }
+
+/* ── Overlap popup ───────────────────────────────────────── */
+.overlap-popup {
+  background: var(--bg-panel);
+  border-radius: 6px;
+  min-width: 180px;
+  overflow: hidden;
+}
+.overlap-popup-title {
+  padding: 6px 10px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.overlap-item {
+  padding: 7px 10px;
+  font-family: 'Lora', serif;
+  font-style: italic;
+  font-size: 12px;
+  color: var(--text-primary);
+  cursor: pointer;
+  border-bottom: 1px solid rgba(48,54,61,0.4);
+  transition: background 0.1s;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.overlap-item:last-child { border-bottom: none; }
+.overlap-item:hover { background: var(--bg-elevated); }
+.overlap-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* ── Leaflet overrides ───────────────────────────────────── */
+.leaflet-popup-content-wrapper {
+  background: var(--bg-panel) !important;
+  border: 1px solid var(--border) !important;
+  border-radius: 6px !important;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.5) !important;
+  color: var(--text-primary) !important;
+  padding: 0 !important;
+}
+.leaflet-popup-content { margin: 0 !important; }
+.leaflet-popup-tip-container { display: none !important; }
+.leaflet-popup-close-button { color: var(--text-muted) !important; }
+
+.leaflet-tooltip {
+  background: var(--bg-panel) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-primary) !important;
+  font-family: 'Lora', serif !important;
+  font-style: italic !important;
+  font-size: 12px !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+  white-space: nowrap;
+}
+.leaflet-tooltip::before { display: none !important; }
+
+.koppen-tooltip {
+  background: var(--bg-panel) !important;
+  border: 1px solid var(--border) !important;
+  color: var(--text-primary) !important;
+  font-family: 'JetBrains Mono', monospace !important;
+  font-size: 11px !important;
+  border-radius: 4px !important;
+  box-shadow: none !important;
+  padding: 4px 8px !important;
+}
+.koppen-tooltip::before { display: none !important; }
+
+.leaflet-control-zoom a {
+  background: var(--bg-panel) !important;
+  color: var(--text-primary) !important;
+  border-color: var(--border) !important;
+}
+.leaflet-control-zoom a:hover { background: var(--bg-elevated) !important; }
+.leaflet-bar { border: none !important; box-shadow: 0 2px 8px rgba(0,0,0,0.4) !important; }
+.leaflet-bar a { border-bottom-color: var(--border) !important; }
+.leaflet-control-attribution {
+  background: rgba(13,17,23,0.7) !important;
+  color: var(--text-muted) !important;
+  font-size: 10px !important;
+}
+.leaflet-control-attribution a { color: var(--text-muted) !important; }
+
+/* ── Mobile ──────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  #side-panel {
+    position: absolute;
+    bottom: 0; left: 0; right: 0;
+    width: 100% !important;
+    max-width: none !important;
+    min-width: unset !important;
+    height: 0;
+    border-left: none;
+    border-top: 1px solid var(--border);
+    border-radius: 14px 14px 0 0;
+    transition: height 0.3s ease;
+    z-index: 500;
+  }
+  #side-panel.open { height: 72vh; overflow: hidden; }
+  #panel-drag-handle { display: block; }
+  #panel-scroll { max-height: calc(72vh - 80px); }
+
+  #unmapped-panel { width: calc(100vw - 20px); }
+
+  #filter-panel { max-width: calc(100vw - 20px); }
+}
+</style>
+</head>
+<body>
+
+<div id="loading-bar-wrap"><div id="loading-bar"></div></div>
+
+<div id="bmg-map-app">
+
+  <div id="map-container">
+    <div id="map"></div>
+
+    <!-- Positioned inside map-container so they sit over the map only -->
+    <button id="filter-toggle" class="map-btn" title="Filters">☰</button>
+    <div id="filter-panel">
+      <div id="filter-panel-inner">
+        <div class="filter-group-title">Genus</div>
+        <div id="filter-genus"></div>
+        <div class="filter-group-title">Köppen Group</div>
+        <div id="filter-koppen"></div>
+        <div class="filter-group-title">Elevation Band</div>
+        <div id="filter-elev"></div>
+        <button id="filter-reset">↺ Reset filters</button>
+      </div>
+    </div>
+
+    <button id="unmapped-toggle">📋 Unmapped (<span id="unmapped-count">…</span>)</button>
+    <div id="unmapped-panel">
+      <div id="unmapped-header">
+        <span>Unmapped Taxa</span>
+        <button class="copy-csv-btn" id="copy-csv">Copy CSV</button>
+      </div>
+      <div id="unmapped-list"></div>
+    </div>
+  </div>
+
+  <div id="side-panel">
+    <div id="panel-drag-handle"></div>
+    <div id="panel-header">
+      <div class="temp-toggle">
+        <button id="unit-f">°F</button>
+        <button id="unit-c">°C</button>
+      </div>
+      <button id="panel-close">×</button>
+    </div>
+    <div id="panel-scroll">
+      <div id="panel-content"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════
+//  CONSTANTS
+// ═══════════════════════════════════════════════════════════
+
+const DATA_URL    = 'https://raw.githubusercontent.com/bogmanplantenstein/bogmangallery/main/data/data.json';
+const KOPPEN_URL_LOCAL    = './koppen.geojson';
+const KOPPEN_URL_FALLBACK = 'https://raw.githubusercontent.com/circleofconfusion/climate-map/master/topojson/1976-2000.geojson';
+const GALLERY_BASE = 'https://www.burymeinthebog.com/gallery#/taxon/';
+
+const GENUS_COLORS = {
+  'Dionaea':     '#FF4444',
+  'Drosera':     '#FF69B4',
+  'Pinguicula':  '#9B7FD4',
+  'Utricularia': '#00CED1',
+  'Byblis':      '#7FBA00',
+  'Sarracenia':  '#FFA500',
+  'Nepenthes':   '#20B2AA',
+  'Cephalotus':  '#DAA520',
+  'Heliamphora': '#87CEEB',
+  'Aldrovanda':  '#98FB98',
+  'default':     '#888888'
+};
+
+const KOPPEN_COLORS = {
+  'Af':'#0000FF','Am':'#0077FF','Aw':'#46AAFA','As':'#46AAFA',
+  'BWh':'#FF0000','BWk':'#FF9696','BSh':'#F5A500','BSk':'#FFDB63',
+  'Csa':'#FFFF00','Csb':'#C6C700','Csc':'#969600',
+  'Cwa':'#96FF96','Cwb':'#64C864','Cwc':'#329632',
+  'Cfa':'#C8FF50','Cfb':'#64FF50','Cfc':'#32C800',
+  'Dsa':'#FF00FF','Dsb':'#C800C8','Dsc':'#963296','Dsd':'#966496',
+  'Dwa':'#AB82FF','Dwb':'#B44682','Dwc':'#FF8282','Dwd':'#FF2896',
+  'Dfa':'#FF6464','Dfb':'#FF3232','Dfc':'#C80000','Dfd':'#820000',
+  'ET':'#B2B2B2','EF':'#686868','H':'#A0A0A0'
+};
+
+const KOPPEN_LABELS = {
+  'Af':'Tropical Rainforest','Am':'Tropical Monsoon',
+  'Aw':'Tropical Savanna (dry winter)','As':'Tropical Savanna (dry summer)',
+  'BWh':'Hot Desert','BWk':'Cold Desert','BSh':'Hot Semi-Arid','BSk':'Cold Semi-Arid',
+  'Csa':'Hot-summer Mediterranean','Csb':'Warm-summer Mediterranean','Csc':'Cold-summer Mediterranean',
+  'Cwa':'Humid Subtropical (dry winter)','Cwb':'Subtropical Highland','Cwc':'Subpolar Highland',
+  'Cfa':'Humid Subtropical','Cfb':'Oceanic','Cfc':'Subpolar Oceanic',
+  'Dsa':'Continental (dry summer, hot)','Dsb':'Continental (dry summer, warm)',
+  'Dsc':'Subarctic (dry summer)','Dsd':'Polar (dry summer)',
+  'Dwa':'Continental (dry winter, hot)','Dwb':'Continental (dry winter, warm)',
+  'Dwc':'Subarctic (dry winter)','Dwd':'Polar (dry winter)',
+  'Dfa':'Hot-summer Humid Continental','Dfb':'Warm-summer Humid Continental',
+  'Dfc':'Subarctic','Dfd':'Polar',
+  'ET':'Tundra','EF':'Ice Cap','H':'Highland / Alpine'
+};
+
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+const FLY_ZOOM = { exact: 9, regional: 6, country: 4 };
+
+const ELEV_BANDS = ['lowland','intermediate','highland','ultra-highland'];
+
+const ENTRY_LABELS = {
+  species:'Species', location:'Location form',
+  cultivar_unreg:'Cultivar', cultivar_reg:'Cultivar (reg.)', named_hybrid:'Named hybrid'
+};
+
+// ═══════════════════════════════════════════════════════════
+//  STATE
+// ═══════════════════════════════════════════════════════════
+
+let map, darkTiles, satTiles, koppenLayer, regionHighlight;
+let satelliteActive = false;
+let koppenVisible   = true;
+
+let allMapTaxa    = [];   // eligible taxa with coords
+let unmappedTaxa  = [];   // eligible taxa without coords
+let habitatsMap   = {};   // id → name
+let availableGenera = []; // sorted genus names present on map
+
+// marker store: taxon.id → { marker, circle, taxon }
+const markerStore = new Map();
+
+let selectedId    = null;
+let climateChart  = null;
+let tempUnit      = localStorage.getItem('bmg_temp_unit') || 'F';
+
+let countriesGeoJSON = null;
+let statesGeoJSON    = null;
+
+// Active filter sets
+const activeFilters = {
+  genera:      new Set(),
+  koppenGroups: new Set(['A','B','C','D','E','H','?']),
+  elevBands:   new Set([...ELEV_BANDS, '?'])
+};
+
+// ═══════════════════════════════════════════════════════════
+//  LOADING BAR
+// ═══════════════════════════════════════════════════════════
+
+const loadBarEl = document.getElementById('loading-bar');
+function setProgress(pct) {
+  loadBarEl.style.width = pct + '%';
+  if (pct >= 100) setTimeout(() => { loadBarEl.style.opacity = '0'; }, 700);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  UTILITIES
+// ═══════════════════════════════════════════════════════════
+
+function genusColor(genus) {
+  return GENUS_COLORS[genus] || GENUS_COLORS['default'];
+}
+
+function toDisplay(celsius, unit) {
+  if (celsius == null) return '—';
+  return unit === 'F'
+    ? Math.round(celsius * 9/5 + 32) + '°F'
+    : Math.round(celsius) + '°C';
+}
+
+function koppenGroup(code) {
+  if (!code) return '?';
+  const g = code[0];
+  return ['A','B','C','D','E','H'].includes(g) ? g : '?';
+}
+
+function getElevBand(taxon) {
+  return taxon.elevationBand || taxon.mapPin?.elevationBand || null;
+}
+
+function esc(str) {
+  return String(str ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PIN ICONS
+// ═══════════════════════════════════════════════════════════
+
+function pinHtml(genus, precise, selected) {
+  const color = genusColor(genus);
+  const dash  = precise ? '' : 'stroke-dasharray="3,2"';
+  const op    = precise ? '0.9' : '0.7';
+  const scale = selected ? 'transform:scale(1.45)' : '';
+  return `<div style="transition:transform 0.15s;${scale}">
+    <svg width="20" height="20" viewBox="0 0 20 20" style="display:block">
+      <circle cx="10" cy="10" r="8" fill="${color}" stroke="white" stroke-width="2" ${dash} opacity="${op}"/>
+    </svg>
+  </div>`;
+}
+
+function makeIcon(taxon, selected = false) {
+  const precise = !taxon.mapPin || taxon.mapPin.coordinatePrecision === 'exact';
+  return L.divIcon({
+    className: '',
+    html: pinHtml(taxon.genus, precise, selected),
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+    popupAnchor: [0, -14]
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MAP INIT
+// ═══════════════════════════════════════════════════════════
+
+function initMap() {
+  map = L.map('map', {
+    center: [20, 10], zoom: 3,
+    minZoom: 2, maxZoom: 16,
+    zoomControl: false,
+    worldCopyJump: true
+  });
+
+  darkTiles = L.tileLayer(
+    'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
+    { attribution: '© <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>', subdomains: 'abcd', maxZoom: 20 }
+  ).addTo(map);
+
+  satTiles = L.tileLayer(
+    'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    { attribution: '© Esri, Maxar, Earthstar Geographics', maxZoom: 20 }
+  );
+
+  L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+  // Close panel when clicking empty map
+  map.on('click', () => { if (selectedId) closePanel(); });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MAP CONTROLS (tile toggle, Köppen toggle)
+// ═══════════════════════════════════════════════════════════
+
+function buildMapControls() {
+  // Tile toggle
+  const TileCtrl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const btn = L.DomUtil.create('button', 'map-btn');
+      btn.title = 'Toggle satellite view';
+      btn.innerHTML = '🛰️';
+      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
+      L.DomEvent.on(btn, 'click', () => {
+        satelliteActive = !satelliteActive;
+        if (satelliteActive) {
+          map.removeLayer(darkTiles); satTiles.addTo(map);
+          if (koppenLayer) koppenLayer.setStyle({ fillOpacity: 0.22 });
+        } else {
+          map.removeLayer(satTiles); darkTiles.addTo(map);
+          if (koppenLayer) koppenLayer.setStyle({ fillOpacity: 0.35 });
+        }
+        btn.classList.toggle('active', satelliteActive);
+        if (koppenLayer) koppenLayer.bringToBack();
+      });
+      return btn;
+    }
+  });
+
+  // Köppen toggle
+  const KoppenCtrl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const btn = L.DomUtil.create('button', 'map-btn active');
+      btn.title = 'Toggle Köppen overlay';
+      btn.innerHTML = '🌡️';
+      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
+      L.DomEvent.on(btn, 'click', () => {
+        koppenVisible = !koppenVisible;
+        if (koppenLayer) {
+          koppenVisible ? koppenLayer.addTo(map) : map.removeLayer(koppenLayer);
+          if (koppenVisible) koppenLayer.bringToBack();
+        }
+        btn.classList.toggle('active', koppenVisible);
+      });
+      return btn;
+    }
+  });
+
+  new TileCtrl().addTo(map);
+  new KoppenCtrl().addTo(map);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  KÖPPEN OVERLAY
+// ═══════════════════════════════════════════════════════════
+
+function koppenCodeFromProps(props) {
+  return props.CODE || props.code || props.Cls || props.GRIDCODE || props.Koppen || null;
+}
+
+async function loadKoppen() {
+  let data = null;
+
+  // Try bundled local file first, fall back to CDN
+  try {
+    const res = await fetch(KOPPEN_URL_LOCAL);
+    if (res.ok) data = await res.json();
+  } catch { /* no local file */ }
+
+  if (!data) {
+    try {
+      const res = await fetch(KOPPEN_URL_FALLBACK);
+      if (res.ok) data = await res.json();
+    } catch { /* CDN also unavailable */ }
+  }
+
+  if (!data) return; // App works fine without overlay
+
+  koppenLayer = L.geoJSON(data, {
+    style: f => ({
+      fillColor:   KOPPEN_COLORS[koppenCodeFromProps(f.properties)] || '#888',
+      fillOpacity: satelliteActive ? 0.22 : 0.35,
+      color:       'transparent',
+      weight:      0
+    }),
+    onEachFeature: (f, layer) => {
+      const code = koppenCodeFromProps(f.properties);
+      if (code) layer.bindTooltip(
+        `<strong>${code}</strong> — ${KOPPEN_LABELS[code] || ''}`,
+        { sticky: true, className: 'koppen-tooltip' }
+      );
+    }
+  });
+
+  if (koppenVisible) koppenLayer.addTo(map);
+  koppenLayer.bringToBack();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  PIN RENDERING
+// ═══════════════════════════════════════════════════════════
+
+function renderPins(taxa) {
+  taxa.forEach(taxon => {
+    const { lat, lng, rangeRadiusKm, coordinatePrecision } = taxon.mapPin;
+    const color = genusColor(taxon.genus);
+
+    const marker = L.marker([lat, lng], { icon: makeIcon(taxon), zIndexOffset: 100 });
+    marker.bindTooltip(taxon.displayName, { direction: 'top' });
+    marker.on('click', e => { L.DomEvent.stopPropagation(e); handlePinClick(e, taxon); });
+    marker.addTo(map);
+
+    let circle = null;
+    if (rangeRadiusKm) {
+      circle = L.circle([lat, lng], {
+        radius:      rangeRadiusKm * 1000,
+        color,
+        fillColor:   color,
+        fillOpacity: 0.07,
+        weight:      1,
+        opacity:     0.28,
+        interactive: false
+      }).addTo(map);
+    }
+
+    markerStore.set(taxon.id, { marker, circle, taxon });
+  });
+
+  updatePinCount();
+}
+
+function updatePinCount() {
+  let n = 0;
+  markerStore.forEach(({ marker }) => { if (map.hasLayer(marker)) n++; });
+  // Update unmapped toggle label with pin count hint
+  const toggleEl = document.getElementById('unmapped-toggle');
+  if (toggleEl) {
+    const cnt = document.getElementById('unmapped-count');
+    // cnt text is set in buildUnmappedList
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  OVERLAP DETECTION
+// ═══════════════════════════════════════════════════════════
+
+function handlePinClick(e, taxon) {
+  const clickPt = map.latLngToContainerPoint(e.latlng);
+  const nearby  = [];
+
+  markerStore.forEach(({ marker, taxon: t }) => {
+    if (!map.hasLayer(marker)) return;
+    const pt = map.latLngToContainerPoint(marker.getLatLng());
+    const dx = pt.x - clickPt.x, dy = pt.y - clickPt.y;
+    if (Math.sqrt(dx*dx + dy*dy) < 14) nearby.push(t);
+  });
+
+  if (nearby.length > 1) {
+    showOverlapPopup(e.latlng, nearby);
+  } else {
+    openPanel(taxon);
+    flyToTaxon(taxon);
+  }
+}
+
+function showOverlapPopup(latlng, taxa) {
+  const items = taxa.map(t =>
+    `<div class="overlap-item" data-id="${esc(t.id)}">
+      <div class="overlap-dot" style="background:${genusColor(t.genus)}"></div>
+      ${esc(t.displayName)}
+    </div>`
+  ).join('');
+
+  const popup = L.popup({ className: '', closeButton: false, offset: [0, -5] })
+    .setLatLng(latlng)
+    .setContent(`<div class="overlap-popup">
+      <div class="overlap-popup-title">${taxa.length} species at this location</div>
+      ${items}
+    </div>`)
+    .openOn(map);
+
+  setTimeout(() => {
+    document.querySelectorAll('.overlap-item').forEach(el => {
+      el.addEventListener('click', () => {
+        map.closePopup(popup);
+        const t = taxa.find(x => x.id === el.dataset.id);
+        if (t) { openPanel(t); flyToTaxon(t); }
+      });
+    });
+  }, 0);
+}
+
+function flyToTaxon(taxon) {
+  const prec = taxon.mapPin?.coordinatePrecision || 'exact';
+  const zoom = FLY_ZOOM[prec] || 9;
+  map.flyTo([taxon.mapPin.lat, taxon.mapPin.lng], zoom, { duration: 0.8 });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  REGION HIGHLIGHT
+// ═══════════════════════════════════════════════════════════
+
+function clearRegionHighlight() {
+  if (regionHighlight) { map.removeLayer(regionHighlight); regionHighlight = null; }
+}
+
+async function highlightRegion(taxon) {
+  clearRegionHighlight();
+  const prec  = taxon.mapPin?.coordinatePrecision;
+  const color = genusColor(taxon.genus);
+
+  if (prec === 'regional' && taxon.mapPin?.regionCode) {
+    if (!statesGeoJSON) {
+      try {
+        const r = await fetch('https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_1_states_provinces.geojson');
+        statesGeoJSON = await r.json();
+      } catch { return; }
+    }
+    const code = taxon.mapPin.regionCode;
+    const feat = statesGeoJSON.features.find(f =>
+      f.properties.iso_3166_2 === code || f.properties.adm1_code === code
+    );
+    if (feat) regionHighlight = L.geoJSON(feat, {
+      style: { fillColor: color, fillOpacity: 0.15, color, weight: 2, dashArray: '6,4', interactive: false }
+    }).addTo(map);
+  }
+
+  if (prec === 'country' && taxon.mapPin?.countryCode) {
+    if (!countriesGeoJSON) {
+      try {
+        const r = await fetch('https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_110m_admin_0_countries.geojson');
+        countriesGeoJSON = await r.json();
+      } catch { return; }
+    }
+    const code = taxon.mapPin.countryCode;
+    const feat = countriesGeoJSON.features.find(f =>
+      f.properties.ISO_A2 === code || f.properties.ADM0_A3 === code
+    );
+    if (feat) regionHighlight = L.geoJSON(feat, {
+      style: { fillColor: color, fillOpacity: 0.15, color, weight: 2, dashArray: '6,4', interactive: false }
+    }).addTo(map);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SIDE PANEL — OPEN / CLOSE
+// ═══════════════════════════════════════════════════════════
+
+function openPanel(taxon) {
+  // Deselect previous marker
+  if (selectedId && markerStore.has(selectedId)) {
+    const { marker, taxon: prev } = markerStore.get(selectedId);
+    marker.setIcon(makeIcon(prev, false));
+  }
+  selectedId = taxon.id;
+  markerStore.get(taxon.id).marker.setIcon(makeIcon(taxon, true));
+
+  renderPanel(taxon);
+  document.getElementById('side-panel').classList.add('open');
+  highlightRegion(taxon);
+  setUrlParam('taxon', taxon.id);
+}
+
+function closePanel() {
+  if (selectedId && markerStore.has(selectedId)) {
+    const { marker, taxon } = markerStore.get(selectedId);
+    marker.setIcon(makeIcon(taxon, false));
+  }
+  selectedId = null;
+  document.getElementById('side-panel').classList.remove('open');
+  clearRegionHighlight();
+  setUrlParam('taxon', null);
+  if (climateChart) { climateChart.destroy(); climateChart = null; }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SIDE PANEL — RENDER
+// ═══════════════════════════════════════════════════════════
+
+function renderPanel(taxon) {
+  const pin = taxon.mapPin || {};
+  const cn  = taxon.climateNormals;
+
+  // Location string
+  const locParts = [];
+  if (taxon.country) locParts.push(taxon.country);
+  if (pin.elevationM != null) locParts.push(pin.elevationM + 'm');
+  const locStr = locParts.join(' · ');
+
+  const coordStr = (pin.lat != null && pin.lng != null)
+    ? `${pin.lat.toFixed(2)}, ${pin.lng.toFixed(2)}`
+    : '';
+
+  // Badges
+  let koppenBadge = '';
+  if (taxon.koppenZone) {
+    const zc = KOPPEN_COLORS[taxon.koppenZone] || '#888';
+    koppenBadge = `<span class="badge badge-koppen" style="color:${zc};border-color:${zc}50;background:${zc}1a">
+      ${esc(taxon.koppenZone)} · ${esc(taxon.koppenLabel || KOPPEN_LABELS[taxon.koppenZone] || '')}
+    </span>`;
+  }
+
+  const elev = getElevBand(taxon);
+  const elevBadge = elev
+    ? `<span class="badge badge-muted">${esc(elev.charAt(0).toUpperCase()+elev.slice(1))}</span>` : '';
+
+  const habitatName = taxon.habitatId
+    ? (habitatsMap[taxon.habitatId] || taxon.habitatId.replace(/_/g,' ')) : '';
+  const habitatBadge = habitatName
+    ? `<span class="badge badge-muted">${esc(habitatName)}</span>` : '';
+
+  const entryBadge = `<span class="badge badge-muted">${esc(ENTRY_LABELS[taxon.entryType] || taxon.entryType)}</span>`;
+
+  // Climate section
+  let climateHtml = '';
+  if (cn && (cn.tempMax || cn.tempMin) && cn.precipMm) {
+    const peakHigh    = cn.tempMax ? Math.max(...cn.tempMax) : null;
+    const peakLow     = cn.tempMin ? Math.min(...cn.tempMin) : null;
+    const annualPrecip = Math.round(cn.precipMm.reduce((a,b)=>a+b,0));
+    const meanTemp    = cn.tempMean ? cn.tempMean.reduce((a,b)=>a+b,0)/12 : null;
+
+    climateHtml = `
+      <div class="climate-grid" id="climate-grid">
+        <div class="climate-stat">
+          <div class="climate-stat-label">Peak High</div>
+          <div class="climate-stat-value" data-celsius="${peakHigh}">${toDisplay(peakHigh, tempUnit)}</div>
+        </div>
+        <div class="climate-stat">
+          <div class="climate-stat-label">Peak Low</div>
+          <div class="climate-stat-value" data-celsius="${peakLow}">${toDisplay(peakLow, tempUnit)}</div>
+        </div>
+        <div class="climate-stat">
+          <div class="climate-stat-label">Annual Precip</div>
+          <div class="climate-stat-value">${annualPrecip}<span class="climate-stat-unit">mm</span></div>
+        </div>
+        ${meanTemp != null ? `<div class="climate-stat">
+          <div class="climate-stat-label">Mean Temp</div>
+          <div class="climate-stat-value" data-celsius="${meanTemp}">${toDisplay(meanTemp, tempUnit)}</div>
+        </div>` : ''}
+      </div>
+      <button class="expand-btn" id="expand-btn">↓ Monthly Climate Data</button>
+      <div id="climate-expanded">
+        <div class="section-divider"></div>
+        <div class="chart-wrap"><canvas id="climate-chart"></canvas></div>
+        ${buildClimateTable(cn)}
+      </div>`;
+  } else {
+    climateHtml = `<div class="climate-pending">Climate data not yet recorded for this taxon</div>`;
+  }
+
+  document.getElementById('panel-content').innerHTML = `
+    <div class="p-species-name">${esc(taxon.displayName)}</div>
+    ${taxon.commonName ? `<div class="p-common-name">${esc(taxon.commonName)}</div>` : ''}
+    ${locStr ? `<div class="p-location">${esc(locStr)}</div>` : ''}
+    ${coordStr ? `<div class="p-location" style="margin-top:-8px;opacity:0.55">${coordStr}</div>` : ''}
+
+    <div class="badge-row">${koppenBadge}${elevBadge}${habitatBadge}${entryBadge}</div>
+
+    ${taxon.nativeRange ? `
+      <div class="section-label">Native Range</div>
+      <div class="description-text">${esc(taxon.nativeRange)}</div>` : ''}
+
+    ${taxon.nativeHabitat ? `
+      <div class="section-label">Habitat</div>
+      <div class="description-text">${esc(taxon.nativeHabitat)}</div>` : ''}
+
+    <div class="section-divider"></div>
+    <div class="section-label">Climate</div>
+    ${climateHtml}
+
+    <a class="gallery-link" href="${GALLERY_BASE}${esc(taxon.slug)}" target="_blank">
+      View in Bogman Gallery →
+    </a>
+  `;
+
+  // Wire expand button
+  const expandBtn = document.getElementById('expand-btn');
+  if (expandBtn && cn) {
+    expandBtn.addEventListener('click', () => {
+      const expanded = document.getElementById('climate-expanded');
+      const opening  = expanded.classList.toggle('open');
+      expandBtn.textContent = opening ? '↑ Hide Climate Data' : '↓ Monthly Climate Data';
+      if (opening && !climateChart) buildClimateChart(cn);
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CLIMATE TABLE
+// ═══════════════════════════════════════════════════════════
+
+function buildClimateTable(cn) {
+  const hasMean = !!(cn.tempMean && cn.tempMean.length);
+  const rows = MONTHS.map((m, i) => {
+    const hi    = cn.tempMax   ? cn.tempMax[i]   : null;
+    const lo    = cn.tempMin   ? cn.tempMin[i]   : null;
+    const mean  = hasMean       ? cn.tempMean[i]  : null;
+    const prec  = cn.precipMm  ? cn.precipMm[i]  : null;
+    return `<tr>
+      <td>${m}</td>
+      <td data-celsius="${hi}">${toDisplay(hi, tempUnit)}</td>
+      <td data-celsius="${lo}">${toDisplay(lo, tempUnit)}</td>
+      ${hasMean ? `<td data-celsius="${mean}">${toDisplay(mean, tempUnit)}</td>` : ''}
+      <td>${prec != null ? Math.round(prec)+'mm' : '—'}</td>
+    </tr>`;
+  }).join('');
+
+  const annHi   = cn.tempMax  ? Math.max(...cn.tempMax)              : null;
+  const annLo   = cn.tempMin  ? Math.min(...cn.tempMin)              : null;
+  const annPrec = cn.precipMm ? Math.round(cn.precipMm.reduce((a,b)=>a+b,0)) : null;
+
+  return `<table class="climate-table">
+    <thead><tr>
+      <th>Month</th><th>High</th><th>Low</th>
+      ${hasMean ? '<th>Mean</th>' : ''}
+      <th>Precip</th>
+    </tr></thead>
+    <tbody>
+      ${rows}
+      <tr class="annual-row">
+        <td>Annual</td>
+        <td data-celsius="${annHi}">${toDisplay(annHi, tempUnit)}</td>
+        <td data-celsius="${annLo}">${toDisplay(annLo, tempUnit)}</td>
+        ${hasMean ? '<td>—</td>' : ''}
+        <td>${annPrec != null ? annPrec+'mm' : '—'}</td>
+      </tr>
+    </tbody>
+  </table>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  CLIMATE CHART
+// ═══════════════════════════════════════════════════════════
+
+function buildClimateChart(cn) {
+  if (climateChart) { climateChart.destroy(); climateChart = null; }
+  const ctx = document.getElementById('climate-chart');
+  if (!ctx) return;
+
+  climateChart = new Chart(ctx, {
+    data: {
+      labels: MONTHS,
+      datasets: [
+        {
+          type: 'line',
+          label: 'High Temp',
+          data: cn.tempMax,
+          borderColor: 'rgba(255,140,60,0.85)',
+          backgroundColor: 'rgba(150,160,200,0.12)',
+          fill: '+1',
+          tension: 0.4,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          yAxisID: 'yTemp'
+        },
+        {
+          type: 'line',
+          label: 'Low Temp',
+          data: cn.tempMin,
+          borderColor: 'rgba(100,180,255,0.85)',
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.4,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          yAxisID: 'yTemp'
+        },
+        {
+          type: 'bar',
+          label: 'Precip',
+          data: cn.precipMm,
+          backgroundColor: 'rgba(80,160,240,0.45)',
+          borderColor:     'rgba(80,160,240,0.7)',
+          borderWidth: 1,
+          yAxisID: 'yPrecip'
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          labels: { color: 'rgba(255,255,255,0.55)', font: { size: 11 }, boxWidth: 12 }
+        },
+        tooltip: {
+          backgroundColor: '#161b22',
+          borderColor: '#30363d',
+          borderWidth: 1,
+          titleColor: '#e6edf3',
+          bodyColor: '#8b949e',
+          callbacks: {
+            label(ctx) {
+              if (ctx.dataset.label.includes('Temp'))
+                return `${ctx.dataset.label}: ${toDisplay(ctx.raw, tempUnit)}`;
+              return `${ctx.dataset.label}: ${ctx.raw}mm`;
+            }
+          }
+        }
+      },
+      scales: {
+        yTemp: {
+          type: 'linear', position: 'left',
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: 'rgba(255,255,255,0.45)', font: { size: 10 }, callback: v => toDisplay(v, tempUnit) }
+        },
+        yPrecip: {
+          type: 'linear', position: 'right',
+          grid: { drawOnChartArea: false },
+          ticks: { color: 'rgba(80,160,240,0.65)', font: { size: 10 }, callback: v => v+'mm' }
+        },
+        x: {
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: 'rgba(255,255,255,0.45)', font: { size: 10 } }
+        }
+      }
+    }
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+//  TEMPERATURE UNIT TOGGLE
+// ═══════════════════════════════════════════════════════════
+
+function setTempUnit(unit) {
+  tempUnit = unit;
+  localStorage.setItem('bmg_temp_unit', unit);
+  document.getElementById('unit-f').classList.toggle('active', unit === 'F');
+  document.getElementById('unit-c').classList.toggle('active', unit === 'C');
+
+  // Update all visible temperature values
+  document.querySelectorAll('[data-celsius]').forEach(el => {
+    const c = parseFloat(el.dataset.celsius);
+    if (!isNaN(c)) el.textContent = toDisplay(c, unit);
+  });
+
+  // Rebuild chart with new unit
+  if (climateChart && selectedId) {
+    const entry = markerStore.get(selectedId);
+    if (entry?.taxon?.climateNormals) buildClimateChart(entry.taxon.climateNormals);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  FILTERS
+// ═══════════════════════════════════════════════════════════
+
+function buildFilterUI() {
+  // Genus
+  const genusEl = document.getElementById('filter-genus');
+  genusEl.innerHTML = availableGenera.map(g => {
+    const n = allMapTaxa.filter(t => t.genus === g).length;
+    return `<label class="filter-label">
+      <input type="checkbox" data-ftype="genus" data-val="${esc(g)}" checked>
+      <span class="genus-dot" style="background:${genusColor(g)}"></span>
+      ${esc(g)} <span class="filter-count">${n}</span>
+    </label>`;
+  }).join('');
+
+  // Köppen groups
+  const koppenEl = document.getElementById('filter-koppen');
+  koppenEl.innerHTML = [
+    ['A','Tropical'],['B','Arid'],['C','Temperate'],
+    ['D','Continental'],['E','Polar / Highland'],['?','No zone data']
+  ].map(([k, label]) => `<label class="filter-label">
+    <input type="checkbox" data-ftype="koppen" data-val="${k}" checked>
+    ${label}
+  </label>`).join('');
+
+  // Elevation bands
+  const elevEl = document.getElementById('filter-elev');
+  elevEl.innerHTML = [...ELEV_BANDS, '?'].map(b => `<label class="filter-label">
+    <input type="checkbox" data-ftype="elev" data-val="${b}" checked>
+    ${b === '?' ? 'Not set' : b.charAt(0).toUpperCase()+b.slice(1)}
+  </label>`).join('');
+
+  document.querySelectorAll('#filter-panel input[type=checkbox]').forEach(cb =>
+    cb.addEventListener('change', applyFilters)
+  );
+  document.getElementById('filter-reset').addEventListener('click', resetFilters);
+}
+
+function applyFilters() {
+  const checkedGenera  = new Set([...document.querySelectorAll('[data-ftype=genus]:checked')].map(el => el.dataset.val));
+  const checkedKoppen  = new Set([...document.querySelectorAll('[data-ftype=koppen]:checked')].map(el => el.dataset.val));
+  const checkedElev    = new Set([...document.querySelectorAll('[data-ftype=elev]:checked')].map(el => el.dataset.val));
+
+  const allGenera  = availableGenera.length;
+  const isDefault  = checkedGenera.size === allGenera && checkedKoppen.size === 6 && checkedElev.size === ELEV_BANDS.length + 1;
+  document.getElementById('filter-reset').style.display = isDefault ? 'none' : 'block';
+
+  markerStore.forEach(({ marker, circle, taxon }) => {
+    const genusOk  = checkedGenera.has(taxon.genus);
+    const kg       = koppenGroup(taxon.koppenZone);
+    const koppenOk = checkedKoppen.has(kg);
+    const eb       = getElevBand(taxon) || '?';
+    const elevOk   = checkedElev.has(eb) || (eb === '?' && checkedElev.has('?'));
+    const show     = genusOk && koppenOk && elevOk;
+
+    show ? marker.addTo(map) : map.removeLayer(marker);
+    if (circle) show ? circle.addTo(map) : map.removeLayer(circle);
+  });
+}
+
+function resetFilters() {
+  document.querySelectorAll('#filter-panel input[type=checkbox]').forEach(cb => { cb.checked = true; });
+  applyFilters();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  UNMAPPED LIST
+// ═══════════════════════════════════════════════════════════
+
+function buildUnmappedList() {
+  const sorted = [...unmappedTaxa].sort((a, b) =>
+    (a.genus + a.species + a.displayName).localeCompare(b.genus + b.species + b.displayName)
+  );
+  document.getElementById('unmapped-count').textContent = sorted.length;
+
+  document.getElementById('unmapped-list').innerHTML = sorted.map(t => {
+    const icons = [];
+    if (!t.mapPin?.lat)     icons.push(`<span class="unmapped-icon" title="No coordinates">📍</span>`);
+    if (!t.koppenZone)      icons.push(`<span class="unmapped-icon" title="No Köppen zone">🌡️</span>`);
+    if (!t.mapPin?.elevationM) icons.push(`<span class="unmapped-icon" title="No elevation">↕</span>`);
+    return `<div class="unmapped-row">
+      <div class="unmapped-name" title="${esc(t.displayName)}">${esc(t.displayName)}</div>
+      <div class="unmapped-country">${esc(t.country || '—')}</div>
+      <div class="unmapped-icons">${icons.join('')}</div>
+    </div>`;
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════
+//  URL / DEEP LINK
+// ═══════════════════════════════════════════════════════════
+
+function setUrlParam(key, val) {
+  const url = new URL(location.href);
+  val ? url.searchParams.set(key, val) : url.searchParams.delete(key);
+  history.replaceState(null, '', url);
+}
+
+function handleUrlParams() {
+  const p    = new URLSearchParams(location.search);
+  const txnId = p.get('taxon');
+  const slug  = p.get('slug');
+  let taxon = null;
+  if (txnId)  taxon = allMapTaxa.find(t => t.id === txnId);
+  if (!taxon && slug) taxon = allMapTaxa.find(t => t.slug === slug);
+  if (taxon) { openPanel(taxon); flyToTaxon(taxon); }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MOBILE SWIPE TO DISMISS
+// ═══════════════════════════════════════════════════════════
+
+function initMobileSwipe() {
+  const panel  = document.getElementById('side-panel');
+  const handle = document.getElementById('panel-drag-handle');
+  const header = document.getElementById('panel-header');
+  let startY = 0, dragging = false;
+
+  function onStart(e) {
+    startY   = e.touches[0].clientY;
+    dragging = true;
+    panel.style.transition = 'none';
+  }
+  function onMove(e) {
+    if (!dragging) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 0) panel.style.transform = `translateY(${dy}px)`;
+  }
+  function onEnd(e) {
+    if (!dragging) return;
+    dragging = false;
+    panel.style.transition = '';
+    const dy = e.changedTouches[0].clientY - startY;
+    panel.style.transform = '';
+    if (dy > 80) closePanel();
+  }
+
+  [handle, header].forEach(el => {
+    el.addEventListener('touchstart', onStart, { passive: true });
+  });
+  window.addEventListener('touchmove', onMove, { passive: true });
+  window.addEventListener('touchend',  onEnd);
+}
+
+// ═══════════════════════════════════════════════════════════
+//  ELIGIBILITY
+// ═══════════════════════════════════════════════════════════
+
+function isEligible(t) {
+  if (t.mapPin?.override === true && t.mapPin?.includedOnMap === true) return true;
+  return t.entryType === 'species' || t.entryType === 'location';
+}
+
+function hasCoords(t) {
+  return t.mapPin?.lat != null && t.mapPin?.lng != null;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  MAIN INIT
+// ═══════════════════════════════════════════════════════════
+
+async function init() {
+  setProgress(10);
+  initMap();
+  buildMapControls();
+  initMobileSwipe();
+
+  // UI wiring
+  document.getElementById('panel-close').addEventListener('click', closePanel);
+  document.getElementById('unit-f').addEventListener('click', () => setTempUnit('F'));
+  document.getElementById('unit-c').addEventListener('click', () => setTempUnit('C'));
+  document.getElementById('unit-f').classList.toggle('active', tempUnit === 'F');
+  document.getElementById('unit-c').classList.toggle('active', tempUnit === 'C');
+
+  document.getElementById('filter-toggle').addEventListener('click', e => {
+    e.stopPropagation();
+    const open = document.getElementById('filter-panel').classList.toggle('open');
+    document.getElementById('filter-toggle').classList.toggle('active', open);
+  });
+
+  document.getElementById('unmapped-toggle').addEventListener('click', e => {
+    e.stopPropagation();
+    document.getElementById('unmapped-panel').classList.toggle('open');
+  });
+
+  // Close filter/unmapped panels on map click
+  map.on('click', () => {
+    document.getElementById('filter-panel').classList.remove('open');
+    document.getElementById('filter-toggle').classList.remove('active');
+    document.getElementById('unmapped-panel').classList.remove('open');
+  });
+
+  document.getElementById('copy-csv').addEventListener('click', () => {
+    const lines = ['id,slug,displayName,country,entryType'];
+    unmappedTaxa.forEach(t =>
+      lines.push(`${t.id},${t.slug},"${(t.displayName||'').replace(/"/g,'""')}",${t.country||''},${t.entryType}`)
+    );
+    navigator.clipboard?.writeText(lines.join('\n')).then(() => {
+      const btn = document.getElementById('copy-csv');
+      btn.textContent = '✓ Copied';
+      setTimeout(() => { btn.textContent = 'Copy CSV'; }, 1600);
+    });
+  });
+
+  setProgress(22);
+
+  // Load species data
+  try {
+    const res  = await fetch(DATA_URL);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    setProgress(60);
+
+    // Habitats lookup
+    if (Array.isArray(data.habitats)) {
+      data.habitats.forEach(h => { habitatsMap[h.id] = h.name; });
+    }
+
+    const eligible  = (data.taxa || []).filter(isEligible);
+    allMapTaxa      = eligible.filter(hasCoords);
+    unmappedTaxa    = eligible.filter(t => !hasCoords(t));
+
+    // Collect genera present on map
+    const genSet = new Set(allMapTaxa.map(t => t.genus));
+    availableGenera = [...genSet].sort();
+    availableGenera.forEach(g => activeFilters.genera.add(g));
+
+    setProgress(75);
+    renderPins(allMapTaxa);
+    buildFilterUI();
+    buildUnmappedList();
+    setProgress(88);
+
+    await loadKoppen();
+
+    // Ensure pins sit above Köppen layer
+    markerStore.forEach(({ marker }) => marker.bringToFront?.());
+
+    setProgress(100);
+    handleUrlParams();
+
+  } catch (err) {
+    console.error('Data load failed:', err);
+    setProgress(100);
+    document.getElementById('unmapped-count').textContent = '!';
+  }
+}
+
+init();
+</script>
+</body>
+</html>
