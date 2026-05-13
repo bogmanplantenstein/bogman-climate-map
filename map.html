@@ -848,6 +848,16 @@ function makeIcon(taxon, selected = false) {
 //  MAP INIT
 // ═══════════════════════════════════════════════════════════
 
+function updateKoppenBlur() {
+  const pane = map.getPane('koppenPane');
+  if (!pane) return;
+  const z = map.getZoom();
+  const blur    = z <= 3 ? 0 : z <= 5 ? 1 : z <= 6 ? 2 : 3;
+  const opacity = z <= 5 ? 1 : z === 6 ? 0.9 : z === 7 ? 0.65 : z === 8 ? 0.35 : 0;
+  pane.style.filter  = blur > 0 ? `blur(${blur}px)` : '';
+  pane.style.opacity = opacity;
+}
+
 function initMap() {
   map = L.map('map', {
     center: [20, 10], zoom: 3,
@@ -855,6 +865,10 @@ function initMap() {
     zoomControl: false,
     worldCopyJump: true
   });
+
+  map.createPane('koppenPane');
+  map.getPane('koppenPane').style.zIndex = 250;
+  map.on('zoomend', updateKoppenBlur);
 
   darkTiles = L.tileLayer(
     'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
@@ -913,7 +927,7 @@ function buildMapControls() {
         koppenVisible = !koppenVisible;
         if (koppenLayer) {
           koppenVisible ? koppenLayer.addTo(map) : map.removeLayer(koppenLayer);
-          if (koppenVisible) koppenLayer.bringToBack();
+          if (koppenVisible) { koppenLayer.bringToBack(); updateKoppenBlur(); }
         }
         btn.classList.toggle('active', koppenVisible);
       });
@@ -952,6 +966,7 @@ async function loadKoppen() {
   if (!data) return; // App works fine without overlay
 
   koppenLayer = L.geoJSON(data, {
+    pane: 'koppenPane',
     style: f => ({
       fillColor:   KOPPEN_COLORS[koppenCodeFromProps(f.properties)] || '#888',
       fillOpacity: satelliteActive ? 0.22 : 0.35,
@@ -969,6 +984,7 @@ async function loadKoppen() {
 
   if (koppenVisible) koppenLayer.addTo(map);
   koppenLayer.bringToBack();
+  updateKoppenBlur();
 }
 
 // ═══════════════════════════════════════════════════════════
