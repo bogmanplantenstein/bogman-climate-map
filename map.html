@@ -1133,26 +1133,36 @@ async function loadKoppen() {
     return c ? `rgb(${c[0]},${c[1]},${c[2]})` : null;
   };
 
-  // Fetch both files in parallel; 1km for display, 0.1° for point queries
-  const [buf1km, buf01] = await Promise.all([
-    fetch(PATH_1KM).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null),
-    fetch(PATH_01).then(r  => r.ok ? r.arrayBuffer() : null).catch(() => null)
-  ]);
-
-  if (!buf1km && !buf01) return;
-
-  // Display layer — prefer 1km, fall back to 0.1°
-  const gr = await parseGeoraster(buf1km || buf01);
-  koppenLayer = new GeoRasterLayer({
+  const makeLayer = gr => new GeoRasterLayer({
     georaster: gr, pane: 'koppenPane',
     opacity: satelliteActive ? 0.35 : 0.55,
     resolution: 64, pixelValuesToColorFn: colorFn
   });
-  if (koppenVisible) koppenLayer.addTo(map);
-  updateKoppenBlur();
 
-  // Query raster — 0.1° is small enough to keep in memory for instant lookups
-  if (buf01) koppenGeoRaster = await parseGeoraster(buf01);
+  const swapLayer = newLayer => {
+    if (koppenLayer && map.hasLayer(koppenLayer)) map.removeLayer(koppenLayer);
+    koppenLayer = newLayer;
+    if (koppenVisible) koppenLayer.addTo(map);
+    updateKoppenBlur();
+  };
+
+  // Start both fetches simultaneously — don't wait for one before the other
+  const p1km = fetch(PATH_1KM).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
+  const p01  = fetch(PATH_01).then(r  => r.ok ? r.arrayBuffer() : null).catch(() => null);
+
+  // 0.1° arrives fast (~217 KB) — parse immediately for overlay + click queries
+  const buf01 = await p01;
+  if (buf01) {
+    koppenGeoRaster = await parseGeoraster(buf01);
+    swapLayer(makeLayer(koppenGeoRaster));
+  }
+
+  // 1km arrives later — silently upgrade the display layer
+  const buf1km = await p1km;
+  if (buf1km) {
+    const gr1km = await parseGeoraster(buf1km);
+    swapLayer(makeLayer(gr1km));
+  }
 }
 
 function getKoppenAt(lat, lng) {
@@ -1161,8 +1171,7 @@ function getKoppenAt(lat, lng) {
   const col = Math.floor((lng - g.xmin) / g.pixelWidth);
   const row = Math.floor((g.ymax - lat) / g.pixelHeight);
   if (row < 0 || row >= g.height || col < 0 || col >= g.width) return 0;
-  const band = g.values[0];
-  return Array.isArray(band[0]) ? band[row][col] : band[row * g.width + col];
+  return g.values[0][row][col];
 }
 
 function showKoppenPopup(latlng) {
