@@ -11,7 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/georaster"></script>
 <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
-<link rel="preload" href="./koppen_geiger_tif/1991_2020/koppen_geiger_0p1.tif" as="fetch" crossorigin="anonymous">
+<link rel="preload" href="./koppen_geiger_tif/1991_2020/koppen_geiger_0p00833333.tif" as="fetch" crossorigin="anonymous">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -614,6 +614,14 @@ html, body {
 }
 .leaflet-control-attribution a { color: var(--text-muted) !important; }
 
+/* ── Köppen click popup ──────────────────────────────────── */
+.kp-popup { padding: 10px 12px; min-width: 170px; }
+.kp-popup-head { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; }
+.kp-swatch { width: 13px; height: 13px; border-radius: 3px; flex-shrink: 0; }
+.kp-code { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); }
+.kp-desc { font-size: 12px; color: var(--text-primary); margin-bottom: 3px; }
+.kp-group { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); }
+
 /* ── Köppen Legend Panel ─────────────────────────────────── */
 .koppen-legend-wrap { position: relative; }
 .koppen-legend-panel {
@@ -787,6 +795,41 @@ const KOPPEN_LABELS = {
   'ET':'Tundra','EF':'Ice Cap','H':'Highland / Alpine'
 };
 
+// Zone metadata indexed by GeoTIFF integer value (1–30)
+const BECK_ZONES = [
+  null,
+  {code:'Af',  group:'Tropical (A)',  desc:'Tropical Rainforest'},
+  {code:'Am',  group:'Tropical (A)',  desc:'Tropical Monsoon'},
+  {code:'Aw',  group:'Tropical (A)',  desc:'Tropical Savannah'},
+  {code:'BWh', group:'Arid (B)',      desc:'Hot Desert'},
+  {code:'BWk', group:'Arid (B)',      desc:'Cold Desert'},
+  {code:'BSh', group:'Arid (B)',      desc:'Hot Steppe'},
+  {code:'BSk', group:'Arid (B)',      desc:'Cold Steppe'},
+  {code:'Csa', group:'Temperate (C)', desc:'Mediterranean, Hot Summer'},
+  {code:'Csb', group:'Temperate (C)', desc:'Mediterranean, Warm Summer'},
+  {code:'Csc', group:'Temperate (C)', desc:'Mediterranean, Cold Summer'},
+  {code:'Cwa', group:'Temperate (C)', desc:'Dry Winter, Hot Summer'},
+  {code:'Cwb', group:'Temperate (C)', desc:'Dry Winter, Warm Summer'},
+  {code:'Cwc', group:'Temperate (C)', desc:'Dry Winter, Cold Summer'},
+  {code:'Cfa', group:'Temperate (C)', desc:'Humid Subtropical'},
+  {code:'Cfb', group:'Temperate (C)', desc:'Oceanic'},
+  {code:'Cfc', group:'Temperate (C)', desc:'Subpolar Oceanic'},
+  {code:'Dsa', group:'Cold (D)',      desc:'Dry Summer, Hot Summer'},
+  {code:'Dsb', group:'Cold (D)',      desc:'Dry Summer, Warm Summer'},
+  {code:'Dsc', group:'Cold (D)',      desc:'Dry Summer, Cold Summer'},
+  {code:'Dsd', group:'Cold (D)',      desc:'Dry Summer, Very Cold Winter'},
+  {code:'Dwa', group:'Cold (D)',      desc:'Dry Winter, Hot Summer'},
+  {code:'Dwb', group:'Cold (D)',      desc:'Dry Winter, Warm Summer'},
+  {code:'Dwc', group:'Cold (D)',      desc:'Dry Winter, Cold Summer'},
+  {code:'Dwd', group:'Cold (D)',      desc:'Dry Winter, Very Cold Winter'},
+  {code:'Dfa', group:'Cold (D)',      desc:'Humid, Hot Summer'},
+  {code:'Dfb', group:'Cold (D)',      desc:'Humid, Warm Summer'},
+  {code:'Dfc', group:'Cold (D)',      desc:'Subarctic'},
+  {code:'Dfd', group:'Cold (D)',      desc:'Very Cold Subarctic'},
+  {code:'ET',  group:'Polar (E)',     desc:'Tundra'},
+  {code:'EF',  group:'Polar (E)',     desc:'Ice Cap'}
+];
+
 // Beck et al. 2023 official RGB colors, indexed by GeoTIFF integer value (1–30)
 const BECK_COLORS = [
   null,
@@ -816,7 +859,7 @@ const ENTRY_LABELS = {
 //  STATE
 // ═══════════════════════════════════════════════════════════
 
-let map, darkTiles, darkLabelsTiles, satTiles, koppenLayer, regionHighlight;
+let map, darkTiles, darkLabelsTiles, satTiles, koppenLayer, koppenGeoRaster, regionHighlight;
 let satelliteActive = false;
 let koppenVisible   = true;
 
@@ -917,8 +960,8 @@ function updateKoppenBlur() {
   if (!pane) return;
   const z = map.getZoom();
   // 0.1° ≈ 11km resolution; meaningful through zoom ~8
-  const blur    = z <= 6 ? 0 : z <= 8 ? 1 : 2;
-  const opacity = z <= 8 ? 1 : z === 9 ? 0.7 : z === 10 ? 0.35 : 0;
+  const blur    = z <= 9 ? 0 : z === 10 ? 1 : 2;
+  const opacity = z <= 10 ? 1 : z === 11 ? 0.6 : z === 12 ? 0.25 : 0;
   pane.style.filter  = blur > 0 ? `blur(${blur}px)` : '';
   pane.style.opacity = opacity;
 }
@@ -958,7 +1001,10 @@ function initMap() {
   L.control.zoom({ position: 'bottomright' }).addTo(map);
 
   // Close panel when clicking empty map
-  map.on('click', () => { if (selectedId) closePanel(); });
+  map.on('click', e => {
+    if (selectedId) { closePanel(); return; }
+    if (koppenVisible && koppenGeoRaster) showKoppenPopup(e.latlng);
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1077,30 +1123,63 @@ function koppenCodeFromProps(props) {
 }
 
 async function loadKoppen() {
-  let response;
-  try {
-    response = await fetch('./koppen_geiger_tif/1991_2020/koppen_geiger_0p1.tif');
-    if (!response.ok) return;
-  } catch { return; }
+  const PATH_1KM = './koppen_geiger_tif/1991_2020/koppen_geiger_0p00833333.tif';
+  const PATH_01  = './koppen_geiger_tif/1991_2020/koppen_geiger_0p1.tif';
 
-  const arrayBuffer = await response.arrayBuffer();
-  const georaster = await parseGeoraster(arrayBuffer);
+  const colorFn = values => {
+    const v = values[0];
+    if (!v || v < 1 || v > 30) return null;
+    const c = BECK_COLORS[v];
+    return c ? `rgb(${c[0]},${c[1]},${c[2]})` : null;
+  };
 
+  // Fetch both files in parallel; 1km for display, 0.1° for point queries
+  const [buf1km, buf01] = await Promise.all([
+    fetch(PATH_1KM).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null),
+    fetch(PATH_01).then(r  => r.ok ? r.arrayBuffer() : null).catch(() => null)
+  ]);
+
+  if (!buf1km && !buf01) return;
+
+  // Display layer — prefer 1km, fall back to 0.1°
+  const gr = await parseGeoraster(buf1km || buf01);
   koppenLayer = new GeoRasterLayer({
-    georaster,
-    pane:       'koppenPane',
-    opacity:    satelliteActive ? 0.35 : 0.55,
-    resolution: 64,
-    pixelValuesToColorFn: values => {
-      const v = values[0];
-      if (!v || v < 1 || v > 30) return null;
-      const c = BECK_COLORS[v];
-      return c ? `rgb(${c[0]},${c[1]},${c[2]})` : null;
-    }
+    georaster: gr, pane: 'koppenPane',
+    opacity: satelliteActive ? 0.35 : 0.55,
+    resolution: 64, pixelValuesToColorFn: colorFn
   });
-
   if (koppenVisible) koppenLayer.addTo(map);
   updateKoppenBlur();
+
+  // Query raster — 0.1° is small enough to keep in memory for instant lookups
+  if (buf01) koppenGeoRaster = await parseGeoraster(buf01);
+}
+
+function getKoppenAt(lat, lng) {
+  const g = koppenGeoRaster;
+  if (!g || !g.values || !g.values[0]) return 0;
+  const col = Math.floor((lng - g.xmin) / g.pixelWidth);
+  const row = Math.floor((g.ymax - lat) / g.pixelHeight);
+  if (row < 0 || row >= g.height || col < 0 || col >= g.width) return 0;
+  const band = g.values[0];
+  return Array.isArray(band[0]) ? band[row][col] : band[row * g.width + col];
+}
+
+function showKoppenPopup(latlng) {
+  const v = getKoppenAt(latlng.lat, latlng.lng);
+  if (!v || v < 1 || v > 30) return;
+  const zone = BECK_ZONES[v];
+  const [r, g, b] = BECK_COLORS[v];
+  L.popup({ maxWidth: 240 })
+    .setLatLng(latlng)
+    .setContent(
+      `<div class="kp-popup">` +
+      `<div class="kp-popup-head"><span class="kp-swatch" style="background:rgb(${r},${g},${b})"></span><span class="kp-code">${zone.code}</span></div>` +
+      `<div class="kp-desc">${zone.desc}</div>` +
+      `<div class="kp-group">${zone.group}</div>` +
+      `</div>`
+    )
+    .openOn(map);
 }
 
 // ═══════════════════════════════════════════════════════════
