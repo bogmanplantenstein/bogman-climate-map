@@ -9,6 +9,8 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://unpkg.com/georaster"></script>
+<script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -737,6 +739,20 @@ const KOPPEN_LABELS = {
   'ET':'Tundra','EF':'Ice Cap','H':'Highland / Alpine'
 };
 
+// Beck et al. 2023 official RGB colors, indexed by GeoTIFF integer value (1–30)
+const BECK_COLORS = [
+  null,
+  [0,0,255],[0,120,255],[70,170,250],
+  [255,0,0],[255,150,150],[245,165,0],[255,220,100],
+  [255,255,0],[200,200,0],[150,150,0],
+  [150,255,150],[100,200,100],[50,150,50],
+  [200,255,80],[100,255,80],[50,200,0],
+  [255,0,255],[200,0,200],[150,50,150],[150,100,150],
+  [170,175,255],[90,120,220],[75,80,180],[50,0,135],
+  [0,255,255],[55,200,255],[0,125,125],[0,70,95],
+  [178,178,178],[102,102,102]
+];
+
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 const FLY_ZOOM = { exact: 9, regional: 6, country: 4 };
@@ -852,8 +868,9 @@ function updateKoppenBlur() {
   const pane = map.getPane('koppenPane');
   if (!pane) return;
   const z = map.getZoom();
-  const blur    = z <= 3 ? 0 : z <= 5 ? 1 : z <= 6 ? 2 : 3;
-  const opacity = z <= 5 ? 1 : z === 6 ? 0.9 : z === 7 ? 0.65 : z === 8 ? 0.35 : 0;
+  // 0.1° ≈ 11km resolution; meaningful through zoom ~8
+  const blur    = z <= 6 ? 0 : z <= 8 ? 1 : 2;
+  const opacity = z <= 8 ? 1 : z === 9 ? 0.7 : z === 10 ? 0.35 : 0;
   pane.style.filter  = blur > 0 ? `blur(${blur}px)` : '';
   pane.style.opacity = opacity;
 }
@@ -903,13 +920,12 @@ function buildMapControls() {
         satelliteActive = !satelliteActive;
         if (satelliteActive) {
           map.removeLayer(darkTiles); satTiles.addTo(map);
-          if (koppenLayer) koppenLayer.setStyle({ fillOpacity: 0.22 });
+          if (koppenLayer) koppenLayer.setOpacity(0.45);
         } else {
           map.removeLayer(satTiles); darkTiles.addTo(map);
-          if (koppenLayer) koppenLayer.setStyle({ fillOpacity: 0.35 });
+          if (koppenLayer) koppenLayer.setOpacity(0.7);
         }
         btn.classList.toggle('active', satelliteActive);
-        if (koppenLayer) koppenLayer.bringToBack();
       });
       return btn;
     }
@@ -927,7 +943,7 @@ function buildMapControls() {
         koppenVisible = !koppenVisible;
         if (koppenLayer) {
           koppenVisible ? koppenLayer.addTo(map) : map.removeLayer(koppenLayer);
-          if (koppenVisible) { koppenLayer.bringToBack(); updateKoppenBlur(); }
+          if (koppenVisible) updateKoppenBlur();
         }
         btn.classList.toggle('active', koppenVisible);
       });
@@ -948,41 +964,29 @@ function koppenCodeFromProps(props) {
 }
 
 async function loadKoppen() {
-  let data = null;
-
+  let response;
   try {
-    const res = await fetch(KOPPEN_URL_LOCAL);
-    if (res.ok) data = await res.json();
-  } catch { /* no local file */ }
+    response = await fetch('./koppen_geiger_tif/1991_2020/koppen_geiger_0p1.tif');
+    if (!response.ok) return;
+  } catch { return; }
 
-  if (!data) {
-    try {
-      const res = await fetch(KOPPEN_URL_FALLBACK);
-      if (res.ok) data = await res.json();
-    } catch { /* CDN also unavailable */ }
-  }
+  const arrayBuffer = await response.arrayBuffer();
+  const georaster = await parseGeoraster(arrayBuffer);
 
-  if (!data) return;
-
-  koppenLayer = L.geoJSON(data, {
-    pane: 'koppenPane',
-    style: f => ({
-      fillColor:   KOPPEN_COLORS[koppenCodeFromProps(f.properties)] || '#888',
-      fillOpacity: satelliteActive ? 0.22 : 0.35,
-      color:       'transparent',
-      weight:      0
-    }),
-    onEachFeature: (f, layer) => {
-      const code = koppenCodeFromProps(f.properties);
-      if (code) layer.bindTooltip(
-        `<strong>${code}</strong> — ${KOPPEN_LABELS[code] || ''}`,
-        { sticky: true, className: 'koppen-tooltip' }
-      );
+  koppenLayer = new GeoRasterLayer({
+    georaster,
+    pane:       'koppenPane',
+    opacity:    satelliteActive ? 0.45 : 0.7,
+    resolution: 256,
+    pixelValuesToColorFn: values => {
+      const v = values[0];
+      if (!v || v < 1 || v > 30) return null;
+      const c = BECK_COLORS[v];
+      return c ? `rgb(${c[0]},${c[1]},${c[2]})` : null;
     }
   });
 
   if (koppenVisible) koppenLayer.addTo(map);
-  koppenLayer.bringToBack();
   updateKoppenBlur();
 }
 

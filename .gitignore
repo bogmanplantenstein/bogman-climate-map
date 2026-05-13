@@ -1,3 +1,9 @@
 node_modules/
 .DS_Store
 Thumbs.db
+
+# Exclude all koppen GeoTIFFs except the 0.1-degree file used by the map
+koppen_geiger_tif/**
+!koppen_geiger_tif/
+!koppen_geiger_tif/1991_2020/
+!koppen_geiger_tif/1991_2020/koppen_geiger_0p1.tif
