@@ -621,6 +621,19 @@ html, body {
 .kp-code { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); }
 .kp-desc { font-size: 12px; color: var(--text-primary); margin-bottom: 3px; }
 .kp-group { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); }
+.kp-climate-btn {
+  display: block; width: 100%;
+  margin-top: 9px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 4px;
+  padding: 5px 10px;
+  font-size: 11px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.kp-climate-btn:hover { background: #234f2e; }
 
 /* ── Köppen Legend Panel ─────────────────────────────────── */
 .koppen-legend-wrap { position: relative; }
@@ -1280,6 +1293,7 @@ function showKoppenPopup(latlng) {
       `<div class="kp-popup-head"><span class="kp-swatch" style="background:rgb(${r},${g},${b})"></span><span class="kp-code">${zone.code}</span></div>` +
       `<div class="kp-desc">${zone.desc}</div>` +
       `<div class="kp-group">${zone.group}</div>` +
+      `<button class="kp-climate-btn" onclick="openClimateAt(${latlng.lat},${latlng.lng})">↓ Load climate data</button>` +
       `</div>`
     )
     .openOn(map);
@@ -1763,31 +1777,42 @@ async function fetchNominatim(query) {
 }
 
 async function fetchSearchClimateNormals(lat, lng) {
-  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&start_date=1991-01-01&end_date=2020-12-31&monthly=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=UTC`;
+  // Archive API provides daily data only — aggregate to monthly normals client-side
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&start_date=1991-01-01&end_date=2020-12-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=UTC`;
   try {
     const r = await fetch(url);
     if (!r.ok) return null;
     const d = await r.json();
-    const raw = d.monthly;
-    if (!raw) return null;
-    function avgByMonth(arr) {
-      if (!arr) return null;
-      return Array.from({length: 12}, (_, m) => {
-        const vals = arr.filter((v, i) => i % 12 === m && v != null);
-        return vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
-      });
-    }
+    const raw = d.daily;
+    if (!raw || !raw.time) return null;
+
+    const tmaxSum = new Array(12).fill(0), tmaxCnt = new Array(12).fill(0);
+    const tminSum = new Array(12).fill(0), tminCnt = new Array(12).fill(0);
+    const precSum = new Array(12).fill(0);
+    const precYears = Array.from({length: 12}, () => new Set());
+
+    raw.time.forEach((date, i) => {
+      const m = parseInt(date.substring(5, 7)) - 1; // 0–11
+      const y = date.substring(0, 4);
+      const tmax = raw.temperature_2m_max[i];
+      if (tmax != null) { tmaxSum[m] += tmax; tmaxCnt[m]++; }
+      const tmin = raw.temperature_2m_min[i];
+      if (tmin != null) { tminSum[m] += tmin; tminCnt[m]++; }
+      const p = raw.precipitation_sum[i];
+      if (p != null) { precSum[m] += p; precYears[m].add(y); }
+    });
+
     return {
-      tempMax:  avgByMonth(raw.temperature_2m_max),
-      tempMin:  avgByMonth(raw.temperature_2m_min),
-      precipMm: avgByMonth(raw.precipitation_sum)
+      tempMax:  tmaxSum.map((s, m) => tmaxCnt[m] ? s / tmaxCnt[m] : null),
+      tempMin:  tminSum.map((s, m) => tminCnt[m] ? s / tminCnt[m] : null),
+      precipMm: precSum.map((s, m) => precYears[m].size ? s / precYears[m].size : null)
     };
   } catch { return null; }
 }
 
 function buildLocationPanel(state) {
   const { result, lat, lng, normals, loading } = state;
-  const name = result.display_name.split(',')[0];
+  const name = result._name || result.display_name.split(',')[0];
   const a = result.address || {};
   const subLabel = [a.state, a.country].filter(Boolean).join(', ');
 
@@ -1857,6 +1882,62 @@ function closeLocationPanel() {
   document.getElementById('side-panel').classList.remove('open');
   if (climateChart) { climateChart.destroy(); climateChart = null; }
 }
+
+window.openClimateAt = async function(lat, lng) {
+  map.closePopup();
+
+  if (selectedId) {
+    if (markerStore.has(selectedId)) {
+      const { marker, taxon } = markerStore.get(selectedId);
+      marker.setIcon(makeIcon(taxon, false));
+    }
+    selectedId = null;
+    clearRegionHighlight();
+    setUrlParam('taxon', null);
+    if (climateChart) { climateChart.destroy(); climateChart = null; }
+  }
+  if (searchMarker) { map.removeLayer(searchMarker); searchMarker = null; }
+
+  // Clear search bar since this is a raw map click, not a search result
+  document.getElementById('search-input').value = '';
+  document.getElementById('search-clear').classList.remove('visible');
+  document.getElementById('search-suggestions').classList.remove('open');
+  searchCurrentSuggestions = [];
+
+  searchMarker = L.circleMarker([lat, lng], {
+    radius: 8, color: '#ffffff', fillColor: '#3fb950', weight: 2, fillOpacity: 0.9
+  }).addTo(map);
+  searchMarker.on('click', e => { L.DomEvent.stopPropagation(e); });
+
+  const coordName = `${Math.abs(lat).toFixed(4)}° ${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(4)}° ${lng >= 0 ? 'E' : 'W'}`;
+  const token = {};
+  const fakeResult = { _name: coordName, display_name: coordName, lat: String(lat), lon: String(lng), place_rank: 30, address: {} };
+
+  searchState = { result: fakeResult, lat, lng, normals: null, loading: true, token };
+  searchPanelOpen = true;
+  buildLocationPanel(searchState);
+
+  const [geocode, normals] = await Promise.all([
+    fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json`, { headers: { 'Accept-Language': 'en' } })
+      .then(r => r.ok ? r.json() : null).catch(() => null),
+    fetchSearchClimateNormals(lat, lng)
+  ]);
+
+  if (!searchPanelOpen || !searchState || searchState.token !== token) return;
+
+  if (geocode && geocode.display_name) {
+    searchState.result = {
+      _name: geocode.display_name.split(',')[0],
+      display_name: geocode.display_name,
+      lat: String(lat), lon: String(lng),
+      place_rank: 30,
+      address: geocode.address || {}
+    };
+  }
+  searchState.normals = normals;
+  searchState.loading = false;
+  buildLocationPanel(searchState);
+};
 
 let searchCurrentSuggestions = [];
 let searchHighlightedIdx = -1;
