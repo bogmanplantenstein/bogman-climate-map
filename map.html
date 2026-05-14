@@ -1017,11 +1017,6 @@ function toDisplay(celsius, unit) {
     : Math.round(celsius) + '°C';
 }
 
-function vpdToRH(vpd, tempC) {
-  const svp = 0.6108 * Math.exp(17.27 * tempC / (tempC + 237.3));
-  return Math.max(0, Math.min(100, (1 - vpd / svp) * 100));
-}
-
 function koppenGroup(code) {
   if (!code) return '?';
   const g = code[0];
@@ -1804,29 +1799,22 @@ function buildLightChart(cn) {
 }
 
 function buildLightTable(cn) {
-  const hasVPD  = cn.vpdMean && cn.vpdMean.some(v => v != null);
-  const hasPPFD = cn.ppfd    && cn.ppfd.some(v => v != null);
-
-  // Monthly mean temp for VPD → RH conversion
-  // Note: vpdLow (night) → highest RH; vpdHigh (midday peak) → lowest RH
-  const tMean = (cn.tempMax && cn.tempMin)
-    ? cn.tempMax.map((hi, i) => (hi != null && cn.tempMin[i] != null) ? (hi + cn.tempMin[i]) / 2 : null)
-    : null;
+  const hasRH   = cn.rhMean && cn.rhMean.some(v => v != null);
+  const hasPPFD = cn.ppfd   && cn.ppfd.some(v => v != null);
 
   const rows = MONTHS.map((mon, i) => {
     const dl   = cn.daylightHrs?.[i];
     const dli  = cn.dli?.[i];
     const ppfd = cn.ppfd?.[i];
-    const tm   = tMean?.[i];
-    const rhHi  = (cn.vpdLow?.[i]  != null && tm != null) ? vpdToRH(cn.vpdLow[i],  tm) : null;
-    const rhAvg = (cn.vpdMean?.[i] != null && tm != null) ? vpdToRH(cn.vpdMean[i], tm) : null;
-    const rhLo  = (cn.vpdHigh?.[i] != null && tm != null) ? vpdToRH(cn.vpdHigh[i], tm) : null;
+    const rhHi  = cn.rhHigh?.[i];
+    const rhAvg = cn.rhMean?.[i];
+    const rhLo  = cn.rhLow?.[i];
     return `<tr>
       <td>${mon}</td>
       <td>${dl  != null ? dl.toFixed(1) + 'h' : '—'}</td>
       <td>${dli != null ? dli.toFixed(1)       : '—'}</td>
       ${hasPPFD ? `<td>${ppfd != null ? Math.round(ppfd) : '—'}</td>` : ''}
-      ${hasVPD  ? `<td>${rhHi  != null ? Math.round(rhHi)  + '%' : '—'}</td>
+      ${hasRH   ? `<td>${rhHi  != null ? Math.round(rhHi)  + '%' : '—'}</td>
                    <td>${rhAvg != null ? Math.round(rhAvg) + '%' : '—'}</td>
                    <td>${rhLo  != null ? Math.round(rhLo)  + '%' : '—'}</td>` : ''}
     </tr>`;
@@ -1839,7 +1827,7 @@ function buildLightTable(cn) {
         <th>Daylight</th>
         <th title="Daily Light Integral (mol photons/m²/day)">DLI</th>
         ${hasPPFD ? '<th title="Avg PPFD during daylight (μmol/m²/s)">PPFD</th>' : ''}
-        ${hasVPD  ? '<th title="RH high — overnight/dawn">RH High</th><th title="Mean relative humidity">RH Avg</th><th title="RH low — peak afternoon">RH Low</th>' : ''}
+        ${hasRH   ? '<th title="RH high — overnight/dawn">RH High</th><th title="Mean relative humidity">RH Avg</th><th title="RH low — peak afternoon">RH Low</th>' : ''}
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -1951,9 +1939,9 @@ async function fetchSearchClimateNormals(lat, lng) {
   } catch { return null; }
 }
 
-async function fetchVPDNormals(lat, lng) {
-  // 5-year hourly VPD → daily high/low/mean → monthly averages
-  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&start_date=2019-01-01&end_date=2023-12-31&hourly=vapour_pressure_deficit&timezone=UTC`;
+async function fetchRHNormals(lat, lng) {
+  // 5-year hourly RH → daily high/low/mean → monthly averages
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&start_date=2019-01-01&end_date=2023-12-31&hourly=relative_humidity_2m&timezone=UTC`;
   try {
     const r = await fetch(url);
     if (!r.ok) return null;
@@ -1965,7 +1953,7 @@ async function fetchVPDNormals(lat, lng) {
     const daily = {}; // "YYYY-MM-DD" → {max, min, sum, cnt}
     raw.time.forEach((dt, i) => {
       const date = dt.substring(0, 10);
-      const v = raw.vapour_pressure_deficit[i];
+      const v = raw.relative_humidity_2m[i];
       if (v == null) return;
       if (!daily[date]) daily[date] = { max: -Infinity, min: Infinity, sum: 0, cnt: 0 };
       const s = daily[date];
@@ -1986,9 +1974,9 @@ async function fetchVPDNormals(lat, lng) {
     });
 
     return {
-      vpdHigh: hiSum.map((s, m)  => hiCnt[m]  ? s / hiCnt[m]  : null),
-      vpdLow:  loSum.map((s, m)  => loCnt[m]  ? s / loCnt[m]  : null),
-      vpdMean: avgSum.map((s, m) => avgCnt[m] ? s / avgCnt[m] : null)
+      rhHigh: hiSum.map((s, m)  => hiCnt[m]  ? s / hiCnt[m]  : null),
+      rhLow:  loSum.map((s, m)  => loCnt[m]  ? s / loCnt[m]  : null),
+      rhMean: avgSum.map((s, m) => avgCnt[m] ? s / avgCnt[m] : null)
     };
   } catch { return null; }
 }
@@ -2024,16 +2012,7 @@ function buildLocationPanel(state) {
     const validDLI = normals.dli ? normals.dli.filter(x => x != null) : [];
     const avgDLI   = validDLI.length ? validDLI.reduce((a, b) => a + b, 0) / validDLI.length : null;
 
-    const hasVPD = normals.vpdMean && normals.vpdMean.some(v => v != null);
-
-    // Monthly mean temp for VPD → RH conversion
-    const tMean = normals.tempMax && normals.tempMin
-      ? normals.tempMax.map((hi, i) => (hi != null && normals.tempMin[i] != null) ? (hi + normals.tempMin[i]) / 2 : null)
-      : null;
-    const rhMonthly = hasVPD && tMean
-      ? normals.vpdMean.map((v, i) => v != null && tMean[i] != null ? vpdToRH(v, tMean[i]) : null)
-      : null;
-    const validRH = rhMonthly ? rhMonthly.filter(v => v != null) : [];
+    const validRH = normals.rhMean ? normals.rhMean.filter(v => v != null) : [];
     const annRHAvg = validRH.length ? validRH.reduce((a, b) => a + b, 0) / validRH.length : null;
 
     climateHtml = `
@@ -2137,7 +2116,7 @@ window.openClimateAt = async function(lat, lng) {
     fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json`, { headers: { 'Accept-Language': 'en' } })
       .then(r => r.ok ? r.json() : null).catch(() => null),
     fetchSearchClimateNormals(lat, lng),
-    fetchVPDNormals(lat, lng)
+    fetchRHNormals(lat, lng)
   ]);
 
   if (!searchPanelOpen || !searchState || searchState.token !== token) return;
@@ -2213,7 +2192,7 @@ function selectSearchResult(result) {
   searchPanelOpen = true;
   buildLocationPanel(searchState);
 
-  Promise.all([fetchSearchClimateNormals(lat, lng), fetchVPDNormals(lat, lng)])
+  Promise.all([fetchSearchClimateNormals(lat, lng), fetchRHNormals(lat, lng)])
     .then(([normals, vpd]) => {
       if (!searchPanelOpen || !searchState || searchState.result !== result) return;
       searchState.normals = normals ? { ...normals, ...(vpd || {}) } : null;
