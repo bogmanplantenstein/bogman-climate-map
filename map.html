@@ -966,6 +966,7 @@ let map, darkTiles, darkLabelsTiles, satTiles, koppenLayer, koppenGeoRaster, reg
 let searchMarker = null;
 let searchPanelOpen = false;
 let searchState = null; // { result, lat, lng, normals, loading }
+let lightChart = null;
 let satelliteActive = false;
 let koppenVisible   = true;
 
@@ -1725,6 +1726,115 @@ function buildClimateChart(cn) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  LIGHT CHART + TABLE
+// ═══════════════════════════════════════════════════════════
+
+function buildLightChart(cn) {
+  if (lightChart) { lightChart.destroy(); lightChart = null; }
+  const ctx = document.getElementById('light-chart');
+  if (!ctx || !cn.daylightHrs) return;
+
+  lightChart = new Chart(ctx, {
+    data: {
+      labels: MONTHS,
+      datasets: [
+        {
+          type: 'bar',
+          label: 'Daylight hrs',
+          data: cn.daylightHrs.map(v => v != null ? +v.toFixed(2) : null),
+          backgroundColor: 'rgba(255,200,50,0.28)',
+          borderColor:     'rgba(255,200,50,0.65)',
+          borderWidth: 1,
+          yAxisID: 'yDaylight'
+        },
+        {
+          type: 'line',
+          label: 'DLI mol/m²',
+          data: cn.dli ? cn.dli.map(v => v != null ? +v.toFixed(2) : null) : [],
+          borderColor:     'rgba(255,155,20,0.9)',
+          backgroundColor: 'transparent',
+          tension: 0.4,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          yAxisID: 'yDLI'
+        }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: 'rgba(255,255,255,0.55)', font: { size: 11 }, boxWidth: 12 } },
+        tooltip: {
+          backgroundColor: '#161b22', borderColor: '#30363d', borderWidth: 1,
+          titleColor: '#e6edf3', bodyColor: '#8b949e',
+          callbacks: {
+            label(ctx) {
+              if (ctx.dataset.label.includes('Daylight')) return `Daylight: ${ctx.raw?.toFixed(1)}h`;
+              if (ctx.dataset.label.includes('DLI'))      return `DLI: ${ctx.raw?.toFixed(1)} mol/m²/day`;
+              return `${ctx.dataset.label}: ${ctx.raw}`;
+            }
+          }
+        }
+      },
+      scales: {
+        yDaylight: {
+          type: 'linear', position: 'left', min: 0,
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: 'rgba(255,255,255,0.45)', font: { size: 10 }, callback: v => v + 'h' }
+        },
+        yDLI: {
+          type: 'linear', position: 'right', min: 0,
+          grid: { drawOnChartArea: false },
+          ticks: { color: 'rgba(255,155,20,0.65)', font: { size: 10 }, callback: v => v.toFixed(0) }
+        },
+        x: {
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: 'rgba(255,255,255,0.45)', font: { size: 10 } }
+        }
+      }
+    }
+  });
+}
+
+function buildLightTable(cn) {
+  const hasVPD  = cn.vpdMean  && cn.vpdMean.some(v => v != null);
+  const hasPPFD = cn.ppfd     && cn.ppfd.some(v => v != null);
+
+  const rows = MONTHS.map((mon, i) => {
+    const dl   = cn.daylightHrs?.[i];
+    const dli  = cn.dli?.[i];
+    const ppfd = cn.ppfd?.[i];
+    const vHi  = cn.vpdHigh?.[i];
+    const vAvg = cn.vpdMean?.[i];
+    const vLo  = cn.vpdLow?.[i];
+    return `<tr>
+      <td>${mon}</td>
+      <td>${dl   != null ? dl.toFixed(1)  + 'h' : '—'}</td>
+      <td>${dli  != null ? dli.toFixed(1)        : '—'}</td>
+      ${hasPPFD ? `<td>${ppfd != null ? Math.round(ppfd) : '—'}</td>` : ''}
+      ${hasVPD  ? `<td>${vHi  != null ? vHi.toFixed(2)  : '—'}</td>
+                   <td>${vAvg != null ? vAvg.toFixed(2) : '—'}</td>
+                   <td>${vLo  != null ? vLo.toFixed(2)  : '—'}</td>` : ''}
+    </tr>`;
+  }).join('');
+
+  return `<div style="overflow-x:auto;margin-bottom:16px">
+    <table class="climate-table">
+      <thead><tr>
+        <th>Month</th>
+        <th>Daylight</th>
+        <th title="Daily Light Integral (mol photons/m²/day)">DLI</th>
+        ${hasPPFD ? '<th title="Avg PPFD during daylight (μmol/m²/s)">PPFD</th>' : ''}
+        ${hasVPD  ? '<th title="Vapor Pressure Deficit — kPa">VPD Hi</th><th>VPD Avg</th><th>VPD Lo</th>' : ''}
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════
 //  TEMPERATURE UNIT TOGGLE
 // ═══════════════════════════════════════════════════════════
 
@@ -1777,8 +1887,8 @@ async function fetchNominatim(query) {
 }
 
 async function fetchSearchClimateNormals(lat, lng) {
-  // Archive API provides daily data only — aggregate to monthly normals client-side
-  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&start_date=1991-01-01&end_date=2020-12-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=UTC`;
+  // 10-year window: smaller payload than 30yr, still statistically solid for normals
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&start_date=2014-01-01&end_date=2023-12-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,daylight_duration,shortwave_radiation_sum&timezone=UTC`;
   try {
     const r = await fetch(url);
     if (!r.ok) return null;
@@ -1786,26 +1896,87 @@ async function fetchSearchClimateNormals(lat, lng) {
     const raw = d.daily;
     if (!raw || !raw.time) return null;
 
-    const tmaxSum = new Array(12).fill(0), tmaxCnt = new Array(12).fill(0);
-    const tminSum = new Array(12).fill(0), tminCnt = new Array(12).fill(0);
-    const precSum = new Array(12).fill(0);
-    const precYears = Array.from({length: 12}, () => new Set());
+    const tmaxSum  = new Array(12).fill(0), tmaxCnt  = new Array(12).fill(0);
+    const tminSum  = new Array(12).fill(0), tminCnt  = new Array(12).fill(0);
+    const precSum  = new Array(12).fill(0);
+    const precYrs  = Array.from({length: 12}, () => new Set());
+    const dlSum    = new Array(12).fill(0), dlCnt    = new Array(12).fill(0);
+    const radSum   = new Array(12).fill(0), radCnt   = new Array(12).fill(0);
 
     raw.time.forEach((date, i) => {
-      const m = parseInt(date.substring(5, 7)) - 1; // 0–11
+      const m = parseInt(date.substring(5, 7)) - 1;
       const y = date.substring(0, 4);
       const tmax = raw.temperature_2m_max[i];
       if (tmax != null) { tmaxSum[m] += tmax; tmaxCnt[m]++; }
       const tmin = raw.temperature_2m_min[i];
       if (tmin != null) { tminSum[m] += tmin; tminCnt[m]++; }
       const p = raw.precipitation_sum[i];
-      if (p != null) { precSum[m] += p; precYears[m].add(y); }
+      if (p != null) { precSum[m] += p; precYrs[m].add(y); }
+      const dl = raw.daylight_duration[i];
+      if (dl != null) { dlSum[m] += dl; dlCnt[m]++; }
+      const rad = raw.shortwave_radiation_sum[i];
+      if (rad != null) { radSum[m] += rad; radCnt[m]++; }
+    });
+
+    // Monthly avg daylight in hours
+    const daylightHrs = dlSum.map((s, m) => dlCnt[m] ? s / dlCnt[m] / 3600 : null);
+    // Monthly avg shortwave radiation MJ/m²/day
+    const radiation = radSum.map((s, m) => radCnt[m] ? s / radCnt[m] : null);
+    // DLI mol/m²/day = radiation × 2.02 (PAR fraction × photon conversion)
+    const dli = radiation.map(r => r != null ? r * 2.02 : null);
+    // Avg PPFD μmol/m²/s = (radiation MJ/m² × 1e6 J) / daylight_seconds × 2.02
+    const ppfd = radiation.map((r, m) => {
+      const dlSec = dlCnt[m] ? dlSum[m] / dlCnt[m] : null;
+      return (r != null && dlSec) ? (r * 1e6 / dlSec) * 2.02 : null;
     });
 
     return {
-      tempMax:  tmaxSum.map((s, m) => tmaxCnt[m] ? s / tmaxCnt[m] : null),
-      tempMin:  tminSum.map((s, m) => tminCnt[m] ? s / tminCnt[m] : null),
-      precipMm: precSum.map((s, m) => precYears[m].size ? s / precYears[m].size : null)
+      tempMax:    tmaxSum.map((s, m) => tmaxCnt[m] ? s / tmaxCnt[m] : null),
+      tempMin:    tminSum.map((s, m) => tminCnt[m] ? s / tminCnt[m] : null),
+      precipMm:   precSum.map((s, m) => precYrs[m].size ? s / precYrs[m].size : null),
+      daylightHrs, dli, ppfd
+    };
+  } catch { return null; }
+}
+
+async function fetchVPDNormals(lat, lng) {
+  // 5-year hourly VPD → daily high/low/mean → monthly averages
+  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&start_date=2019-01-01&end_date=2023-12-31&hourly=vapour_pressure_deficit&timezone=UTC`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const d = await r.json();
+    const raw = d.hourly;
+    if (!raw || !raw.time) return null;
+
+    // Roll up hourly → daily stats
+    const daily = {}; // "YYYY-MM-DD" → {max, min, sum, cnt}
+    raw.time.forEach((dt, i) => {
+      const date = dt.substring(0, 10);
+      const v = raw.vapour_pressure_deficit[i];
+      if (v == null) return;
+      if (!daily[date]) daily[date] = { max: -Infinity, min: Infinity, sum: 0, cnt: 0 };
+      const s = daily[date];
+      if (v > s.max) s.max = v;
+      if (v < s.min) s.min = v;
+      s.sum += v; s.cnt++;
+    });
+
+    // Roll up daily → monthly averages of high/mean/low
+    const hiSum  = new Array(12).fill(0), hiCnt  = new Array(12).fill(0);
+    const loSum  = new Array(12).fill(0), loCnt  = new Array(12).fill(0);
+    const avgSum = new Array(12).fill(0), avgCnt = new Array(12).fill(0);
+    Object.entries(daily).forEach(([date, s]) => {
+      const m = parseInt(date.substring(5, 7)) - 1;
+      if (s.max > -Infinity) { hiSum[m]  += s.max;         hiCnt[m]++; }
+      if (s.min <  Infinity) { loSum[m]  += s.min;         loCnt[m]++; }
+      if (s.cnt > 0)         { avgSum[m] += s.sum / s.cnt; avgCnt[m]++; }
+    });
+
+    return {
+      vpdHigh: hiSum.map((s, m)  => hiCnt[m]  ? s / hiCnt[m]  : null),
+      vpdLow:  loSum.map((s, m)  => loCnt[m]  ? s / loCnt[m]  : null),
+      vpdMean: avgSum.map((s, m) => avgCnt[m] ? s / avgCnt[m] : null)
     };
   } catch { return null; }
 }
@@ -1824,6 +1995,10 @@ function buildLocationPanel(state) {
     koppenBadgeHtml = `<div class="badge-row"><span class="badge badge-koppen" style="color:rgb(${cr},${cg},${cb});border-color:rgba(${cr},${cg},${cb},0.3);background:rgba(${cr},${cg},${cb},0.1)">${esc(zone.code)} · ${esc(zone.desc)}</span></div>`;
   }
 
+  // Destroy any stale charts before re-rendering panel content
+  if (climateChart) { climateChart.destroy(); climateChart = null; }
+  if (lightChart)   { lightChart.destroy();   lightChart   = null; }
+
   let climateHtml;
   if (loading) {
     climateHtml = `<div class="climate-pending">Loading climate data…</div>`;
@@ -1833,20 +2008,39 @@ function buildLocationPanel(state) {
     const peakHigh = validMax.length ? Math.max(...validMax) : null;
     const peakLow  = validMin.length ? Math.min(...validMin) : null;
     const annPrec  = Math.round(normals.precipMm.reduce((a, b) => a + (b || 0), 0));
+
+    const validDLI = normals.dli ? normals.dli.filter(x => x != null) : [];
+    const avgDLI   = validDLI.length ? validDLI.reduce((a, b) => a + b, 0) / validDLI.length : null;
+
+    const hasVPD = normals.vpdMean && normals.vpdMean.some(v => v != null);
+    const validVPDAvg = hasVPD ? normals.vpdMean.filter(v => v != null) : [];
+    const annVPDAvg   = validVPDAvg.length ? validVPDAvg.reduce((a, b) => a + b, 0) / validVPDAvg.length : null;
+
     climateHtml = `
       <div class="climate-grid">
-        <div class="climate-stat"><div class="climate-stat-label">Peak High</div>
+        <div class="climate-stat"><div class="climate-stat-label">Avg Daily High</div>
           <div class="climate-stat-value" data-celsius="${peakHigh}">${toDisplay(peakHigh, tempUnit)}</div></div>
-        <div class="climate-stat"><div class="climate-stat-label">Peak Low</div>
+        <div class="climate-stat"><div class="climate-stat-label">Avg Daily Low</div>
           <div class="climate-stat-value" data-celsius="${peakLow}">${toDisplay(peakLow, tempUnit)}</div></div>
         <div class="climate-stat"><div class="climate-stat-label">Annual Precip</div>
           <div class="climate-stat-value">${annPrec}<span class="climate-stat-unit">mm</span></div></div>
+        ${avgDLI != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg DLI</div>
+          <div class="climate-stat-value">${avgDLI.toFixed(1)}<span class="climate-stat-unit">mol/m²</span></div></div>` : ''}
+        ${annVPDAvg != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg VPD</div>
+          <div class="climate-stat-value">${annVPDAvg.toFixed(2)}<span class="climate-stat-unit">kPa</span></div></div>` : ''}
       </div>
       <button class="expand-btn" id="expand-btn">↓ Monthly Climate Data</button>
       <div id="climate-expanded">
         <div class="section-divider"></div>
+        <div class="section-label">Temperature &amp; Precipitation</div>
         <div class="chart-wrap"><canvas id="climate-chart"></canvas></div>
         ${buildClimateTable(normals)}
+        ${normals.daylightHrs ? `
+          <div class="section-divider"></div>
+          <div class="section-label">Light &amp; Atmosphere</div>
+          <div class="chart-wrap"><canvas id="light-chart"></canvas></div>
+          ${buildLightTable(normals)}
+        ` : ''}
       </div>`;
   } else {
     climateHtml = `<div class="climate-pending">Climate data unavailable for this location</div>`;
@@ -1858,7 +2052,7 @@ function buildLocationPanel(state) {
     <div class="p-location">${lat.toFixed(4)}, ${lng.toFixed(4)}</div>
     ${koppenBadgeHtml}
     <div class="section-divider"></div>
-    <div class="section-label">Climate (1991–2020 avg)</div>
+    <div class="section-label">Climate (2014–2023 avg)</div>
     ${climateHtml}
   `;
 
@@ -1871,6 +2065,7 @@ function buildLocationPanel(state) {
       const opening = expanded.classList.toggle('open');
       expandBtn.textContent = opening ? '↑ Hide Climate Data' : '↓ Monthly Climate Data';
       if (opening && !climateChart) buildClimateChart(normals);
+      if (opening && !lightChart && normals.daylightHrs) buildLightChart(normals);
     });
   }
 }
@@ -1881,6 +2076,7 @@ function closeLocationPanel() {
   if (searchMarker) { map.removeLayer(searchMarker); searchMarker = null; }
   document.getElementById('side-panel').classList.remove('open');
   if (climateChart) { climateChart.destroy(); climateChart = null; }
+  if (lightChart)   { lightChart.destroy();   lightChart   = null; }
 }
 
 window.openClimateAt = async function(lat, lng) {
@@ -1917,10 +2113,11 @@ window.openClimateAt = async function(lat, lng) {
   searchPanelOpen = true;
   buildLocationPanel(searchState);
 
-  const [geocode, normals] = await Promise.all([
+  const [geocode, normals, vpd] = await Promise.all([
     fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json`, { headers: { 'Accept-Language': 'en' } })
       .then(r => r.ok ? r.json() : null).catch(() => null),
-    fetchSearchClimateNormals(lat, lng)
+    fetchSearchClimateNormals(lat, lng),
+    fetchVPDNormals(lat, lng)
   ]);
 
   if (!searchPanelOpen || !searchState || searchState.token !== token) return;
@@ -1934,7 +2131,7 @@ window.openClimateAt = async function(lat, lng) {
       address: geocode.address || {}
     };
   }
-  searchState.normals = normals;
+  searchState.normals = normals ? { ...normals, ...(vpd || {}) } : null;
   searchState.loading = false;
   buildLocationPanel(searchState);
 };
@@ -1996,12 +2193,13 @@ function selectSearchResult(result) {
   searchPanelOpen = true;
   buildLocationPanel(searchState);
 
-  fetchSearchClimateNormals(lat, lng).then(normals => {
-    if (!searchPanelOpen || !searchState || searchState.result !== result) return;
-    searchState.normals = normals;
-    searchState.loading = false;
-    buildLocationPanel(searchState);
-  });
+  Promise.all([fetchSearchClimateNormals(lat, lng), fetchVPDNormals(lat, lng)])
+    .then(([normals, vpd]) => {
+      if (!searchPanelOpen || !searchState || searchState.result !== result) return;
+      searchState.normals = normals ? { ...normals, ...(vpd || {}) } : null;
+      searchState.loading = false;
+      buildLocationPanel(searchState);
+    });
 }
 
 function initSearch() {
