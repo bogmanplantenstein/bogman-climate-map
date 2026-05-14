@@ -1017,6 +1017,11 @@ function toDisplay(celsius, unit) {
     : Math.round(celsius) + '°C';
 }
 
+function vpdToRH(vpd, tempC) {
+  const svp = 0.6108 * Math.exp(17.27 * tempC / (tempC + 237.3));
+  return Math.max(0, Math.min(100, (1 - vpd / svp) * 100));
+}
+
 function koppenGroup(code) {
   if (!code) return '?';
   const g = code[0];
@@ -1799,24 +1804,31 @@ function buildLightChart(cn) {
 }
 
 function buildLightTable(cn) {
-  const hasVPD  = cn.vpdMean  && cn.vpdMean.some(v => v != null);
-  const hasPPFD = cn.ppfd     && cn.ppfd.some(v => v != null);
+  const hasVPD  = cn.vpdMean && cn.vpdMean.some(v => v != null);
+  const hasPPFD = cn.ppfd    && cn.ppfd.some(v => v != null);
+
+  // Monthly mean temp for VPD → RH conversion
+  // Note: vpdLow (night) → highest RH; vpdHigh (midday peak) → lowest RH
+  const tMean = (cn.tempMax && cn.tempMin)
+    ? cn.tempMax.map((hi, i) => (hi != null && cn.tempMin[i] != null) ? (hi + cn.tempMin[i]) / 2 : null)
+    : null;
 
   const rows = MONTHS.map((mon, i) => {
     const dl   = cn.daylightHrs?.[i];
     const dli  = cn.dli?.[i];
     const ppfd = cn.ppfd?.[i];
-    const vHi  = cn.vpdHigh?.[i];
-    const vAvg = cn.vpdMean?.[i];
-    const vLo  = cn.vpdLow?.[i];
+    const tm   = tMean?.[i];
+    const rhHi  = (cn.vpdLow?.[i]  != null && tm != null) ? vpdToRH(cn.vpdLow[i],  tm) : null;
+    const rhAvg = (cn.vpdMean?.[i] != null && tm != null) ? vpdToRH(cn.vpdMean[i], tm) : null;
+    const rhLo  = (cn.vpdHigh?.[i] != null && tm != null) ? vpdToRH(cn.vpdHigh[i], tm) : null;
     return `<tr>
       <td>${mon}</td>
-      <td>${dl   != null ? dl.toFixed(1)  + 'h' : '—'}</td>
-      <td>${dli  != null ? dli.toFixed(1)        : '—'}</td>
+      <td>${dl  != null ? dl.toFixed(1) + 'h' : '—'}</td>
+      <td>${dli != null ? dli.toFixed(1)       : '—'}</td>
       ${hasPPFD ? `<td>${ppfd != null ? Math.round(ppfd) : '—'}</td>` : ''}
-      ${hasVPD  ? `<td>${vHi  != null ? vHi.toFixed(2)  : '—'}</td>
-                   <td>${vAvg != null ? vAvg.toFixed(2) : '—'}</td>
-                   <td>${vLo  != null ? vLo.toFixed(2)  : '—'}</td>` : ''}
+      ${hasVPD  ? `<td>${rhHi  != null ? Math.round(rhHi)  + '%' : '—'}</td>
+                   <td>${rhAvg != null ? Math.round(rhAvg) + '%' : '—'}</td>
+                   <td>${rhLo  != null ? Math.round(rhLo)  + '%' : '—'}</td>` : ''}
     </tr>`;
   }).join('');
 
@@ -1827,7 +1839,7 @@ function buildLightTable(cn) {
         <th>Daylight</th>
         <th title="Daily Light Integral (mol photons/m²/day)">DLI</th>
         ${hasPPFD ? '<th title="Avg PPFD during daylight (μmol/m²/s)">PPFD</th>' : ''}
-        ${hasVPD  ? '<th title="Vapor Pressure Deficit — kPa">VPD Hi</th><th>VPD Avg</th><th>VPD Lo</th>' : ''}
+        ${hasVPD  ? '<th title="RH high — overnight/dawn">RH High</th><th title="Mean relative humidity">RH Avg</th><th title="RH low — peak afternoon">RH Low</th>' : ''}
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -2013,8 +2025,16 @@ function buildLocationPanel(state) {
     const avgDLI   = validDLI.length ? validDLI.reduce((a, b) => a + b, 0) / validDLI.length : null;
 
     const hasVPD = normals.vpdMean && normals.vpdMean.some(v => v != null);
-    const validVPDAvg = hasVPD ? normals.vpdMean.filter(v => v != null) : [];
-    const annVPDAvg   = validVPDAvg.length ? validVPDAvg.reduce((a, b) => a + b, 0) / validVPDAvg.length : null;
+
+    // Monthly mean temp for VPD → RH conversion
+    const tMean = normals.tempMax && normals.tempMin
+      ? normals.tempMax.map((hi, i) => (hi != null && normals.tempMin[i] != null) ? (hi + normals.tempMin[i]) / 2 : null)
+      : null;
+    const rhMonthly = hasVPD && tMean
+      ? normals.vpdMean.map((v, i) => v != null && tMean[i] != null ? vpdToRH(v, tMean[i]) : null)
+      : null;
+    const validRH = rhMonthly ? rhMonthly.filter(v => v != null) : [];
+    const annRHAvg = validRH.length ? validRH.reduce((a, b) => a + b, 0) / validRH.length : null;
 
     climateHtml = `
       <div class="climate-grid">
@@ -2026,8 +2046,8 @@ function buildLocationPanel(state) {
           <div class="climate-stat-value">${annPrec}<span class="climate-stat-unit">mm</span></div></div>
         ${avgDLI != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg DLI</div>
           <div class="climate-stat-value">${avgDLI.toFixed(1)}<span class="climate-stat-unit">mol/m²</span></div></div>` : ''}
-        ${annVPDAvg != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg VPD</div>
-          <div class="climate-stat-value">${annVPDAvg.toFixed(2)}<span class="climate-stat-unit">kPa</span></div></div>` : ''}
+        ${annRHAvg != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg RH</div>
+          <div class="climate-stat-value">${Math.round(annRHAvg)}<span class="climate-stat-unit">%</span></div></div>` : ''}
       </div>
       <button class="expand-btn" id="expand-btn">↓ Monthly Climate Data</button>
       <div id="climate-expanded">
