@@ -11,7 +11,6 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/georaster"></script>
 <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
-<link rel="preload" href="./koppen_geiger_tif/1991_2020/koppen_geiger_0p00833333.tif" as="fetch" crossorigin="anonymous">
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -1231,8 +1230,7 @@ function koppenCodeFromProps(props) {
 }
 
 async function loadKoppen() {
-  const PATH_1KM = './koppen_geiger_tif/1991_2020/koppen_geiger_0p00833333.tif';
-  const PATH_01  = './koppen_geiger_tif/1991_2020/koppen_geiger_0p1.tif';
+  const PATH_01 = './koppen_geiger_tif/1991_2020/koppen_geiger_0p1.tif';
 
   const colorFn = values => {
     const v = values[0];
@@ -1241,36 +1239,18 @@ async function loadKoppen() {
     return c ? `rgb(${c[0]},${c[1]},${c[2]})` : null;
   };
 
-  const makeLayer = gr => new GeoRasterLayer({
-    georaster: gr, pane: 'koppenPane',
-    opacity: satelliteActive ? 0.35 : 0.55,
-    resolution: 64, pixelValuesToColorFn: colorFn
-  });
-
-  const swapLayer = newLayer => {
-    if (koppenLayer && map.hasLayer(koppenLayer)) map.removeLayer(koppenLayer);
-    koppenLayer = newLayer;
+  try {
+    const buf = await fetch(PATH_01).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
+    if (!buf) return;
+    koppenGeoRaster = await parseGeoraster(buf);
+    koppenLayer = new GeoRasterLayer({
+      georaster: koppenGeoRaster, pane: 'koppenPane',
+      opacity: satelliteActive ? 0.35 : 0.55,
+      resolution: 64, pixelValuesToColorFn: colorFn
+    });
     if (koppenVisible) koppenLayer.addTo(map);
     updateKoppenBlur();
-  };
-
-  // Start both fetches simultaneously — don't wait for one before the other
-  const p1km = fetch(PATH_1KM).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
-  const p01  = fetch(PATH_01).then(r  => r.ok ? r.arrayBuffer() : null).catch(() => null);
-
-  // 0.1° arrives fast (~217 KB) — parse immediately for overlay + click queries
-  const buf01 = await p01;
-  if (buf01) {
-    koppenGeoRaster = await parseGeoraster(buf01);
-    swapLayer(makeLayer(koppenGeoRaster));
-  }
-
-  // 1km arrives later — silently upgrade the display layer
-  const buf1km = await p1km;
-  if (buf1km) {
-    const gr1km = await parseGeoraster(buf1km);
-    swapLayer(makeLayer(gr1km));
-  }
+  } catch { /* overlay unavailable */ }
 }
 
 function getKoppenAt(lat, lng) {
@@ -2112,7 +2092,7 @@ window.openClimateAt = async function(lat, lng) {
   searchPanelOpen = true;
   buildLocationPanel(searchState);
 
-  const [geocode, normals, vpd] = await Promise.all([
+  const [geocode, normals, rh] = await Promise.all([
     fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json`, { headers: { 'Accept-Language': 'en' } })
       .then(r => r.ok ? r.json() : null).catch(() => null),
     fetchSearchClimateNormals(lat, lng),
@@ -2130,7 +2110,7 @@ window.openClimateAt = async function(lat, lng) {
       address: geocode.address || {}
     };
   }
-  searchState.normals = normals ? { ...normals, ...(vpd || {}) } : null;
+  searchState.normals = normals ? { ...normals, ...(rh || {}) } : null;
   searchState.loading = false;
   buildLocationPanel(searchState);
 };
@@ -2193,9 +2173,9 @@ function selectSearchResult(result) {
   buildLocationPanel(searchState);
 
   Promise.all([fetchSearchClimateNormals(lat, lng), fetchRHNormals(lat, lng)])
-    .then(([normals, vpd]) => {
+    .then(([normals, rh]) => {
       if (!searchPanelOpen || !searchState || searchState.result !== result) return;
-      searchState.normals = normals ? { ...normals, ...(vpd || {}) } : null;
+      searchState.normals = normals ? { ...normals, ...(rh || {}) } : null;
       searchState.loading = false;
       buildLocationPanel(searchState);
     });
