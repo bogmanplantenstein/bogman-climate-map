@@ -212,13 +212,16 @@ async function fetchChunk(params, depth = 0) {
 //   bit 2: has_photo
 
 function processObs(obs, taxaList, genus) {
-  const { id, observed_on, latitude, longitude, geoprivacy, taxon_geoprivacy,
+  // iNat API v1 returns coordinates as a single "lat,lng" string in `location`
+  // (no separate `latitude`/`longitude` fields). Private obs have location: null.
+  const { id, observed_on, location, obscured, geoprivacy, taxon_geoprivacy,
           photos, quality_grade, taxon } = obs;
 
-  if (latitude == null || longitude == null) return null; // private/no-location
+  if (!location) return null; // private/no-location obs
 
-  const lat = parseFloat(latitude);
-  const lng = parseFloat(longitude);
+  const comma = location.indexOf(',');
+  const lat = parseFloat(location.slice(0, comma));
+  const lng = parseFloat(location.slice(comma + 1));
   if (isNaN(lat) || isNaN(lng)) return null;
 
   // Taxon info
@@ -235,7 +238,8 @@ function processObs(obs, taxaList, genus) {
 
   // Flags
   const isNeedsId  = quality_grade === 'needs_id' ? 1 : 0;
-  const isObscured = (geoprivacy === 'obscured' || taxon_geoprivacy === 'obscured') ? 1 : 0;
+  // Use the top-level `obscured` boolean (most reliable); fall back to string checks
+  const isObscured = (obscured || geoprivacy === 'obscured' || taxon_geoprivacy === 'obscured') ? 1 : 0;
   const hasPhoto   = photos?.length > 0 ? 1 : 0;
   const flags      = isNeedsId | (isObscured << 1) | (hasPhoto << 2);
 
