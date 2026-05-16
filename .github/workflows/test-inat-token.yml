@@ -16,48 +16,36 @@ jobs:
             "https://api.inaturalist.org/v1/users/me")
 
           echo "HTTP status: $status"
-          echo "Raw response:"
-          cat me.json
 
           if [ "$status" = "200" ]; then
-            echo ""
-            echo "✓ Token is valid — parsing user info..."
-            python3 -c "
+            echo "✓ Token accepted by iNat (HTTP 200)"
+            echo "Raw response (for structure inspection):"
+            cat me.json | python3 -c "
           import json, sys
-          d = json.loads(open('me.json').read())
-          # Unwrap if results array, otherwise use top level
-          user = d['results'][0] if 'results' in d else d
-          # Print whatever keys are available for diagnostics
-          print(f'  Top-level keys: {list(d.keys())}')
-          print(f'  User-level keys: {list(user.keys())}')
-          login = user.get('login') or user.get('username') or '(key not found)'
-          name  = user.get('name') or user.get('display_name') or '(none)'
-          obs   = user.get('observations_count', '?')
-          print(f'  Authenticated as: {login}')
-          print(f'  Display name:     {name}')
-          print(f'  Observations:     {obs}')
+          d = json.load(sys.stdin)
+          print(json.dumps(d, indent=2)[:800])
           "
           elif [ "$status" = "401" ]; then
-            echo ""
-            echo "✗ 401 Unauthorized — token was rejected by iNat"
-            echo "  Check: Settings → Secrets → INAT_API_TOKEN is set and not truncated"
+            echo "✗ Token rejected (401 Unauthorized)"
             echo "  Refresh at: https://www.inaturalist.org/users/api_token"
+            echo "  Then update the INAT_API_TOKEN secret in repo Settings"
             exit 1
           else
-            echo ""
             echo "✗ Unexpected HTTP status: $status"
+            cat me.json
             exit 1
           fi
 
-      - name: Spot-check observation data
+      - name: Confirm observation data and counts work
         run: |
           echo ""
           echo "--- Spot-check: Drosera research-grade wild ---"
-          curl -s \
+          result=$(curl -s \
             -H "Authorization: Bearer ${{ secrets.INAT_API_TOKEN }}" \
             -H "Accept: application/json" \
-            "https://api.inaturalist.org/v1/observations?per_page=1&taxon_name=Drosera&quality_grade=research&captive=false" \
-            | python3 -c "
+            "https://api.inaturalist.org/v1/observations?per_page=1&taxon_name=Drosera&quality_grade=research&captive=false")
+
+          echo "$result" | python3 -c "
           import json, sys
           d = json.load(sys.stdin)
           total = d.get('total_results', 0)
@@ -66,12 +54,12 @@ jobs:
               obs = d['results'][0]
               print(f'  Sample obs ID:   {obs[\"id\"]}')
               print(f'  Sample taxon:    {obs[\"taxon\"][\"name\"]}')
-              print(f'  Sample location: {obs.get(\"place_guess\", \"(obscured)\")}')
+              print(f'  Sample location: {obs.get(\"place_guess\") or \"(obscured)\"}')
               print(f'  Geoprivacy:      {obs.get(\"geoprivacy\") or \"open\"}')
-              print(f'  Photos:          {len(obs.get(\"photos\", []))}')
-              print('✓ Observation data structure looks correct')
+              print(f'  Photo count:     {len(obs.get(\"photos\", []))}')
+              print('✓ Observation data looks correct')
           else:
-              print('✗ Zero results — unexpected, check API connectivity')
+              print('✗ Zero results returned — unexpected')
               sys.exit(1)
           "
 
@@ -88,5 +76,5 @@ jobs:
           d = json.load(sys.stdin)
           total = d.get('total_results', 0)
           print(f'  Aldrovanda research-grade wild: {total:,}')
-          print('✓ Count endpoint working')
+          print('✓ Count endpoint working correctly')
           "
