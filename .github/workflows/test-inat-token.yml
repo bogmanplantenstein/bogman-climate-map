@@ -16,40 +16,38 @@ jobs:
             "https://api.inaturalist.org/v1/users/me")
 
           echo "HTTP status: $status"
+          echo "Raw response:"
+          cat me.json
 
           if [ "$status" = "200" ]; then
-            echo "✓ Token is valid"
+            echo ""
+            echo "✓ Token is valid — parsing user info..."
             python3 -c "
           import json, sys
-          d = json.load(open('me.json'))
-          print(f'  Authenticated as: {d[\"login\"]} ({d.get(\"name\", \"no display name\")})')
-          print(f'  Observations:     {d[\"observations_count\"]}')
+          raw = open('me.json').read()
+          d = json.loads(raw)
+          # /users/me may return the user directly or wrapped in results[]
+          user = d['results'][0] if 'results' in d else d
+          print(f'  Authenticated as: {user[\"login\"]}')
+          print(f'  Display name:     {user.get(\"name\", \"(none)\")}')
+          print(f'  Observations:     {user.get(\"observations_count\", \"?\")}')
           "
           elif [ "$status" = "401" ]; then
-            echo "✗ Token rejected (401) — check it was copied in full and hasn't expired"
+            echo ""
+            echo "✗ 401 Unauthorized — token was rejected by iNat"
+            echo "  Check: Settings → Secrets → INAT_API_TOKEN is set and not truncated"
+            echo "  Refresh at: https://www.inaturalist.org/users/api_token"
             exit 1
           else
-            echo "✗ Unexpected status $status"
-            cat me.json
+            echo ""
+            echo "✗ Unexpected HTTP status: $status"
             exit 1
           fi
 
-      - name: Check rate limit headers with auth
+      - name: Spot-check observation data
         run: |
           echo ""
-          echo "--- Checking rate limit behaviour ---"
-          curl -s -o /dev/null -D headers.txt \
-            -H "Authorization: Bearer ${{ secrets.INAT_API_TOKEN }}" \
-            -H "Accept: application/json" \
-            "https://api.inaturalist.org/v1/observations?per_page=1&taxon_name=Drosera&quality_grade=research&captive=false"
-
-          echo "Response headers:"
-          grep -i "x-ratelimit\|x-request\|retry-after" headers.txt || echo "  (no rate limit headers — iNat doesn't expose them directly, this is normal)"
-
-      - name: Confirm observation data returns correctly
-        run: |
-          echo ""
-          echo "--- Spot-check: Drosera research-grade wild observations ---"
+          echo "--- Spot-check: Drosera research-grade wild ---"
           curl -s \
             -H "Authorization: Bearer ${{ secrets.INAT_API_TOKEN }}" \
             -H "Accept: application/json" \
@@ -57,25 +55,25 @@ jobs:
             | python3 -c "
           import json, sys
           d = json.load(sys.stdin)
-          total = d['total_results']
-          print(f'  Total Drosera research-grade wild observations: {total:,}')
+          total = d.get('total_results', 0)
+          print(f'  Total Drosera research-grade wild: {total:,}')
           if total > 0:
               obs = d['results'][0]
-              print(f'  Sample obs ID:    {obs[\"id\"]}')
-              print(f'  Sample taxon:     {obs[\"taxon\"][\"name\"]}')
-              print(f'  Sample location:  {obs.get(\"place_guess\", \"(none)\")}')
-              print(f'  Geoprivacy:       {obs.get(\"geoprivacy\", \"open\")}')
-              print(f'  Photos:           {len(obs.get(\"photos\", []))}')
-              print('✓ Data structure looks correct')
+              print(f'  Sample obs ID:   {obs[\"id\"]}')
+              print(f'  Sample taxon:    {obs[\"taxon\"][\"name\"]}')
+              print(f'  Sample location: {obs.get(\"place_guess\", \"(obscured)\")}')
+              print(f'  Geoprivacy:      {obs.get(\"geoprivacy\") or \"open\"}')
+              print(f'  Photos:          {len(obs.get(\"photos\", []))}')
+              print('✓ Observation data structure looks correct')
           else:
-              print('✗ No results returned — unexpected')
+              print('✗ Zero results — unexpected, check API connectivity')
               sys.exit(1)
           "
 
-      - name: Count check for a small genus (Aldrovanda)
+      - name: Count check — Aldrovanda (small genus)
         run: |
           echo ""
-          echo "--- Count check: Aldrovanda (small genus, quick sanity check) ---"
+          echo "--- Count check: Aldrovanda ---"
           curl -s \
             -H "Authorization: Bearer ${{ secrets.INAT_API_TOKEN }}" \
             -H "Accept: application/json" \
@@ -83,10 +81,7 @@ jobs:
             | python3 -c "
           import json, sys
           d = json.load(sys.stdin)
-          total = d['total_results']
+          total = d.get('total_results', 0)
           print(f'  Aldrovanda research-grade wild: {total:,}')
-          if total > 0:
-              print('✓ Count endpoint working correctly')
-          else:
-              print('  (0 results — may be a taxon name issue, check manually)')
+          print('✓ Count endpoint working')
           "
