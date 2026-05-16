@@ -11,7 +11,8 @@
 import { readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
-import { parseGeoraster } from 'georaster';
+import georasterPkg from 'georaster';
+const { parseGeoraster } = georasterPkg;
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT      = resolve(__dirname, '..');
