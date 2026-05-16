@@ -116,7 +116,7 @@ async function apiGet(path, params = {}) {
 // ── Taxon ID resolution ───────────────────────────────────────────────────────
 
 async function resolveTaxonId(genusName) {
-  const data = await apiGet('/v1/taxa', { q: genusName, rank: 'genus', is_active: true });
+  const data = await apiGet('/taxa', { q: genusName, rank: 'genus', is_active: true });
   const match = data.results.find(t => t.name === genusName && t.rank === 'genus');
   if (!match) throw new Error(`Could not resolve taxon_id for genus "${genusName}"`);
   return match.id;
@@ -133,7 +133,7 @@ async function resolveTaxonId(genusName) {
 // This guarantees we never attempt to fetch > 10k results in one query chain.
 
 async function getCount(params) {
-  const data = await apiGet('/v1/observations', { ...params, per_page: 1, page: 1 });
+  const data = await apiGet('/observations', { ...params, per_page: 1, page: 1 });
   return data.total_results;
 }
 
@@ -141,7 +141,7 @@ async function fetchAllPages(params, total) {
   const pages = Math.ceil(total / MAX_PER_PAGE);
   const results = [];
   for (let page = 1; page <= pages; page++) {
-    const data = await apiGet('/v1/observations', { ...params, per_page: MAX_PER_PAGE, page });
+    const data = await apiGet('/observations', { ...params, per_page: MAX_PER_PAGE, page });
     results.push(...data.results);
     if (data.results.length === 0) break; // safety — shouldn't happen
   }
