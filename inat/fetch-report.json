@@ -1,7 +1,78 @@
 {
-  "generated": "2026-05-16T05:49:32.955Z",
-  "genera": {},
-  "totalRequests": 42,
+  "generated": "2026-05-16T06:27:41.893Z",
+  "genera": {
+    "Aldrovanda": {
+      "fetched": 0,
+      "expected": 114,
+      "failed": []
+    },
+    "Byblis": {
+      "fetched": 0,
+      "expected": 374,
+      "failed": []
+    },
+    "Cephalotus": {
+      "fetched": 0,
+      "expected": 382,
+      "failed": []
+    },
+    "Darlingtonia": {
+      "fetched": 0,
+      "expected": 4380,
+      "failed": []
+    },
+    "Dionaea": {
+      "fetched": 0,
+      "expected": 2956,
+      "failed": []
+    },
+    "Drosera": {
+      "fetched": 0,
+      "expected": 163508,
+      "failed": []
+    },
+    "Drosophyllum": {
+      "fetched": 0,
+      "expected": 477,
+      "failed": []
+    },
+    "Genlisea": {
+      "fetched": 0,
+      "expected": 230,
+      "failed": []
+    },
+    "Heliamphora": {
+      "fetched": 0,
+      "expected": 110,
+      "failed": []
+    },
+    "Nepenthes": {
+      "fetched": 0,
+      "expected": 12471,
+      "failed": []
+    },
+    "Pinguicula": {
+      "fetched": 0,
+      "expected": 38399,
+      "failed": []
+    },
+    "Roridula": {
+      "fetched": 0,
+      "expected": 286,
+      "failed": []
+    },
+    "Sarracenia": {
+      "fetched": 0,
+      "expected": 60992,
+      "failed": []
+    },
+    "Utricularia": {
+      "fetched": 0,
+      "expected": 62642,
+      "failed": []
+    }
+  },
+  "totalRequests": 2738,
   "totalObs": 0,
-  "durationMin": 4
+  "durationMin": 41
 }
