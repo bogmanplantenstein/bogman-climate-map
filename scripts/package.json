@@ -1,0 +1,9 @@
+{
+  "name": "bogman-inat-fetch",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Fetches iNaturalist carnivorous plant observations for the Bogman Climate Map",
+  "dependencies": {
+    "georaster": "^1.6.0"
+  }
+}

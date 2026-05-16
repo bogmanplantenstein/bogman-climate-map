@@ -1,0 +1,50 @@
+name: Refresh iNat Data
+
+on:
+  schedule:
+    - cron: '0 3 1 * *'   # 3am UTC on the 1st of each month
+  workflow_dispatch:        # manual trigger any time via Actions tab
+
+permissions:
+  contents: write           # needed to commit updated inat/ files back to repo
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180    # 3-hour cap; full fetch typically takes 60-120 min
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'  # built-in fetch available, no node-fetch needed
+
+      - name: Install script dependencies
+        run: cd scripts && npm install
+
+      - name: Fetch iNat observations
+        env:
+          INAT_API_TOKEN: ${{ secrets.INAT_API_TOKEN }}
+        run: node scripts/fetch-inat-data.js
+
+      - name: Commit updated data files
+        run: |
+          git config user.name  bogmanplantenstein
+          git config user.email bogman@bogmanplantenstein.com
+          git add inat/
+          if git diff --staged --quiet; then
+            echo "No changes to commit — data is already up to date"
+          else
+            git commit -m "chore: monthly iNat data refresh $(date -u +%Y-%m-%d)"
+            git push
+            echo "✓ Data committed and pushed"
+          fi
+
+      - name: Show fetch report
+        if: always()
+        run: |
+          if [ -f inat/fetch-report.json ]; then
+            echo "=== Fetch Report ==="
+            cat inat/fetch-report.json
+          fi

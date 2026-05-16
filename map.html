@@ -11,6 +11,7 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://unpkg.com/georaster"></script>
 <script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
+<script src="https://cdn.jsdelivr.net/npm/supercluster@8.0.1/dist/supercluster.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
@@ -786,6 +787,360 @@ html, body {
 
   #filter-panel { max-width: calc(100vw - 20px); }
 }
+
+/* ── iNat filter panel ───────────────────────────────────────── */
+#inat-panel {
+  display: none;
+  position: absolute;
+  top: 10px;
+  right: 54px;
+  width: 280px;
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  z-index: 900;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+  font-size: 12px;
+}
+#inat-panel.open { display: block; }
+#inat-panel::-webkit-scrollbar { width: 4px; }
+#inat-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.inat-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.inat-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.inat-toggle-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  text-transform: none;
+  letter-spacing: 0;
+}
+/* pill toggle */
+.inat-switch { position: relative; display: inline-block; width: 36px; height: 20px; }
+.inat-switch input { opacity: 0; width: 0; height: 0; }
+.inat-slider {
+  position: absolute; inset: 0;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.inat-slider:before {
+  content: '';
+  position: absolute;
+  left: 2px; top: 2px;
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--text-muted);
+  transition: transform 0.2s, background 0.2s;
+}
+.inat-switch input:checked + .inat-slider { background: var(--accent-dim); border-color: var(--accent); }
+.inat-switch input:checked + .inat-slider:before { transform: translateX(16px); background: var(--accent); }
+
+.inat-section {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.inat-section:last-child { border-bottom: none; }
+.inat-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  user-select: none;
+  padding: 2px 0 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.inat-section-head .inat-chevron { transition: transform 0.2s; }
+.inat-section-head.collapsed .inat-chevron { transform: rotate(-90deg); }
+.inat-section-body { display: flex; flex-direction: column; gap: 3px; }
+.inat-section-body.hidden { display: none; }
+
+.inat-check-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+  padding: 1px 0;
+}
+.inat-check-label input[type=checkbox] { accent-color: var(--accent); cursor: pointer; }
+.inat-genus-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.inat-check-all {
+  font-size: 10px;
+  color: var(--accent);
+  cursor: pointer;
+  background: none;
+  border: none;
+  padding: 0 0 4px;
+  text-align: left;
+  opacity: 0.8;
+}
+.inat-check-all:hover { opacity: 1; }
+
+.inat-status {
+  padding: 6px 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.inat-loading-bar {
+  height: 2px;
+  background: var(--accent-dim);
+  margin: 0 12px 8px;
+  border-radius: 1px;
+  overflow: hidden;
+}
+.inat-loading-bar-inner {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+  animation: inat-indeterminate 1.5s ease infinite;
+}
+@keyframes inat-indeterminate {
+  0%   { margin-left: 0%;    width: 30%; }
+  50%  { margin-left: 50%;   width: 40%; }
+  100% { margin-left: 100%;  width: 0%; }
+}
+
+/* ── iNat map markers ────────────────────────────────────────── */
+.inat-cluster-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.3);
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 1px 6px rgba(0,0,0,0.5);
+  transition: transform 0.1s;
+}
+.inat-cluster-icon:hover { transform: scale(1.1); }
+.inat-obscured-rect {
+  stroke-dasharray: 5, 4;
+  fill-opacity: 0.08;
+  stroke-width: 1.5;
+}
+
+/* ── iNat side panel content ─────────────────────────────────── */
+.inat-panel-back {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0 0 10px;
+}
+.inat-panel-back:hover { opacity: 0.8; }
+
+.inat-cluster-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+.inat-cluster-sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 12px;
+}
+
+.inat-species-list { display: flex; flex-direction: column; gap: 4px; }
+.inat-species-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: border-color 0.15s;
+}
+.inat-species-row:hover { border-color: var(--border); }
+.inat-species-name {
+  font-style: italic;
+  font-size: 13px;
+  color: var(--text-primary);
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.inat-species-count {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border-radius: 10px;
+  padding: 1px 7px;
+}
+
+.inat-obs-list { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.inat-obs-card {
+  display: flex;
+  gap: 10px;
+  padding: 8px 10px;
+  background: var(--bg-elevated);
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: border-color 0.15s;
+  align-items: flex-start;
+}
+.inat-obs-card:hover { border-color: var(--border); }
+.inat-obs-thumb {
+  width: 48px;
+  height: 48px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex-shrink: 0;
+  background: var(--bg);
+}
+.inat-obs-thumb-placeholder {
+  width: 48px;
+  height: 48px;
+  border-radius: 4px;
+  background: var(--bg);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 18px;
+}
+.inat-obs-meta { flex: 1; min-width: 0; }
+.inat-obs-taxon {
+  font-style: italic;
+  font-size: 12px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+.inat-obs-date { font-size: 11px; color: var(--text-muted); }
+.inat-obs-user { font-size: 11px; color: var(--text-muted); }
+.inat-obs-badges { display: flex; gap: 4px; margin-top: 4px; flex-wrap: wrap; }
+.inat-badge {
+  font-size: 9px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.inat-badge-rg  { background: rgba(63,185,80,0.15); color: var(--accent); border: 1px solid rgba(63,185,80,0.3); }
+.inat-badge-nid { background: rgba(210,153,34,0.15); color: var(--warning); border: 1px solid rgba(210,153,34,0.3); }
+.inat-badge-obs { background: rgba(100,130,200,0.15); color: #7ba4f0; border: 1px solid rgba(100,130,200,0.3); }
+
+.inat-load-more {
+  width: 100%;
+  margin-top: 6px;
+  padding: 7px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.inat-load-more:hover { color: var(--text-primary); }
+
+/* iNat detail view */
+.inat-detail-photo-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.inat-detail-photo {
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--bg-elevated);
+}
+.inat-detail-photo-loading {
+  width: 100%;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  background: var(--bg-elevated);
+  animation: pulse 1.5s ease infinite;
+}
+@keyframes pulse { 0%,100%{opacity:0.4} 50%{opacity:0.8} }
+.inat-detail-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 5px; }
+.inat-detail-notes {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.6;
+  margin-bottom: 12px;
+  background: var(--bg-elevated);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.inat-detail-id-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.inat-detail-id-row:last-child { border-bottom: none; }
+.inat-detail-id-taxon { font-style: italic; color: var(--text-primary); }
+.inat-detail-id-user  { color: var(--text-muted); font-size: 11px; }
+.inat-view-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 12px;
+  padding: 8px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--accent);
+  font-size: 12px;
+  text-decoration: none;
+  transition: border-color 0.15s;
+}
+.inat-view-link:hover { border-color: var(--accent); }
+
+@media (max-width: 768px) {
+  #inat-panel { right: 10px; top: auto; bottom: 80px; width: calc(100vw - 20px); max-height: 55vh; }
+}
 </style>
 </head>
 <body>
@@ -803,6 +1158,61 @@ html, body {
         <button id="search-clear" title="Clear search">×</button>
       </div>
       <div id="search-suggestions"></div>
+    </div>
+
+    <!-- iNat filter panel -->
+    <div id="inat-panel">
+      <div class="inat-panel-header">
+        <span>iNaturalist</span>
+        <div class="inat-toggle-row">
+          <span class="inat-toggle-label">Show pins</span>
+          <label class="inat-switch">
+            <input type="checkbox" id="inat-visible-toggle">
+            <span class="inat-slider"></span>
+          </label>
+        </div>
+      </div>
+      <div id="inat-status" class="inat-status" style="display:none"></div>
+      <div id="inat-loading-bar" class="inat-loading-bar" style="display:none">
+        <div class="inat-loading-bar-inner"></div>
+      </div>
+
+      <!-- Genera -->
+      <div class="inat-section">
+        <div class="inat-section-head" data-target="inat-genera-body">
+          Genera <span class="inat-chevron">▾</span>
+        </div>
+        <div class="inat-section-body" id="inat-genera-body">
+          <button class="inat-check-all" id="inat-genera-all">Select all</button>
+          <div id="inat-genera-checks"></div>
+        </div>
+      </div>
+
+      <!-- Quality -->
+      <div class="inat-section">
+        <div class="inat-section-head" data-target="inat-quality-body">
+          Quality <span class="inat-chevron">▾</span>
+        </div>
+        <div class="inat-section-body" id="inat-quality-body">
+          <label class="inat-check-label">
+            <input type="checkbox" id="inat-rg" checked> Research grade
+          </label>
+          <label class="inat-check-label">
+            <input type="checkbox" id="inat-nid"> Needs ID
+          </label>
+        </div>
+      </div>
+
+      <!-- Köppen zones -->
+      <div class="inat-section">
+        <div class="inat-section-head" data-target="inat-koppen-body">
+          Köppen Zone <span class="inat-chevron">▾</span>
+        </div>
+        <div class="inat-section-body hidden" id="inat-koppen-body">
+          <button class="inat-check-all" id="inat-koppen-all">Select all</button>
+          <div id="inat-koppen-checks"></div>
+        </div>
+      </div>
     </div>
 
     <!-- Positioned inside map-container so they sit over the map only -->
@@ -1216,9 +1626,30 @@ function buildMapControls() {
     }
   });
 
+  // iNaturalist toggle button
+  const InatCtrl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const btn = L.DomUtil.create('button', 'map-btn');
+      btn.title     = 'iNaturalist sightings';
+      btn.innerHTML = '🌿';
+      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
+      L.DomEvent.on(btn, 'click', () => {
+        const panel = document.getElementById('inat-panel');
+        const open  = panel.classList.toggle('open');
+        btn.classList.toggle('active', open);
+        // Close other panels
+        document.getElementById('filter-panel').classList.remove('open');
+        document.getElementById('filter-toggle').classList.remove('active');
+      });
+      return btn;
+    }
+  });
+
   new TileCtrl().addTo(map);
   new KoppenCtrl().addTo(map);
   new LegendCtrl().addTo(map);
+  new InatCtrl().addTo(map);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2491,6 +2922,13 @@ async function init() {
 
     setProgress(100);
     handleUrlParams();
+    buildInatFilterPanel();
+    scheduleInatPrefetch();
+
+    // Close iNat panel on map click
+    map.on('click', () => {
+      document.getElementById('inat-panel').classList.remove('open');
+    });
 
   } catch (err) {
     console.error('Data load failed:', err);
@@ -2498,6 +2936,694 @@ async function init() {
     document.getElementById('unmapped-count').textContent = '!';
   }
 }
+
+// ═══════════════════════════════════════════════════════════
+//  iNATURALIST INTEGRATION
+// ═══════════════════════════════════════════════════════════
+
+// ── iNat constants ────────────────────────────────────────
+
+const INAT_GENERA = [
+  'Aldrovanda','Byblis','Cephalotus','Darlingtonia','Dionaea',
+  'Drosera','Drosophyllum','Genlisea','Heliamphora','Nepenthes',
+  'Pinguicula','Roridula','Sarracenia','Utricularia',
+];
+
+const INAT_GENUS_COLORS = {
+  Aldrovanda: '#e74c3c', Byblis: '#9b59b6', Cephalotus: '#1abc9c',
+  Darlingtonia: '#e67e22', Dionaea: '#e91e63', Drosera: '#3498db',
+  Drosophyllum: '#f39c12', Genlisea: '#2ecc71', Heliamphora: '#e91e63',
+  Nepenthes: '#00bcd4', Pinguicula: '#8bc34a', Roridula: '#ff9800',
+  Sarracenia: '#9c27b0', Utricularia: '#607d8b',
+};
+
+const INAT_KOPPEN_GROUPS = [
+  { group: 'A', label: 'Tropical',   zones: [{v:1,c:'Af'},{v:2,c:'Am'},{v:3,c:'Aw'}] },
+  { group: 'B', label: 'Arid',       zones: [{v:4,c:'BWh'},{v:5,c:'BWk'},{v:6,c:'BSh'},{v:7,c:'BSk'}] },
+  { group: 'C', label: 'Temperate',  zones: [{v:8,c:'Csa'},{v:9,c:'Csb'},{v:10,c:'Csc'},{v:11,c:'Cwa'},{v:12,c:'Cwb'},{v:13,c:'Cwc'},{v:14,c:'Cfa'},{v:15,c:'Cfb'},{v:16,c:'Cfc'}] },
+  { group: 'D', label: 'Cold',       zones: [{v:17,c:'Dsa'},{v:18,c:'Dsb'},{v:19,c:'Dsc'},{v:20,c:'Dsd'},{v:21,c:'Dwa'},{v:22,c:'Dwb'},{v:23,c:'Dwc'},{v:24,c:'Dwd'},{v:25,c:'Dfa'},{v:26,c:'Dfb'},{v:27,c:'Dfc'},{v:28,c:'Dfd'}] },
+  { group: 'E', label: 'Polar',      zones: [{v:29,c:'ET'},{v:30,c:'EF'}] },
+];
+
+const INAT_PHOTO_BASE = 'https://inaturalist-open-data.s3.amazonaws.com/photos/';
+const INAT_OBS_URL    = 'https://www.inaturalist.org/observations/';
+const INAT_API_OBS    = 'https://api.inaturalist.org/v1/observations/';
+
+// ── iNat state ────────────────────────────────────────────
+
+let inatVisible       = false;
+let inatWorker        = null;
+let inatWorkerReady   = false;
+let inatLoadedGenera  = new Set();  // which genus files are loaded
+let inatAllLoaded     = false;      // whether all.json is loaded
+let inatTaxa          = [];         // merged taxa lookup [[id,name,genus,common],...]
+let inatObs           = [];         // merged obs arrays [[id,lat,lng,ti,date,flags,photoId,koppen],...]
+let inatClusterGroup  = null;       // L.layerGroup
+let inatRectGroup     = null;       // L.layerGroup for obscured rectangles
+
+// Navigation state
+let inatNav = {
+  mode:           null,   // 'species-list'|'obs-list'|'obs-detail'
+  clusterLeaves:  null,   // all leaves in current cluster
+  clusterLatlng:  null,
+  speciesName:    null,   // currently drilled species
+  obsFeature:     null,   // currently viewed obs
+};
+
+const inatFilters = {
+  genera:  new Set(window.innerWidth >= 1024 ? INAT_GENERA : []),
+  needsId: false,
+  koppen:  new Set(Array.from({ length: 30 }, (_, i) => i + 1)),
+};
+
+// ── Inline worker (Supercluster runs off main thread) ─────
+
+const INAT_WORKER_SRC = `
+importScripts('https://cdn.jsdelivr.net/npm/supercluster@8.0.1/dist/supercluster.min.js');
+let sc = null;
+self.onmessage = function(e) {
+  const { type } = e.data;
+  if (type === 'load') {
+    sc = new Supercluster({ radius: 60, maxZoom: 16, minPoints: 3 });
+    sc.load(e.data.features);
+    self.postMessage({ type: 'loaded', count: e.data.features.length });
+  }
+  if (type === 'getClusters') {
+    const clusters = sc ? sc.getClusters(e.data.bbox, e.data.zoom) : [];
+    self.postMessage({ type: 'clusters', clusters, zoom: e.data.zoom });
+  }
+  if (type === 'getLeaves') {
+    const leaves = sc ? sc.getLeaves(e.data.clusterId, e.data.limit || Infinity, e.data.offset || 0) : [];
+    self.postMessage({ type: 'leaves', leaves, clusterId: e.data.clusterId });
+  }
+};`;
+
+function initInatWorker() {
+  if (inatWorker) inatWorker.terminate();
+  const blob = new Blob([INAT_WORKER_SRC], { type: 'application/javascript' });
+  inatWorker = new Worker(URL.createObjectURL(blob));
+  inatWorkerReady = false;
+  inatWorker.onmessage = handleWorkerMessage;
+  inatWorker.onerror   = err => console.error('iNat worker error:', err);
+}
+
+function handleWorkerMessage(e) {
+  const { type } = e.data;
+  if (type === 'loaded') {
+    inatWorkerReady = true;
+    setInatStatus('');
+    renderInatClusters();
+  }
+  if (type === 'clusters') {
+    drawInatClusters(e.data.clusters, e.data.zoom);
+  }
+  if (type === 'leaves') {
+    const { leaves, clusterId } = e.data;
+    inatNav.clusterLeaves = leaves;
+    openSidePanelForInat();
+    renderInatSpeciesList(leaves);
+  }
+}
+
+// ── Data loading ──────────────────────────────────────────
+
+function inatDataUrl(genus) {
+  return genus === 'all' ? './inat/all.json' : `./inat/${genus.toLowerCase()}.json`;
+}
+
+async function loadInatAll() {
+  setInatStatus('Loading observations…', true);
+  try {
+    const res  = await fetch(inatDataUrl('all'));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    inatTaxa     = data.taxa;
+    inatObs      = data.obs;
+    inatAllLoaded = true;
+    INAT_GENERA.forEach(g => inatLoadedGenera.add(g));
+    rebuildInatIndex();
+  } catch (err) {
+    console.error('Failed to load inat/all.json:', err);
+    setInatStatus('Data unavailable — run the fetch script first');
+  }
+}
+
+async function loadInatGenus(genus) {
+  if (inatLoadedGenera.has(genus) || inatAllLoaded) return;
+  setInatStatus(`Loading ${genus}…`, true);
+  try {
+    const res  = await fetch(inatDataUrl(genus));
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    // Merge taxa — remap indices
+    const offset = inatTaxa.length;
+    inatTaxa.push(...data.taxa);
+    for (const o of data.obs) {
+      inatObs.push([o[0], o[1], o[2], o[3] + offset, o[4], o[5], o[6], o[7]]);
+    }
+    inatLoadedGenera.add(genus);
+    setInatStatus('');
+    rebuildInatIndex();
+  } catch (err) {
+    console.error(`Failed to load inat/${genus}.json:`, err);
+    setInatStatus(`Could not load ${genus} data`);
+  }
+}
+
+// ── Feature building ──────────────────────────────────────
+
+// obs layout: [id, lat, lng, taxon_idx, date, flags, photo_id, koppen]
+const OBS_ID=0, OBS_LAT=1, OBS_LNG=2, OBS_TI=3, OBS_DATE=4, OBS_FLAGS=5, OBS_PHOTO=6, OBS_KOP=7;
+const F_NEEDSID=1, F_OBSCURED=2, F_PHOTO=4;
+
+function buildInatFeatures() {
+  const features = [];
+  for (const o of inatObs) {
+    const taxon  = inatTaxa[o[OBS_TI]];
+    if (!taxon) continue;
+    const genus  = taxon[2];
+    const flags  = o[OBS_FLAGS];
+    const koppen = o[OBS_KOP];
+    // Filter
+    if (!inatFilters.genera.has(genus)) continue;
+    if ((flags & F_NEEDSID) && !inatFilters.needsId) continue;
+    if (!inatFilters.koppen.has(koppen) && koppen !== 0) continue;
+    features.push({
+      type: 'Feature',
+      geometry: { type: 'Point', coordinates: [o[OBS_LNG], o[OBS_LAT]] },
+      properties: {
+        obs_id:      o[OBS_ID],
+        lat:         o[OBS_LAT],
+        lng:         o[OBS_LNG],
+        taxon_idx:   o[OBS_TI],
+        date:        o[OBS_DATE],
+        flags,
+        photo_id:    o[OBS_PHOTO],
+        koppen,
+        genus,
+        taxon_name:  taxon[1],
+        common_name: taxon[3],
+      }
+    });
+  }
+  return features;
+}
+
+function rebuildInatIndex() {
+  if (!inatWorker) return;
+  setInatStatus('Indexing…', true);
+  const features = buildInatFeatures();
+  inatWorker.postMessage({ type: 'load', features });
+}
+
+// ── Rendering ─────────────────────────────────────────────
+
+function renderInatClusters() {
+  if (!inatWorkerReady || !inatVisible) return;
+  const bounds = map.getBounds();
+  const bbox   = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
+  const zoom   = Math.floor(map.getZoom());
+  inatWorker.postMessage({ type: 'getClusters', bbox, zoom });
+}
+
+function drawInatClusters(clusters, zoom) {
+  inatClusterGroup.clearLayers();
+  inatRectGroup.clearLayers();
+
+  for (const f of clusters) {
+    const props = f.properties;
+
+    if (props.cluster) {
+      // ── Cluster circle ──────────────────────────────
+      const count = props.point_count;
+      const size  = Math.max(28, Math.min(60, 20 + Math.log2(count) * 7));
+      const hue   = Math.max(0, 120 - count / 50);  // green → orange → red
+      const icon  = L.divIcon({
+        className: '',
+        html: `<div class="inat-cluster-icon" style="width:${size}px;height:${size}px;background:hsl(${hue},70%,40%);font-size:${size < 36 ? 10 : 12}px">${count > 999 ? Math.round(count/1000)+'k' : count}</div>`,
+        iconSize: [size, size],
+        iconAnchor: [size/2, size/2],
+      });
+      const marker = L.marker([f.geometry.coordinates[1], f.geometry.coordinates[0]], { icon, zIndexOffset: 50 });
+      marker.on('click', e => {
+        L.DomEvent.stopPropagation(e);
+        inatNav.clusterLatlng = e.latlng;
+        inatWorker.postMessage({ type: 'getLeaves', clusterId: props.cluster_id });
+      });
+      inatClusterGroup.addLayer(marker);
+
+    } else {
+      // ── Individual observation ───────────────────────
+      const { lat, lng, flags, photo_id, genus, obs_id, taxon_name, common_name, date } = props;
+      const color    = INAT_GENUS_COLORS[genus] || '#aaa';
+      const obscured = !!(flags & F_OBSCURED);
+
+      if (obscured) {
+        // Draw the iNat 0.2° uncertainty box
+        const swLat = Math.floor(lat / 0.2) * 0.2;
+        const swLng = Math.floor(lng / 0.2) * 0.2;
+        const rect  = L.rectangle([[swLat, swLng], [swLat + 0.2, swLng + 0.2]], {
+          className:   'inat-obscured-rect',
+          color,
+          fillColor:   color,
+          fillOpacity: 0.08,
+          weight:      1.5,
+          dashArray:   '5,4',
+          interactive: true,
+        });
+        rect.on('click', e => { L.DomEvent.stopPropagation(e); openInatObsPanel(f); });
+        inatRectGroup.addLayer(rect);
+      } else {
+        const marker = L.circleMarker([lat, lng], {
+          radius:      5,
+          color:       '#fff',
+          fillColor:   color,
+          weight:      1.5,
+          fillOpacity: 0.85,
+          opacity:     0.9,
+          interactive: true,
+        });
+        marker.on('click', e => { L.DomEvent.stopPropagation(e); openInatObsPanel(f); });
+        inatClusterGroup.addLayer(marker);
+      }
+    }
+  }
+}
+
+// ── Side panel — species list ─────────────────────────────
+
+function openSidePanelForInat() {
+  // Close species panel if open, preserve search panel logic
+  if (selectedId) {
+    if (markerStore.has(selectedId)) {
+      const { marker, taxon } = markerStore.get(selectedId);
+      marker.setIcon(makeIcon(taxon, false));
+    }
+    selectedId = null;
+    clearRegionHighlight();
+    setUrlParam('taxon', null);
+    if (climateChart) { climateChart.destroy(); climateChart = null; }
+    if (lightChart)   { lightChart.destroy();   lightChart   = null; }
+  }
+  if (searchPanelOpen) {
+    searchPanelOpen = false;
+    searchState = null;
+    if (searchMarker) { map.removeLayer(searchMarker); searchMarker = null; }
+  }
+  document.getElementById('side-panel').classList.add('open');
+}
+
+function renderInatSpeciesList(leaves) {
+  inatNav.mode = 'species-list';
+  openSidePanelForInat();
+
+  // Count by taxon name
+  const counts = {};
+  for (const lf of leaves) {
+    const name = lf.properties.taxon_name || 'Unknown';
+    counts[name] = (counts[name] || 0) + 1;
+  }
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+
+  const coord = inatNav.clusterLatlng
+    ? `${Math.abs(inatNav.clusterLatlng.lat).toFixed(2)}°${inatNav.clusterLatlng.lat>=0?'N':'S'}, ${Math.abs(inatNav.clusterLatlng.lng).toFixed(2)}°${inatNav.clusterLatlng.lng>=0?'E':'W'}`
+    : '';
+
+  const rows = sorted.map(([name, cnt]) => {
+    const sample = leaves.find(lf => lf.properties.taxon_name === name);
+    const genus  = sample?.properties.genus || '';
+    const color  = INAT_GENUS_COLORS[genus] || '#aaa';
+    return `<div class="inat-species-row" data-species="${esc(name)}">
+      <div class="inat-species-name">
+        <span class="inat-genus-dot" style="background:${color}"></span>
+        ${esc(name)}
+      </div>
+      <span class="inat-species-count">${cnt}</span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('panel-content').innerHTML = `
+    <div class="inat-cluster-title">${leaves.length.toLocaleString()} iNat sightings</div>
+    <div class="inat-cluster-sub">${coord} · ${sorted.length} species</div>
+    <div class="inat-species-list">${rows}</div>
+  `;
+
+  document.querySelectorAll('.inat-species-row').forEach(el => {
+    el.addEventListener('click', () => {
+      inatNav.speciesName = el.dataset.species;
+      renderInatObsList(inatNav.clusterLeaves.filter(lf => lf.properties.taxon_name === el.dataset.species));
+    });
+  });
+}
+
+// ── Side panel — observation list ────────────────────────
+
+const INAT_OBS_PAGE = 20;
+
+function renderInatObsList(leaves, offset = 0) {
+  inatNav.mode = 'obs-list';
+
+  const page    = leaves.slice(offset, offset + INAT_OBS_PAGE);
+  const hasMore = leaves.length > offset + INAT_OBS_PAGE;
+
+  const backBtn = `<button class="inat-panel-back" id="inat-back-species">← Species list</button>`;
+
+  const cards = page.map(lf => obsCard(lf)).join('');
+
+  const content = `
+    ${backBtn}
+    <div class="inat-cluster-title" style="font-style:italic">${esc(inatNav.speciesName)}</div>
+    <div class="inat-cluster-sub">${leaves.length} sightings in this area</div>
+    <div class="inat-obs-list" id="inat-obs-list">${cards}</div>
+    ${hasMore ? `<button class="inat-load-more" id="inat-load-more" data-offset="${offset + INAT_OBS_PAGE}">Load more (${leaves.length - offset - INAT_OBS_PAGE} remaining)</button>` : ''}
+  `;
+
+  if (offset === 0) {
+    document.getElementById('panel-content').innerHTML = content;
+  } else {
+    document.getElementById('inat-obs-list').insertAdjacentHTML('beforeend', cards);
+    document.getElementById('inat-load-more')?.remove();
+    if (hasMore) {
+      document.getElementById('panel-scroll').insertAdjacentHTML('beforeend',
+        `<button class="inat-load-more" id="inat-load-more" data-offset="${offset + INAT_OBS_PAGE}">Load more (${leaves.length - offset - INAT_OBS_PAGE} remaining)</button>`);
+    }
+  }
+
+  // Wire events
+  document.getElementById('inat-back-species')?.addEventListener('click', () => {
+    renderInatSpeciesList(inatNav.clusterLeaves);
+  });
+  document.querySelectorAll('.inat-obs-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const idx = parseInt(card.dataset.idx);
+      inatNav.obsFeature = leaves[idx];
+      openInatObsPanel(leaves[idx]);
+    });
+  });
+  document.getElementById('inat-load-more')?.addEventListener('click', e => {
+    const nextOffset = parseInt(e.target.dataset.offset);
+    renderInatObsList(leaves, nextOffset);
+  });
+}
+
+function obsCard(lf, idx = 0) {
+  const p       = lf.properties;
+  const hasPhoto = !!(p.flags & F_PHOTO);
+  const photoEl  = hasPhoto && p.photo_id
+    ? `<img class="inat-obs-thumb" src="${INAT_PHOTO_BASE}${p.photo_id}/square.jpeg" loading="lazy" onerror="this.style.display='none'">`
+    : `<div class="inat-obs-thumb-placeholder">🌿</div>`;
+  const qBadge   = (p.flags & F_NEEDSID)
+    ? `<span class="inat-badge inat-badge-nid">Needs ID</span>`
+    : `<span class="inat-badge inat-badge-rg">Research</span>`;
+  const obsBadge = (p.flags & F_OBSCURED) ? `<span class="inat-badge inat-badge-obs">Approx.</span>` : '';
+  return `<div class="inat-obs-card" data-idx="${idx}">
+    ${photoEl}
+    <div class="inat-obs-meta">
+      <div class="inat-obs-taxon">${esc(p.taxon_name)}</div>
+      <div class="inat-obs-date">${p.date || '—'}</div>
+      <div class="inat-obs-badges">${qBadge}${obsBadge}</div>
+    </div>
+  </div>`;
+}
+
+// ── Side panel — observation detail ──────────────────────
+
+function openInatObsPanel(feature) {
+  inatNav.mode       = 'obs-detail';
+  inatNav.obsFeature = feature;
+  openSidePanelForInat();
+
+  const p         = feature.properties;
+  const hasPhoto  = !!(p.flags & F_PHOTO);
+  const obscured  = !!(p.flags & F_OBSCURED);
+  const qBadge    = (p.flags & F_NEEDSID)
+    ? `<span class="inat-badge inat-badge-nid">Needs ID</span>`
+    : `<span class="inat-badge inat-badge-rg">Research grade</span>`;
+  const obsBadge  = obscured ? `<span class="inat-badge inat-badge-obs">Location approx. (obscured)</span>` : '';
+
+  // Koppen badge
+  const kv      = p.koppen;
+  let koppenBadge = '';
+  if (kv >= 1 && kv <= 30) {
+    const zone  = BECK_ZONES[kv];
+    const [r,g,b] = BECK_COLORS[kv];
+    koppenBadge = `<span class="badge badge-koppen" style="color:rgb(${r},${g},${b});border-color:rgba(${r},${g},${b},0.3);background:rgba(${r},${g},${b},0.1)">${zone.code}</span>`;
+  }
+
+  // Photo placeholder (fills in via live fetch)
+  const photoSection = hasPhoto
+    ? `<div id="inat-photo-gallery" class="inat-detail-photo-gallery">
+        <div class="inat-detail-photo-loading"></div>
+        <div class="inat-detail-photo-loading"></div>
+      </div>`
+    : '';
+
+  const backBtn = inatNav.clusterLeaves
+    ? `<button class="inat-panel-back" id="inat-back-obs">← ${inatNav.speciesName ? 'Sightings' : 'Species list'}</button>`
+    : '';
+
+  const coordStr = obscured
+    ? `~${p.lat.toFixed(2)}, ${p.lng.toFixed(2)} (obscured)`
+    : `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`;
+
+  document.getElementById('panel-content').innerHTML = `
+    ${backBtn}
+    <div class="p-species-name">${esc(p.taxon_name)}</div>
+    ${p.common_name ? `<div class="p-common-name">${esc(p.common_name)}</div>` : ''}
+    <div class="p-location">${coordStr}</div>
+    <div class="badge-row" style="margin-top:8px">
+      ${qBadge}${obsBadge}${koppenBadge}
+    </div>
+    <div class="section-divider"></div>
+    ${photoSection}
+    <div id="inat-detail-body">
+      <div class="inat-detail-photo-loading" style="height:60px;border-radius:6px;margin-bottom:12px"></div>
+    </div>
+    <a class="inat-view-link" href="${INAT_OBS_URL}${p.obs_id}" target="_blank" rel="noopener">
+      View on iNaturalist →
+    </a>
+  `;
+
+  document.getElementById('inat-back-obs')?.addEventListener('click', () => {
+    if (inatNav.speciesName && inatNav.clusterLeaves) {
+      renderInatObsList(inatNav.clusterLeaves.filter(lf => lf.properties.taxon_name === inatNav.speciesName));
+    } else if (inatNav.clusterLeaves) {
+      renderInatSpeciesList(inatNav.clusterLeaves);
+    }
+  });
+
+  // Live-fetch full detail
+  fetchInatObsDetail(p.obs_id);
+}
+
+async function fetchInatObsDetail(obsId) {
+  try {
+    const res  = await fetch(`${INAT_API_OBS}${obsId}?`);
+    if (!res.ok) return;
+    const data = await res.json();
+    const obs  = data.results?.[0];
+    if (!obs) return;
+
+    // Photos
+    const gallery = document.getElementById('inat-photo-gallery');
+    if (gallery && obs.photos?.length) {
+      gallery.innerHTML = obs.photos.map(ph => {
+        const src = ph.url?.replace('square', 'medium') || '';
+        return `<img class="inat-detail-photo" src="${src}" loading="lazy" onerror="this.style.display='none'" title="${esc(ph.attribution || '')}">`;
+      }).join('');
+    } else if (gallery) {
+      gallery.remove();
+    }
+
+    // Detail body
+    const body = document.getElementById('inat-detail-body');
+    if (!body) return;
+
+    let html = '';
+
+    // Observer
+    if (obs.user?.login) {
+      html += `<div class="inat-detail-label">Observer</div>
+        <div style="font-size:12px;color:var(--text-primary);margin-bottom:10px">
+          ${esc(obs.user.name || obs.user.login)}
+          <span style="color:var(--text-muted)"> @${esc(obs.user.login)}</span>
+        </div>`;
+    }
+
+    // Notes
+    if (obs.description?.trim()) {
+      html += `<div class="inat-detail-label">Notes</div>
+        <div class="inat-detail-notes">${esc(obs.description)}</div>`;
+    }
+
+    // Identifications
+    const ids = (obs.identifications || []).filter(id => id.current);
+    if (ids.length) {
+      html += `<div class="inat-detail-label">Identifications</div>
+        <div style="margin-bottom:12px">${ids.map(id => `
+          <div class="inat-detail-id-row">
+            <div>
+              <div class="inat-detail-id-taxon">${esc(id.taxon?.name || '—')}</div>
+              <div class="inat-detail-id-user">@${esc(id.user?.login || '?')}${id.body ? ` · ${esc(id.body.slice(0, 80))}` : ''}</div>
+            </div>
+          </div>`).join('')}
+        </div>`;
+    }
+
+    body.innerHTML = html;
+  } catch (err) {
+    const body = document.getElementById('inat-detail-body');
+    if (body) body.innerHTML = '<div style="font-size:11px;color:var(--text-muted)">Could not load details</div>';
+  }
+}
+
+// ── Filter panel UI ───────────────────────────────────────
+
+function buildInatFilterPanel() {
+  const isMobile = window.innerWidth < 1024;
+
+  // Genera checkboxes
+  const genChecks = document.getElementById('inat-genera-checks');
+  genChecks.innerHTML = INAT_GENERA.map(g => `
+    <label class="inat-check-label">
+      <input type="checkbox" class="inat-genus-cb" data-genus="${g}" ${!isMobile ? 'checked' : ''}>
+      <span class="inat-genus-dot" style="background:${INAT_GENUS_COLORS[g]}"></span>
+      ${g}
+    </label>`).join('');
+
+  // Koppen checkboxes (grouped + collapsible)
+  const kopChecks = document.getElementById('inat-koppen-checks');
+  kopChecks.innerHTML = INAT_KOPPEN_GROUPS.map(grp => `
+    <div style="margin-bottom:6px">
+      <div style="font-size:10px;font-weight:600;color:var(--text-muted);text-transform:uppercase;margin-bottom:3px;letter-spacing:0.05em">${grp.label}</div>
+      ${grp.zones.map(z => `
+        <label class="inat-check-label" style="padding-left:8px">
+          <input type="checkbox" class="inat-koppen-cb" data-kv="${z.v}" checked>
+          ${z.c}
+        </label>`).join('')}
+    </div>`).join('');
+
+  // Collapsible sections
+  document.querySelectorAll('.inat-section-head').forEach(head => {
+    head.addEventListener('click', () => {
+      const target = document.getElementById(head.dataset.target);
+      target.classList.toggle('hidden');
+      head.classList.toggle('collapsed');
+    });
+  });
+
+  // Genus checkboxes → filter + load data
+  document.getElementById('inat-genera-all').addEventListener('click', () => {
+    document.querySelectorAll('.inat-genus-cb').forEach(cb => { cb.checked = true; });
+    applyInatFilters();
+  });
+  document.querySelectorAll('.inat-genus-cb').forEach(cb => {
+    cb.addEventListener('change', applyInatFilters);
+  });
+
+  // Quality
+  document.getElementById('inat-rg').addEventListener('change',  applyInatFilters);
+  document.getElementById('inat-nid').addEventListener('change', applyInatFilters);
+
+  // Köppen
+  document.getElementById('inat-koppen-all').addEventListener('click', () => {
+    document.querySelectorAll('.inat-koppen-cb').forEach(cb => { cb.checked = true; });
+    applyInatFilters();
+  });
+  document.querySelectorAll('.inat-koppen-cb').forEach(cb => {
+    cb.addEventListener('change', applyInatFilters);
+  });
+
+  // Visible toggle
+  document.getElementById('inat-visible-toggle').addEventListener('change', e => {
+    inatVisible = e.target.checked;
+    if (inatVisible) {
+      enableInatLayer();
+    } else {
+      disableInatLayer();
+    }
+  });
+}
+
+function applyInatFilters() {
+  // Genera
+  inatFilters.genera = new Set(
+    [...document.querySelectorAll('.inat-genus-cb:checked')].map(cb => cb.dataset.genus)
+  );
+  // Quality
+  inatFilters.needsId = document.getElementById('inat-nid').checked;
+  // Koppen
+  inatFilters.koppen  = new Set(
+    [...document.querySelectorAll('.inat-koppen-cb:checked')].map(cb => parseInt(cb.dataset.kv))
+  );
+
+  if (!inatVisible) return;
+
+  // On mobile: load needed genus files; on desktop: all.json already loaded
+  if (window.innerWidth < 1024 && !inatAllLoaded) {
+    Promise.all([...inatFilters.genera].filter(g => !inatLoadedGenera.has(g)).map(loadInatGenus))
+      .then(() => rebuildInatIndex());
+  } else {
+    rebuildInatIndex();
+  }
+}
+
+// ── Layer enable/disable ──────────────────────────────────
+
+async function enableInatLayer() {
+  if (!inatClusterGroup) {
+    inatClusterGroup = L.layerGroup().addTo(map);
+    inatRectGroup    = L.layerGroup().addTo(map);
+  } else {
+    if (!map.hasLayer(inatClusterGroup)) inatClusterGroup.addTo(map);
+    if (!map.hasLayer(inatRectGroup))    inatRectGroup.addTo(map);
+  }
+  initInatWorker();
+
+  const isMobile = window.innerWidth < 1024;
+  if (!isMobile && !inatAllLoaded) {
+    await loadInatAll();
+  } else if (isMobile && !inatAllLoaded) {
+    const toLoad = [...inatFilters.genera].filter(g => !inatLoadedGenera.has(g));
+    if (toLoad.length) {
+      await Promise.all(toLoad.map(loadInatGenus));
+    } else {
+      rebuildInatIndex();
+    }
+  } else {
+    rebuildInatIndex();
+  }
+
+  map.on('moveend', renderInatClusters);
+  map.on('zoomend', renderInatClusters);
+}
+
+function disableInatLayer() {
+  if (inatClusterGroup) inatClusterGroup.clearLayers();
+  if (inatRectGroup)    inatRectGroup.clearLayers();
+  map.off('moveend', renderInatClusters);
+  map.off('zoomend', renderInatClusters);
+}
+
+// ── Status helper ─────────────────────────────────────────
+
+function setInatStatus(msg, loading = false) {
+  const el  = document.getElementById('inat-status');
+  const bar = document.getElementById('inat-loading-bar');
+  if (msg) { el.textContent = msg; el.style.display = 'block'; } else { el.style.display = 'none'; }
+  bar.style.display = loading ? 'block' : 'none';
+}
+
+// ── Desktop prefetch (3s after map loads) ─────────────────
+
+function scheduleInatPrefetch() {
+  if (window.innerWidth < 1024) return;
+  setTimeout(() => {
+    fetch(inatDataUrl('all'), { priority: 'low' }).catch(() => {}); // warm browser cache silently
+  }, 3000);
+}
+
+// ═══════════════════════════════════════════════════════════
 
 init();
 </script>
