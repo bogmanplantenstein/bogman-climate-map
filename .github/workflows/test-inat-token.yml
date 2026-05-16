@@ -24,13 +24,18 @@ jobs:
             echo "✓ Token is valid — parsing user info..."
             python3 -c "
           import json, sys
-          raw = open('me.json').read()
-          d = json.loads(raw)
-          # /users/me may return the user directly or wrapped in results[]
+          d = json.loads(open('me.json').read())
+          # Unwrap if results array, otherwise use top level
           user = d['results'][0] if 'results' in d else d
-          print(f'  Authenticated as: {user[\"login\"]}')
-          print(f'  Display name:     {user.get(\"name\", \"(none)\")}')
-          print(f'  Observations:     {user.get(\"observations_count\", \"?\")}')
+          # Print whatever keys are available for diagnostics
+          print(f'  Top-level keys: {list(d.keys())}')
+          print(f'  User-level keys: {list(user.keys())}')
+          login = user.get('login') or user.get('username') or '(key not found)'
+          name  = user.get('name') or user.get('display_name') or '(none)'
+          obs   = user.get('observations_count', '?')
+          print(f'  Authenticated as: {login}')
+          print(f'  Display name:     {name}')
+          print(f'  Observations:     {obs}')
           "
           elif [ "$status" = "401" ]; then
             echo ""
