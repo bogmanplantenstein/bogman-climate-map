@@ -3399,6 +3399,9 @@ function openInatObsPanel(feature) {
     <div id="inat-detail-body">
       <div class="inat-detail-photo-loading" style="height:60px;border-radius:6px;margin-bottom:12px"></div>
     </div>
+    <button class="kp-climate-btn" onclick="openClimateAt(${p.lat},${p.lng})">
+      ↓ Load climate data${obscured ? ' (approx. location)' : ''}
+    </button>
     <a class="inat-view-link" href="${INAT_OBS_URL}${p.obs_id}" target="_blank" rel="noopener">
       View on iNaturalist →
     </a>
