@@ -1080,14 +1080,14 @@ html, body {
 
 /* iNat detail view */
 .inat-detail-photo-gallery {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  display: flex;
+  flex-direction: column;
   gap: 6px;
   margin-bottom: 14px;
 }
 .inat-detail-photo {
   width: 100%;
-  aspect-ratio: 1;
+  aspect-ratio: 4/3;
   object-fit: cover;
   border-radius: 6px;
   cursor: pointer;
@@ -1095,7 +1095,7 @@ html, body {
 }
 .inat-detail-photo-loading {
   width: 100%;
-  aspect-ratio: 1;
+  aspect-ratio: 4/3;
   border-radius: 6px;
   background: var(--bg-elevated);
   animation: pulse 1.5s ease infinite;
@@ -1493,6 +1493,12 @@ function initMap() {
   map.createPane('koppenPane');
   map.getPane('koppenPane').style.zIndex = 250;
   map.on('zoomend', updateKoppenBlur);
+
+  // Re-render map tiles whenever the side panel finishes opening/closing.
+  // Without this Leaflet leaves a blank strip where the panel was.
+  document.getElementById('side-panel').addEventListener('transitionend', e => {
+    if (e.propertyName === 'width') map.invalidateSize({ animate: false });
+  });
 
   // Labels pane sits above the Köppen overlay so country names are always readable
   map.createPane('labelsPane');
