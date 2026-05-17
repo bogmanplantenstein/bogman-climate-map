@@ -1138,6 +1138,41 @@ html, body {
 }
 .inat-view-link:hover { border-color: var(--accent); }
 
+/* ── iNat collapsible sections ───────────────────────── */
+.inat-section {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.inat-section > summary {
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  user-select: none;
+  background: var(--bg-elevated);
+}
+.inat-section > summary::-webkit-details-marker { display: none; }
+.inat-section > summary::after {
+  content: '›';
+  margin-left: auto;
+  font-size: 16px;
+  color: var(--text-muted);
+  transition: transform 0.2s;
+}
+.inat-section[open] > summary::after { transform: rotate(90deg); }
+.inat-section > summary:hover { background: var(--bg-panel); }
+.inat-section-body {
+  padding: 10px 12px 12px;
+  border-top: 1px solid var(--border);
+}
+
 @media (max-width: 768px) {
   #inat-panel { right: 10px; top: auto; bottom: 80px; width: calc(100vw - 20px); max-height: 55vh; }
 }
@@ -3359,30 +3394,21 @@ function openInatObsPanel(feature) {
   inatNav.obsFeature = feature;
   openSidePanelForInat();
 
-  const p         = feature.properties;
-  const hasPhoto  = !!(p.flags & F_PHOTO);
-  const obscured  = !!(p.flags & F_OBSCURED);
-  const qBadge    = (p.flags & F_NEEDSID)
+  const p        = feature.properties;
+  const hasPhoto = !!(p.flags & F_PHOTO);
+  const obscured = !!(p.flags & F_OBSCURED);
+  const qBadge   = (p.flags & F_NEEDSID)
     ? `<span class="inat-badge inat-badge-nid">Needs ID</span>`
     : `<span class="inat-badge inat-badge-rg">Research grade</span>`;
-  const obsBadge  = obscured ? `<span class="inat-badge inat-badge-obs">Location approx. (obscured)</span>` : '';
+  const obsBadge = obscured ? `<span class="inat-badge inat-badge-obs">Location approx. (obscured)</span>` : '';
 
-  // Koppen badge
-  const kv      = p.koppen;
+  const kv = p.koppen;
   let koppenBadge = '';
   if (kv >= 1 && kv <= 30) {
-    const zone  = BECK_ZONES[kv];
+    const zone = BECK_ZONES[kv];
     const [r,g,b] = BECK_COLORS[kv];
     koppenBadge = `<span class="badge badge-koppen" style="color:rgb(${r},${g},${b});border-color:rgba(${r},${g},${b},0.3);background:rgba(${r},${g},${b},0.1)">${zone.code}</span>`;
   }
-
-  // Photo placeholder (fills in via live fetch)
-  const photoSection = hasPhoto
-    ? `<div id="inat-photo-gallery" class="inat-detail-photo-gallery">
-        <div class="inat-detail-photo-loading"></div>
-        <div class="inat-detail-photo-loading"></div>
-      </div>`
-    : '';
 
   const backBtn = inatNav.clusterLeaves
     ? `<button class="inat-panel-back" id="inat-back-obs">← ${inatNav.speciesName ? 'Sightings' : 'Species list'}</button>`
@@ -3397,23 +3423,41 @@ function openInatObsPanel(feature) {
     <div class="p-species-name">${esc(p.taxon_name)}</div>
     ${p.common_name ? `<div class="p-common-name">${esc(p.common_name)}</div>` : ''}
     <div class="p-location">${coordStr}</div>
-    <div class="badge-row" style="margin-top:8px">
-      ${qBadge}${obsBadge}${koppenBadge}
-    </div>
-    <button class="kp-climate-btn" onclick="openClimateAt(${p.lat},${p.lng})">
-      ↓ Load climate data${obscured ? ' (approx. location)' : ''}
-    </button>
-    <div class="section-divider"></div>
-    ${photoSection}
-    <div id="inat-detail-body">
-      <div class="inat-detail-photo-loading" style="height:60px;border-radius:6px;margin-bottom:12px"></div>
-    </div>
-    <a class="inat-view-link" href="${INAT_OBS_URL}${p.obs_id}" target="_blank" rel="noopener">
-      View on iNaturalist →
-    </a>
+    <div class="badge-row" style="margin-top:8px">${qBadge}${obsBadge}${koppenBadge}</div>
+    <a class="inat-view-link" href="${INAT_OBS_URL}${p.obs_id}" target="_blank" rel="noopener">View on iNaturalist →</a>
+
+    ${hasPhoto ? `
+    <details class="inat-section" open id="inat-sec-photos">
+      <summary>📷 Photos</summary>
+      <div class="inat-section-body">
+        <div id="inat-photo-gallery" class="inat-detail-photo-gallery">
+          <div class="inat-detail-photo-loading"></div>
+        </div>
+      </div>
+    </details>` : ''}
+
+    <details class="inat-section" open id="inat-sec-details">
+      <summary>🌿 Sighting Details</summary>
+      <div class="inat-section-body">
+        <div id="inat-detail-body">
+          <div class="inat-detail-photo-loading" style="height:40px;border-radius:4px;margin:4px 0 8px"></div>
+        </div>
+      </div>
+    </details>
+
+    <details class="inat-section" id="inat-sec-climate">
+      <summary>🌡️ Climate Data${obscured ? ' (approx. location)' : ''}</summary>
+      <div class="inat-section-body">
+        <div id="inat-climate-body">
+          <div class="climate-pending" style="padding:8px 0 4px">Expand to load climate data for this location</div>
+        </div>
+      </div>
+    </details>
   `;
 
   document.getElementById('inat-back-obs')?.addEventListener('click', () => {
+    if (climateChart) { climateChart.destroy(); climateChart = null; }
+    if (lightChart)   { lightChart.destroy();   lightChart   = null; }
     if (inatNav.speciesName && inatNav.clusterLeaves) {
       renderInatObsList(inatNav.clusterLeaves.filter(lf => lf.properties.taxon_name === inatNav.speciesName));
     } else if (inatNav.clusterLeaves) {
@@ -3421,7 +3465,15 @@ function openInatObsPanel(feature) {
     }
   });
 
-  // Live-fetch full detail
+  // Lazy-load climate data the first time that section is opened
+  let climateLoaded = false;
+  document.getElementById('inat-sec-climate')?.addEventListener('toggle', function () {
+    if (this.open && !climateLoaded) {
+      climateLoaded = true;
+      loadInatClimateSection(p.lat, p.lng);
+    }
+  });
+
   fetchInatObsDetail(p.obs_id);
 }
 
@@ -3484,6 +3536,68 @@ async function fetchInatObsDetail(obsId) {
     const body = document.getElementById('inat-detail-body');
     if (body) body.innerHTML = '<div style="font-size:11px;color:var(--text-muted)">Could not load details</div>';
   }
+}
+
+// ── Inline climate section for obs detail ─────────────────
+
+async function loadInatClimateSection(lat, lng) {
+  const body = document.getElementById('inat-climate-body');
+  if (!body) return;
+  body.innerHTML = '<div class="climate-pending">Loading climate data…</div>';
+
+  if (climateChart) { climateChart.destroy(); climateChart = null; }
+  if (lightChart)   { lightChart.destroy();   lightChart   = null; }
+
+  const [normals, rh] = await Promise.all([
+    fetchSearchClimateNormals(lat, lng).catch(() => null),
+    fetchRHNormals(lat, lng).catch(() => null),
+  ]);
+
+  const b = document.getElementById('inat-climate-body');
+  if (!b) return; // navigated away
+
+  if (!normals?.tempMax) {
+    b.innerHTML = '<div class="climate-pending">Climate data unavailable for this location</div>';
+    return;
+  }
+  if (rh) { normals.rhHigh = rh.rhHigh; normals.rhLow = rh.rhLow; normals.rhMean = rh.rhMean; }
+
+  const validMax = normals.tempMax.filter(x => x != null);
+  const validMin = normals.tempMin.filter(x => x != null);
+  const peakHigh = validMax.length ? Math.max(...validMax) : null;
+  const peakLow  = validMin.length ? Math.min(...validMin) : null;
+  const annPrec  = Math.round(normals.precipMm.reduce((a, v) => a + (v || 0), 0));
+  const validDLI = normals.dli ? normals.dli.filter(x => x != null) : [];
+  const avgDLI   = validDLI.length ? validDLI.reduce((a, v) => a + v, 0) / validDLI.length : null;
+  const validRH  = normals.rhMean ? normals.rhMean.filter(v => v != null) : [];
+  const annRH    = validRH.length ? validRH.reduce((a, v) => a + v, 0) / validRH.length : null;
+
+  b.innerHTML = `
+    <div class="climate-grid" style="margin-top:4px">
+      <div class="climate-stat"><div class="climate-stat-label">Avg High</div>
+        <div class="climate-stat-value" data-celsius="${peakHigh}">${toDisplay(peakHigh, tempUnit)}</div></div>
+      <div class="climate-stat"><div class="climate-stat-label">Avg Low</div>
+        <div class="climate-stat-value" data-celsius="${peakLow}">${toDisplay(peakLow, tempUnit)}</div></div>
+      <div class="climate-stat"><div class="climate-stat-label">Annual Precip</div>
+        <div class="climate-stat-value">${annPrec}<span class="climate-stat-unit">mm</span></div></div>
+      ${avgDLI != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg DLI</div>
+        <div class="climate-stat-value">${avgDLI.toFixed(1)}<span class="climate-stat-unit">mol/m²</span></div></div>` : ''}
+      ${annRH != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg RH</div>
+        <div class="climate-stat-value">${Math.round(annRH)}<span class="climate-stat-unit">%</span></div></div>` : ''}
+    </div>
+    <div class="section-label" style="margin-top:12px">Temperature &amp; Precipitation</div>
+    <div class="chart-wrap"><canvas id="climate-chart"></canvas></div>
+    ${buildClimateTable(normals)}
+    ${normals.daylightHrs ? `
+      <div class="section-divider"></div>
+      <div class="section-label">Light &amp; Atmosphere</div>
+      <div class="chart-wrap"><canvas id="light-chart"></canvas></div>
+      ${buildLightTable(normals)}
+    ` : ''}
+  `;
+
+  buildClimateChart(normals);
+  if (normals.daylightHrs) buildLightChart(normals);
 }
 
 // ── Filter panel UI ───────────────────────────────────────
