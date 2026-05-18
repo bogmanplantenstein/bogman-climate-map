@@ -762,6 +762,34 @@ html, body {
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.search-suggestion-sep {
+  padding: 4px 12px 3px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  border-bottom: 1px solid var(--border);
+}
+.search-suggestion-taxon-name {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-style: italic;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-suggestion-taxon-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.search-suggestion-genus-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
 
 /* ── Mobile ──────────────────────────────────────────────── */
 @media (max-width: 768px) {
@@ -2595,7 +2623,24 @@ function renderSuggestions(results) {
   searchHighlightedIdx = -1;
   const el = document.getElementById('search-suggestions');
   if (!results.length) { el.classList.remove('open'); return; }
-  el.innerHTML = results.map((r, i) => {
+
+  const taxa   = results.filter(r => r._type === 'inat-taxon');
+  const locs   = results.filter(r => r._type !== 'inat-taxon');
+  const showSep = taxa.length > 0 && locs.length > 0;
+
+  const taxaHtml = taxa.map((r, _) => {
+    const i = results.indexOf(r);
+    const dot   = `<span class="search-suggestion-genus-dot" style="background:${INAT_GENUS_COLORS[r.genus] || '#aaa'}"></span>`;
+    const count = r.count > 0 ? `<span style="color:var(--text-muted);font-size:11px;font-style:normal">${r.count.toLocaleString()} sightings</span>` : '';
+    const sub   = [r.commonName, r.genus].filter(Boolean);
+    return `<div class="search-suggestion" data-idx="${i}">
+      <div class="search-suggestion-taxon-row">${dot}<div class="search-suggestion-taxon-name">${esc(r.taxonName)}</div>${count}</div>
+      ${sub.length ? `<div class="search-suggestion-sub">${esc(sub.join(' · '))}</div>` : ''}
+    </div>`;
+  }).join('');
+
+  const locsHtml = locs.map(r => {
+    const i = results.indexOf(r);
     const name = r.display_name.split(',')[0];
     const a = r.address || {};
     const sub = [a.state, a.country].filter(Boolean).join(', ') || (r.type || '').replace(/_/g, ' ');
@@ -2604,10 +2649,19 @@ function renderSuggestions(results) {
       ${sub ? `<div class="search-suggestion-sub">${esc(sub)}</div>` : ''}
     </div>`;
   }).join('');
+
+  el.innerHTML =
+    (taxa.length ? `<div class="search-suggestion-sep">Species</div>${taxaHtml}` : '') +
+    (showSep     ? `<div class="search-suggestion-sep">Locations</div>` : '') +
+    locsHtml;
+
   el.classList.add('open');
 }
 
 function selectSearchResult(result) {
+  if (result._type === 'inat-taxon') { selectInatTaxon(result); return; }
+  // Clear any active species filter when a location is chosen
+  if (inatSpeciesFilter) { inatSpeciesFilter = null; rebuildInatIndex(); }
   const lat = parseFloat(result.lat);
   const lng = parseFloat(result.lon);
   const zoom = nominatimZoom(result);
@@ -2653,6 +2707,64 @@ function selectSearchResult(result) {
     });
 }
 
+function searchInatTaxa(q) {
+  if (!inatTaxa.length) return [];
+  const ql = q.toLowerCase();
+
+  // Lazy taxon count map
+  if (!searchInatTaxa._counts) {
+    const counts = new Map();
+    for (const o of inatObs) counts.set(o[OBS_TI], (counts.get(o[OBS_TI]) || 0) + 1);
+    searchInatTaxa._counts = counts;
+  }
+  const counts = searchInatTaxa._counts;
+
+  const seen = new Set();
+  const top = [], rest = [];
+
+  for (let ti = 0; ti < inatTaxa.length; ti++) {
+    const [taxonId, taxonName, genus, commonName] = inatTaxa[ti];
+    if (seen.has(taxonName)) continue;
+    const sciL  = taxonName.toLowerCase();
+    const comL  = (commonName || '').toLowerCase();
+    const matchSci = sciL.includes(ql);
+    const matchCom = comL.includes(ql);
+    if (!matchSci && !matchCom) continue;
+    seen.add(taxonName);
+    const entry = { _type: 'inat-taxon', taxonId, taxonName, genus, commonName, count: counts.get(ti) || 0 };
+    (sciL.startsWith(ql) || comL.startsWith(ql) ? top : rest).push(entry);
+    if (top.length + rest.length >= 12) break;
+  }
+
+  return [...top, ...rest].slice(0, 7);
+}
+
+function selectInatTaxon(result) {
+  const { taxonName, count } = result;
+  document.getElementById('search-input').value = taxonName;
+  document.getElementById('search-clear').classList.add('visible');
+  document.getElementById('search-suggestions').classList.remove('open');
+  searchCurrentSuggestions = [];
+
+  // Enable iNat layer if it's off
+  if (!inatVisible) enableInatLayer();
+
+  // Apply species filter and rebuild clusters
+  inatSpeciesFilter = taxonName;
+  searchInatTaxa._counts = null; // allow recount after filter change
+  rebuildInatIndex();
+
+  // Fit map to this species' observations
+  const pts = [];
+  const nameMatch = inatTaxa.findIndex(t => t[1] === taxonName);
+  for (const o of inatObs) {
+    if (inatTaxa[o[OBS_TI]]?.[1] === taxonName) pts.push([o[OBS_LAT], o[OBS_LNG]]);
+  }
+  if (pts.length) {
+    map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 9, animate: true, duration: 1.0 });
+  }
+}
+
 function initSearch() {
   const container   = document.getElementById('search-container');
   const input       = document.getElementById('search-input');
@@ -2664,8 +2776,11 @@ function initSearch() {
 
   const doSearch = debounce(async q => {
     if (q.length < 2) { suggestions.classList.remove('open'); return; }
-    const results = await fetchNominatim(q);
-    if (input.value.trim() === q) renderSuggestions(results);
+    // Show iNat species matches instantly (in-memory), then append location results
+    const taxonResults = searchInatTaxa(q);
+    if (taxonResults.length && input.value.trim() === q) renderSuggestions(taxonResults);
+    const locationResults = await fetchNominatim(q);
+    if (input.value.trim() === q) renderSuggestions([...taxonResults, ...locationResults]);
   }, 300);
 
   input.addEventListener('input', () => {
@@ -2713,6 +2828,11 @@ function initSearch() {
     suggestions.classList.remove('open');
     searchCurrentSuggestions = [];
     closeLocationPanel();
+    if (inatSpeciesFilter) {
+      inatSpeciesFilter = null;
+      searchInatTaxa._counts = null;
+      rebuildInatIndex();
+    }
     input.focus();
   });
 
@@ -3019,6 +3139,7 @@ let inatLoadedGenera  = new Set();  // which genus files are loaded
 let inatAllLoaded     = false;      // whether all.json is loaded
 let inatTaxa          = [];         // merged taxa lookup [[id,name,genus,common],...]
 let inatObs           = [];         // merged obs arrays [[id,lat,lng,ti,date,flags,photoId,koppen],...]
+let inatSpeciesFilter = null;       // taxon_name string when a species is selected via search
 let inatClusterGroup  = null;       // L.layerGroup
 let inatRectGroup     = null;       // L.layerGroup for obscured rectangles
 
@@ -3146,7 +3267,7 @@ function buildInatFeatures() {
     const flags  = o[OBS_FLAGS];
     const koppen = o[OBS_KOP];
     // Filter
-    if (!inatFilters.genera.has(genus)) continue;
+    if (inatSpeciesFilter ? taxon[1] !== inatSpeciesFilter : !inatFilters.genera.has(genus)) continue;
     if ((flags & F_NEEDSID) && !inatFilters.needsId) continue;
     if (!inatFilters.koppen.has(koppen) && koppen !== 0) continue;
     features.push({
