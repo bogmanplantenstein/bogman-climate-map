@@ -3139,7 +3139,8 @@ let inatLoadedGenera  = new Set();  // which genus files are loaded
 let inatAllLoaded     = false;      // whether all.json is loaded
 let inatTaxa          = [];         // merged taxa lookup [[id,name,genus,common],...]
 let inatObs           = [];         // merged obs arrays [[id,lat,lng,ti,date,flags,photoId,koppen],...]
-let inatSpeciesFilter = null;       // taxon_name string when a species is selected via search
+let inatSpeciesFilter  = null;       // taxon_name string when a species is selected via search
+let inatDetailGen      = 0;          // incremented each time an obs panel opens; stale fetches are discarded
 let inatClusterGroup  = null;       // L.layerGroup
 let inatRectGroup     = null;       // L.layerGroup for obscured rectangles
 
@@ -3595,14 +3596,16 @@ function openInatObsPanel(feature) {
     }
   });
 
-  fetchInatObsDetail(p.obs_id);
+  const gen = ++inatDetailGen;
+  fetchInatObsDetail(p.obs_id, gen);
 }
 
-async function fetchInatObsDetail(obsId) {
+async function fetchInatObsDetail(obsId, gen) {
   try {
     const res  = await fetch(`${INAT_API_OBS}${obsId}?`);
-    if (!res.ok) return;
+    if (!res.ok || gen !== inatDetailGen) return;
     const data = await res.json();
+    if (gen !== inatDetailGen) return;   // navigated away while waiting for JSON parse
     const obs  = data.results?.[0];
     if (!obs) return;
 
@@ -3654,6 +3657,7 @@ async function fetchInatObsDetail(obsId) {
 
     body.innerHTML = html;
   } catch (err) {
+    if (gen !== inatDetailGen) return;
     const body = document.getElementById('inat-detail-body');
     if (body) body.innerHTML = '<div style="font-size:11px;color:var(--text-muted)">Could not load details</div>';
   }
