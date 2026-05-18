@@ -3045,7 +3045,7 @@ let sc = null;
 self.onmessage = function(e) {
   const { type } = e.data;
   if (type === 'load') {
-    sc = new Supercluster({ radius: 60, maxZoom: 16, minPoints: 3 });
+    sc = new Supercluster({ radius: 120, maxZoom: 16, minPoints: 3 });
     sc.load(e.data.features);
     self.postMessage({ type: 'loaded', count: e.data.features.length });
   }
