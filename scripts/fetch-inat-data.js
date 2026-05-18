@@ -35,12 +35,22 @@ const CHUNK_THRESHOLD = 10000;  // recurse when count exceeds this
 const API_BASE   = 'https://api.inaturalist.org/v1';
 const USER_AGENT = 'BogmanClimateMap/1.0 (+https://github.com/bogmanplantenstein/bogman-climate-map; monthly data refresh)';
 
+// ── Species climate precompute config ─────────────────────────────────────────
+const GRID_DEG        = 0.5;          // 0.5° cell ≈ 55 km north-south
+const DENSE_RADIUS_KM = 8;            // neighbour radius for dense-cluster pick
+const OM_RATE_MS      = 700;          // ~85 req/min — matches iNat pacing
+const OM_MIN_CELLS    = 3;            // skip species with fewer occupied cells
+const LAPSE_RATE      = 6.5 / 1000;  // °C per metre (standard environmental lapse)
+const OM_ARCHIVE      = 'https://archive-api.open-meteo.com/v1/archive';
+const OM_ELEVATION    = 'https://api.open-meteo.com/v1/elevation';
+
 // ── State ─────────────────────────────────────────────────────────────────────
 
 let koppenRaster   = null;
 let lastReqTime    = 0;
 let totalRequests  = 0;
 const startTime    = Date.now();
+let omLastReq      = 0;             // Open-Meteo rate-limit state
 
 // ── Koppen lookup ─────────────────────────────────────────────────────────────
 
@@ -310,6 +320,456 @@ async function fetchGenus(genus, taxonId) {
   return { taxa: taxaList, obs: deduped, expected: expectedTotal, failed: failedChunks };
 }
 
+// ── Species climate precomputation ───────────────────────────────────────────
+//
+// After all obs are collected we:
+//   1. Assign every obs to a 0.5° global grid cell
+//   2. Pick one representative GPS point per cell (densest local cluster)
+//   3. Batch-fetch SRTM elevations (Open-Meteo elevation API, 100 per request)
+//   4. Fetch climate normals per cell (Open-Meteo archive, temp+precip+RH combined)
+//   5. Apply lapse-rate elevation correction to temperatures
+//   6. For each taxon: aggregate p10/p25/p50/p75/p90 across its cells
+//   7. Batch-fetch iNat taxa photos + Wikipedia summaries
+//   8. Write inat/species-data.json
+
+// ── Maths helpers ─────────────────────────────────────────────────────────────
+
+function haversineKm(lat1, lon1, lat2, lon2) {
+  const R  = 6371;
+  const φ1 = lat1 * Math.PI / 180, φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+  const a  = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function pctile(sorted, p) {
+  if (!sorted.length) return null;
+  const i = (p / 100) * (sorted.length - 1);
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
+const round1 = v => v == null ? null : Math.round(v * 10) / 10;
+const round0 = v => v == null ? null : Math.round(v);
+
+function computeStats(values, roundFn = round1) {
+  const clean = values.filter(v => v != null && isFinite(v));
+  if (!clean.length) return null;
+  const s = [...clean].sort((a, b) => a - b);
+  return {
+    p10: roundFn(pctile(s, 10)),
+    p25: roundFn(pctile(s, 25)),
+    p50: roundFn(pctile(s, 50)),
+    p75: roundFn(pctile(s, 75)),
+    p90: roundFn(pctile(s, 90)),
+  };
+}
+
+// ── Grid: build and select cell representatives ───────────────────────────────
+
+/**
+ * Groups all obs into 0.5° cells, then picks one representative per cell:
+ * the point with the most neighbours within DENSE_RADIUS_KM (capped at 100
+ * sample points per cell for speed). Returns Map<cellKey, {lat, lng}>.
+ */
+function buildGlobalGrid(allObs) {
+  // Group obs coordinates by cell key
+  const cells = new Map(); // cellKey → [{lat, lng}]
+  for (const o of allObs) {
+    const lat = o[1], lng = o[2];
+    const key = `${Math.floor(lat / GRID_DEG)}:${Math.floor(lng / GRID_DEG)}`;
+    if (!cells.has(key)) cells.set(key, []);
+    cells.get(key).push({ lat, lng });
+  }
+
+  // Select dense-cluster representative per cell
+  const reps = new Map(); // cellKey → {lat, lng}
+  for (const [key, pts] of cells) {
+    if (pts.length === 1) { reps.set(key, pts[0]); continue; }
+
+    // Subsample to ≤100 points before O(n²) density search
+    const sample = pts.length > 100
+      ? pts.filter((_, i) => i % Math.ceil(pts.length / 100) === 0)
+      : pts;
+
+    let bestPt = sample[0], bestCnt = -1;
+    for (const pt of sample) {
+      let cnt = 0;
+      for (const other of sample) {
+        if (haversineKm(pt.lat, pt.lng, other.lat, other.lng) <= DENSE_RADIUS_KM) cnt++;
+      }
+      if (cnt > bestCnt) { bestCnt = cnt; bestPt = pt; }
+    }
+    reps.set(key, bestPt);
+  }
+
+  console.log(`  Grid: ${reps.size.toLocaleString()} unique 0.5° cells`);
+  return reps;
+}
+
+// ── Open-Meteo rate-limited fetch ─────────────────────────────────────────────
+
+async function omGet(url) {
+  const wait = OM_RATE_MS - (Date.now() - omLastReq);
+  if (wait > 0) await sleep(wait);
+  omLastReq = Date.now();
+  return fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+}
+
+// ── SRTM elevation batch fetch ────────────────────────────────────────────────
+
+async function fetchSRTMElevations(cellReps) {
+  const keys   = [...cellReps.keys()];
+  const result = new Map(); // cellKey → srtm_metres
+  const BATCH  = 100;
+
+  for (let i = 0; i < keys.length; i += BATCH) {
+    const batch  = keys.slice(i, i + BATCH);
+    const coords = batch.map(k => cellReps.get(k));
+    const lats   = coords.map(c => c.lat.toFixed(4)).join(',');
+    const lngs   = coords.map(c => c.lng.toFixed(4)).join(',');
+    const url    = `${OM_ELEVATION}?latitude=${lats}&longitude=${lngs}`;
+
+    try {
+      const res = await omGet(url);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.elevation) {
+          batch.forEach((key, j) => result.set(key, data.elevation[j]));
+        }
+      } else {
+        console.warn(`  ⚠ SRTM batch ${i}–${i + BATCH}: HTTP ${res.status}`);
+      }
+    } catch (err) {
+      console.warn(`  ⚠ SRTM batch ${i}–${i + BATCH}: ${err.message}`);
+    }
+
+    if (i % 1000 === 0 && i > 0) {
+      console.log(`  ${i.toLocaleString()}/${keys.length.toLocaleString()} SRTM batches done`);
+    }
+  }
+
+  return result;
+}
+
+// ── Climate fetch per cell ────────────────────────────────────────────────────
+
+/**
+ * Fetches 5-year (2019-2023) climate normals from Open-Meteo archive API.
+ * Returns parsed monthly averages + model elevation, or null on failure.
+ * Combined daily temp/precip + hourly RH in one request.
+ */
+async function fetchCellClimate(lat, lng) {
+  const url = `${OM_ARCHIVE}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}` +
+    `&start_date=2019-01-01&end_date=2023-12-31` +
+    `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum` +
+    `&hourly=relative_humidity_2m` +
+    `&timezone=UTC`;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await omGet(url);
+      if (res.ok)           return parseClimateResponse(await res.json());
+      if (res.status === 429) { await sleep(60_000); continue; }
+      if (res.status >= 500)  { await sleep(attempt * 15_000); continue; }
+      return null;
+    } catch (err) {
+      if (attempt === 3) return null;
+      await sleep(attempt * 5_000);
+    }
+  }
+  return null;
+}
+
+function parseClimateResponse(d) {
+  const daily  = d.daily;
+  const hourly = d.hourly;
+  if (!daily?.time) return null;
+
+  const modelElev = d.elevation ?? null;
+
+  // Accumulate daily temp and precip → monthly averages
+  const tmaxSum = new Array(12).fill(0), tmaxCnt = new Array(12).fill(0);
+  const tminSum = new Array(12).fill(0), tminCnt = new Array(12).fill(0);
+  const precSum = new Array(12).fill(0);
+  const precYrs = Array.from({ length: 12 }, () => new Set());
+
+  daily.time.forEach((date, i) => {
+    const m = parseInt(date.substring(5, 7)) - 1;
+    const y = date.substring(0, 4);
+    const tmax = daily.temperature_2m_max?.[i];
+    if (tmax != null) { tmaxSum[m] += tmax; tmaxCnt[m]++; }
+    const tmin = daily.temperature_2m_min?.[i];
+    if (tmin != null) { tminSum[m] += tmin; tminCnt[m]++; }
+    const p = daily.precipitation_sum?.[i];
+    if (p != null) { precSum[m] += p; precYrs[m].add(y); }
+  });
+
+  // Accumulate hourly RH → daily stats → monthly averages
+  const dailyRH = {};
+  if (hourly?.time) {
+    hourly.time.forEach((dt, i) => {
+      const date = dt.substring(0, 10);
+      const v = hourly.relative_humidity_2m?.[i];
+      if (v == null) return;
+      if (!dailyRH[date]) dailyRH[date] = { max: -Infinity, min: Infinity, sum: 0, cnt: 0 };
+      const s = dailyRH[date];
+      if (v > s.max) s.max = v;
+      if (v < s.min) s.min = v;
+      s.sum += v; s.cnt++;
+    });
+  }
+
+  const hiSum  = new Array(12).fill(0), hiCnt  = new Array(12).fill(0);
+  const loSum  = new Array(12).fill(0), loCnt  = new Array(12).fill(0);
+  const avgSum = new Array(12).fill(0), avgCnt = new Array(12).fill(0);
+
+  for (const [date, s] of Object.entries(dailyRH)) {
+    const m = parseInt(date.substring(5, 7)) - 1;
+    if (s.max > -Infinity) { hiSum[m]  += s.max;         hiCnt[m]++; }
+    if (s.min <  Infinity) { loSum[m]  += s.min;         loCnt[m]++; }
+    if (s.cnt > 0)         { avgSum[m] += s.sum / s.cnt; avgCnt[m]++; }
+  }
+
+  return {
+    modelElev,
+    tempMax:  tmaxSum.map((s, m) => tmaxCnt[m]  ? s / tmaxCnt[m]  : null),
+    tempMin:  tminSum.map((s, m) => tminCnt[m]  ? s / tminCnt[m]  : null),
+    precipMm: precSum.map((s, m) => precYrs[m].size ? s / precYrs[m].size : null),
+    rhHigh:   hiSum.map((s, m)  => hiCnt[m]    ? s / hiCnt[m]    : null),
+    rhLow:    loSum.map((s, m)  => loCnt[m]    ? s / loCnt[m]    : null),
+    rhMean:   avgSum.map((s, m) => avgCnt[m]   ? s / avgCnt[m]   : null),
+  };
+}
+
+// ── Lapse-rate elevation correction ──────────────────────────────────────────
+
+/**
+ * Adjusts tempMax and tempMin for the elevation difference between the
+ * Open-Meteo ERA5 model grid (modelElev) and the actual observation site
+ * (srtmElev). Uses standard environmental lapse rate: 6.5°C / 1000 m.
+ * Only temperature is corrected; precip and RH are left unchanged.
+ */
+function applyLapseRate(climate, srtmElev) {
+  if (srtmElev == null || climate.modelElev == null) return climate;
+  // Positive delta → obs is higher than model → obs is colder → subtract
+  const delta = LAPSE_RATE * (srtmElev - climate.modelElev);
+  return {
+    ...climate,
+    tempMax: climate.tempMax.map(v => v != null ? round1(v - delta) : null),
+    tempMin: climate.tempMin.map(v => v != null ? round1(v - delta) : null),
+  };
+}
+
+// ── iNat taxa info batch fetch ────────────────────────────────────────────────
+
+async function fetchInatTaxaInfo(taxaToFetch) {
+  // taxaToFetch: [{ti, taxonId}]
+  const info  = new Map(); // ti → {photo_url, wikipedia_summary, inat_url}
+  const BATCH = 30;
+
+  for (let i = 0; i < taxaToFetch.length; i += BATCH) {
+    const batch = taxaToFetch.slice(i, i + BATCH);
+    const ids   = batch.map(t => t.taxonId).join(',');
+    try {
+      const data = await apiGet('/taxa', { id: ids, per_page: BATCH });
+      if (data?.results) {
+        for (const t of data.results) {
+          const match = batch.find(b => b.taxonId === t.id);
+          if (match) {
+            info.set(match.ti, {
+              photo_url:         t.default_photo?.medium_url || t.default_photo?.square_url || null,
+              wikipedia_summary: t.wikipedia_summary || null,
+              inat_url:          `https://www.inaturalist.org/taxa/${t.id}`,
+            });
+          }
+        }
+      }
+    } catch (err) {
+      console.warn(`  ⚠ taxa-info batch ${i}–${i + BATCH}: ${err.message}`);
+    }
+    if ((i / BATCH + 1) % 10 === 0) {
+      console.log(`  ${Math.min(i + BATCH, taxaToFetch.length)}/${taxaToFetch.length} taxa info fetched`);
+    }
+  }
+
+  return info;
+}
+
+// ── Main species precompute orchestrator ──────────────────────────────────────
+
+async function computeSpeciesData(allTaxa, allObs) {
+  console.log('\n╔══════════════════════════════════════════════════╗');
+  console.log('║  Species Climate Precomputation                  ║');
+  console.log('╚══════════════════════════════════════════════════╝\n');
+
+  // ── 1. Build global 0.5° grid ─────────────────────────────────────────────
+  console.log('▶ Building global 0.5° grid...');
+  const cellReps = buildGlobalGrid(allObs);
+
+  // ── 2. SRTM elevations ────────────────────────────────────────────────────
+  console.log('\n▶ Fetching SRTM elevations (batched 100/request)...');
+  const srtmElevs = await fetchSRTMElevations(cellReps);
+  console.log(`  ✓ ${srtmElevs.size.toLocaleString()} elevations fetched`);
+
+  // ── 3. Climate per cell ───────────────────────────────────────────────────
+  const cellKeys = [...cellReps.keys()];
+  const estMin   = Math.round(cellKeys.length * OM_RATE_MS / 60_000);
+  console.log(`\n▶ Fetching climate data for ${cellKeys.length.toLocaleString()} cells (~${estMin} min)...`);
+
+  const cellClimates = new Map(); // cellKey → parsed climate object
+  let omFetched = 0, omFailed = 0;
+
+  for (const key of cellKeys) {
+    const { lat, lng } = cellReps.get(key);
+    const raw = await fetchCellClimate(lat, lng);
+    if (raw) {
+      const srtmElev = srtmElevs.get(key) ?? null;
+      cellClimates.set(key, applyLapseRate(raw, srtmElev));
+      omFetched++;
+    } else {
+      omFailed++;
+    }
+    const done = omFetched + omFailed;
+    if (done % 500 === 0) {
+      const pct = Math.round(done / cellKeys.length * 100);
+      console.log(`  [${pct}%] ${done.toLocaleString()}/${cellKeys.length.toLocaleString()} (${omFailed} failed)`);
+    }
+  }
+  console.log(`  ✓ ${omFetched.toLocaleString()} cells with climate data (${omFailed} failed)\n`);
+
+  // ── 4. Build per-taxon indices ────────────────────────────────────────────
+  console.log('▶ Building species indices...');
+  const taxonCells    = new Map(); // taxonIdx → Set<cellKey>
+  const taxonKoppen   = new Map(); // taxonIdx → Map<zone, count>
+  const taxonObsCount = new Map(); // taxonIdx → count
+
+  for (const o of allObs) {
+    const ti   = o[3];
+    const lat  = o[1], lng = o[2];
+    const zone = o[7];
+    const key  = `${Math.floor(lat / GRID_DEG)}:${Math.floor(lng / GRID_DEG)}`;
+
+    if (!taxonCells.has(ti))  taxonCells.set(ti, new Set());
+    taxonCells.get(ti).add(key);
+
+    if (!taxonKoppen.has(ti)) taxonKoppen.set(ti, new Map());
+    if (zone > 0) {
+      const m = taxonKoppen.get(ti);
+      m.set(zone, (m.get(zone) || 0) + 1);
+    }
+
+    taxonObsCount.set(ti, (taxonObsCount.get(ti) || 0) + 1);
+  }
+
+  // ── 5. Compute per-taxon stats ────────────────────────────────────────────
+  console.log('▶ Computing species climate envelopes...');
+  const speciesData  = {};
+  const taxaToFetch  = [];
+
+  for (let ti = 0; ti < allTaxa.length; ti++) {
+    const cells = taxonCells.get(ti);
+    if (!cells || cells.size < OM_MIN_CELLS) continue;
+
+    // Gather climate objects for this taxon's occupied cells
+    const climates = []; // [{c: climate, lat, lng}]
+    for (const key of cells) {
+      const c = cellClimates.get(key);
+      const r = cellReps.get(key);
+      if (c && r) climates.push({ c, lat: r.lat, lng: r.lng });
+    }
+    if (climates.length < OM_MIN_CELLS) continue;
+
+    const [taxonId, taxonName, genus, commonName] = allTaxa[ti];
+
+    // Annual headline metrics (one value per sample point)
+    const annualMaxT  = [], annualMinT  = [], annualPrec = [], annualRH = [];
+    for (const { c } of climates) {
+      const maxT  = c.tempMax.filter(v => v != null);
+      const minT  = c.tempMin.filter(v => v != null);
+      const prec  = c.precipMm.filter(v => v != null);
+      const rh    = c.rhMean.filter(v => v != null);
+      if (maxT.length) annualMaxT.push(Math.max(...maxT));
+      if (minT.length) annualMinT.push(Math.min(...minT));
+      if (prec.length) annualPrec.push(prec.reduce((a, b) => a + b, 0));
+      if (rh.length)   annualRH.push(rh.reduce((a, b) => a + b, 0) / rh.length);
+    }
+
+    // Monthly chart data: split NH (lat ≥ 0) and SH (lat < 0)
+    const nhC = climates.filter(({ lat }) => lat >= 0).map(({ c }) => c);
+    const shC = climates.filter(({ lat }) => lat <  0).map(({ c }) => c);
+
+    // For each hemisphere, compute per-month [p25, p50, p75] for each metric
+    const monthlyPct = (arr, field) => {
+      if (!arr.length) return null;
+      return Array.from({ length: 12 }, (_, m) => {
+        const vals = arr.map(c => c[field]?.[m]).filter(v => v != null);
+        if (!vals.length) return null;
+        const s = [...vals].sort((a, b) => a - b);
+        return [round1(pctile(s, 25)), round1(pctile(s, 50)), round1(pctile(s, 75))];
+      });
+    };
+
+    const makeMonthly = arr => arr.length ? {
+      tempMax: monthlyPct(arr, 'tempMax'),
+      tempMin: monthlyPct(arr, 'tempMin'),
+      precip:  monthlyPct(arr, 'precipMm'),
+      rh:      monthlyPct(arr, 'rhMean'),
+    } : null;
+
+    // Köppen zone distribution sorted by count
+    const koppenMap = taxonKoppen.get(ti) || new Map();
+    const koppen    = [...koppenMap.entries()].sort((a, b) => b[1] - a[1]);
+
+    speciesData[taxonId] = {
+      taxon_id:        taxonId,
+      scientific_name: taxonName,
+      common_name:     commonName || null,
+      genus,
+      obs_count:       taxonObsCount.get(ti) || 0,
+      sample_count:    climates.length,
+      stats: {
+        tempMax: computeStats(annualMaxT, round1),
+        tempMin: computeStats(annualMinT, round1),
+        precip:  computeStats(annualPrec, round0),
+        rhMean:  computeStats(annualRH,   round0),
+      },
+      monthly_nh: makeMonthly(nhC),
+      monthly_sh: makeMonthly(shC),
+      koppen,
+      // photo_url, wikipedia_summary, inat_url added in step 6
+    };
+
+    taxaToFetch.push({ ti, taxonId });
+  }
+
+  console.log(`  ✓ ${Object.keys(speciesData).length} species with ≥${OM_MIN_CELLS} cells\n`);
+
+  // ── 6. iNat taxa photos + Wikipedia ──────────────────────────────────────
+  console.log(`▶ Fetching iNat taxa info for ${taxaToFetch.length} species...`);
+  const taxaInfo = await fetchInatTaxaInfo(taxaToFetch);
+  for (const { ti, taxonId } of taxaToFetch) {
+    const info = taxaInfo.get(ti);
+    if (info && speciesData[taxonId]) Object.assign(speciesData[taxonId], info);
+  }
+  console.log(`  ✓ ${taxaInfo.size} taxa with photo/Wikipedia data\n`);
+
+  // ── 7. Write output ───────────────────────────────────────────────────────
+  const output = {
+    v:              1,
+    generated:      new Date().toISOString(),
+    cell_count:     cellClimates.size,
+    species_count:  Object.keys(speciesData).length,
+    species:        speciesData,
+  };
+
+  writeFileSync(join(ROOT, 'inat', 'species-data.json'), JSON.stringify(output));
+  console.log(`✓ Written inat/species-data.json\n`);
+
+  return output;
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -367,10 +827,15 @@ async function main() {
   // Write combined file
   writeFileSync(join(ROOT, 'inat', 'all.json'), JSON.stringify({ v: 1, generated: new Date().toISOString(), taxa: allTaxa, obs: allObs }));
 
+  // Precompute species climate envelopes
+  const speciesResult = await computeSpeciesData(allTaxa, allObs);
+
   // Write fetch report
-  report.totalRequests = totalRequests;
-  report.totalObs      = allObs.length;
-  report.durationMin   = Math.round((Date.now() - startTime) / 60000);
+  report.totalRequests  = totalRequests;
+  report.totalObs       = allObs.length;
+  report.speciesCount   = speciesResult.species_count;
+  report.cellCount      = speciesResult.cell_count;
+  report.durationMin    = Math.round((Date.now() - startTime) / 60000);
   writeFileSync(join(ROOT, 'inat', 'fetch-report.json'), JSON.stringify(report, null, 2));
 
   // Summary
@@ -378,6 +843,8 @@ async function main() {
   console.log('╔══════════════════════════════════════════════════╗');
   console.log('║  Summary                                         ║');
   console.log(`║  Total observations : ${String(allObs.length.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  Species w/ data    : ${String(speciesResult.species_count.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  Climate cells      : ${String(speciesResult.cell_count.toLocaleString()).padEnd(27)}║`);
   console.log(`║  API requests       : ${String(totalRequests.toLocaleString()).padEnd(27)}║`);
   console.log(`║  Duration           : ${String(mins + ' min').padEnd(27)}║`);
 

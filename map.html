@@ -1204,6 +1204,150 @@ html, body {
 @media (max-width: 768px) {
   #inat-panel { right: 10px; top: auto; bottom: 80px; width: calc(100vw - 20px); max-height: 55vh; }
 }
+
+/* ── Species sidebar ─────────────────────────────────────── */
+.sp-header {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+}
+.sp-photo {
+  width: 80px;
+  height: 80px;
+  object-fit: cover;
+  border-radius: 8px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+.sp-photo-placeholder {
+  width: 80px;
+  height: 80px;
+  border-radius: 8px;
+  flex-shrink: 0;
+  border: 1px solid var(--border);
+  background: var(--bg-elevated);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 30px;
+}
+.sp-header-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.sp-scientific-name {
+  font-size: 16px;
+  font-style: italic;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
+}
+.sp-common-name { font-size: 12px; color: var(--text-muted); }
+.sp-meta { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+.sp-meta a { color: var(--accent); text-decoration: none; }
+.sp-meta a:hover { text-decoration: underline; }
+
+.sp-stats-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin: 12px 0;
+}
+.sp-stat-card {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.sp-stat-label {
+  font-size: 10px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.sp-stat-value {
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1;
+}
+.sp-stat-sub { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
+
+.sp-chart-section { margin: 12px 0; }
+.sp-chart-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.sp-chart-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.sp-hemi-btn {
+  font-size: 11px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  border-radius: 4px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+  white-space: nowrap;
+}
+.sp-hemi-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.sp-hemi-btn.active-sh { border-color: var(--accent); color: var(--accent); }
+#sp-chart-container { height: 200px; position: relative; }
+.sp-chart-note {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 6px;
+  line-height: 1.5;
+  font-style: italic;
+}
+
+.sp-koppen-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 12px;
+}
+.sp-koppen-row:last-child { border-bottom: none; }
+.sp-koppen-name { flex: 1; font-size: 11px; color: var(--text-muted); }
+.sp-koppen-pct { font-size: 11px; font-weight: 600; color: var(--text-primary); min-width: 32px; text-align: right; }
+
+.sp-expand-btn {
+  display: block;
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  text-align: center;
+}
+.sp-expand-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+
+.sp-wiki-text { font-size: 12px; color: var(--text-muted); line-height: 1.6; }
+.sp-sample-note {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 12px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+  line-height: 1.5;
+}
 </style>
 </head>
 <body>
@@ -2739,6 +2883,322 @@ function searchInatTaxa(q) {
   return [...top, ...rest].slice(0, 7);
 }
 
+// ── Species sidebar ───────────────────────────────────────
+
+function loadSpeciesData() {
+  if (!inatSpeciesDataPromise) {
+    inatSpeciesDataPromise = fetch('./inat/species-data.json')
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(d => { inatSpeciesData = d.species; return d.species; })
+      .catch(err => {
+        console.error('Failed to load species-data.json:', err);
+        inatSpeciesDataPromise = null; // allow retry
+        return null;
+      });
+  }
+  return inatSpeciesDataPromise;
+}
+
+async function openSpeciesSidebar(taxonId, taxonName) {
+  inatNav.mode             = 'species-sidebar';
+  inatNav.speciesTaxonId   = taxonId;
+  inatNav.speciesTaxonName = taxonName;
+  inatSpeciesSidebarId     = taxonId;
+  speciesHemi              = 'nh';
+  if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
+
+  openSidePanelForInat();
+  document.getElementById('panel-content').innerHTML = `
+    <div class="p-species-name" style="font-style:italic">${esc(taxonName)}</div>
+    <div class="climate-pending" style="margin-top:16px">Loading species data…</div>
+  `;
+
+  const data = await loadSpeciesData();
+  if (inatSpeciesSidebarId !== taxonId) return; // user navigated away
+  if (!data) {
+    document.getElementById('panel-content').innerHTML = `
+      <div class="p-species-name" style="font-style:italic">${esc(taxonName)}</div>
+      <div style="color:var(--text-muted);font-size:12px;margin-top:16px">Species climate data not yet available. Run the monthly data refresh workflow to generate it.</div>
+    `;
+    return;
+  }
+  const entry = data[taxonId];
+  if (!entry) {
+    document.getElementById('panel-content').innerHTML = `
+      <div class="p-species-name" style="font-style:italic">${esc(taxonName)}</div>
+      <div style="color:var(--text-muted);font-size:12px;margin-top:16px">No precomputed climate data for this species (fewer than 3 occupied 0.5° grid cells).</div>
+    `;
+    return;
+  }
+  if (inatSpeciesSidebarId !== taxonId) return;
+  buildSpeciesSidebarContent(entry);
+}
+
+function buildSpeciesSidebarContent(entry) {
+  if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
+
+  const photoHtml = entry.photo_url
+    ? `<img class="sp-photo" src="${esc(entry.photo_url)}" loading="lazy" onerror="this.style.display='none'">`
+    : `<div class="sp-photo-placeholder">🌿</div>`;
+
+  // Headline climate stats
+  const s       = entry.stats || {};
+  const coldC   = s.tempMin?.p10;
+  const heatC   = s.tempMax?.p90;
+  const precMed = s.precip?.p50;
+  const rhLo    = s.rhMean?.p25;
+  const rhHi    = s.rhMean?.p75;
+
+  const statsHtml = `
+    <div class="sp-stats-grid">
+      <div class="sp-stat-card">
+        <div class="sp-stat-label">Cold limit</div>
+        <div class="sp-stat-value">${toDisplay(coldC, tempUnit)}</div>
+        <div class="sp-stat-sub">10th pct annual min</div>
+      </div>
+      <div class="sp-stat-card">
+        <div class="sp-stat-label">Heat limit</div>
+        <div class="sp-stat-value">${toDisplay(heatC, tempUnit)}</div>
+        <div class="sp-stat-sub">90th pct annual max</div>
+      </div>
+      <div class="sp-stat-card">
+        <div class="sp-stat-label">Annual rainfall</div>
+        <div class="sp-stat-value">${precMed != null ? precMed + 'mm' : '—'}</div>
+        <div class="sp-stat-sub">median across range</div>
+      </div>
+      <div class="sp-stat-card">
+        <div class="sp-stat-label">Humidity</div>
+        <div class="sp-stat-value">${rhLo != null && rhHi != null ? rhLo + '–' + rhHi + '%' : '—'}</div>
+        <div class="sp-stat-sub">typical midrange</div>
+      </div>
+    </div>`;
+
+  // Chart section — hemisphere toggle only shown if SH data exists
+  const hasSH = !!entry.monthly_sh;
+  const chartHtml = `
+    <div class="sp-chart-section">
+      <div class="sp-chart-header">
+        <span class="sp-chart-title" id="sp-chart-title-text">Monthly climate</span>
+        ${hasSH ? `<button class="sp-hemi-btn" id="sp-hemi-toggle">Southern ⇄</button>` : ''}
+      </div>
+      <div id="sp-chart-container"><canvas id="sp-climate-chart"></canvas></div>
+      <div class="sp-chart-note">Temperatures corrected for elevation (6.5°C/1000m lapse rate). Precipitation and humidity are uncorrected.</div>
+    </div>`;
+
+  // Köppen zone distribution
+  const koppenEntries = entry.koppen || [];
+  const koppenTotal   = koppenEntries.reduce((s, [, c]) => s + c, 0);
+  const MAX_KP        = 8;
+
+  const koppenRowsHtml = (arr) => arr.map(([zone, count]) => {
+    const info = BECK_ZONES[zone] || {};
+    const pct  = koppenTotal ? Math.round(count / koppenTotal * 100) : 0;
+    const [r,g,b] = BECK_COLORS[zone] || [128,128,128];
+    return `<div class="sp-koppen-row">
+      <span class="badge badge-koppen" style="color:rgb(${r},${g},${b});border-color:rgba(${r},${g},${b},0.3);background:rgba(${r},${g},${b},0.1);min-width:32px;text-align:center;font-size:10px">${info.code || zone}</span>
+      <span class="sp-koppen-name">${esc(info.desc || 'Unknown')} <span style="font-size:10px">${esc(info.group || '')}</span></span>
+      <span class="sp-koppen-pct">${pct}%</span>
+    </div>`;
+  }).join('');
+
+  const koppenHtml = `
+    <details class="inat-section" open>
+      <summary>🌍 Climate zones (${koppenEntries.length})</summary>
+      <div class="inat-section-body">
+        <div id="sp-koppen-body">${koppenRowsHtml(koppenEntries.slice(0, MAX_KP))}</div>
+        ${koppenEntries.length > MAX_KP
+          ? `<div id="sp-koppen-ctrl"><button class="sp-expand-btn" id="sp-koppen-btn">Show all ${koppenEntries.length} zones ↓</button></div>`
+          : ''}
+      </div>
+    </details>`;
+
+  // Wikipedia excerpt
+  const wiki    = entry.wikipedia_summary || '';
+  const wikiUrl = entry.inat_url || '';
+  let wikiHtml  = '';
+  if (wiki) {
+    const sentences = wiki.match(/[^.!?]+[.!?]+\s*/g) || [];
+    const preview   = sentences.slice(0, 2).join('').trim();
+    const truncated = wiki.length > preview.length + 10;
+    wikiHtml = `
+      <details class="inat-section">
+        <summary>📖 About this species</summary>
+        <div class="inat-section-body">
+          <div class="sp-wiki-text" id="sp-wiki-text">${esc(preview)}${truncated ? '…' : ''}</div>
+          ${truncated ? `<button class="sp-expand-btn" id="sp-wiki-expand" style="margin-top:8px">Read more ↓</button>` : ''}
+          ${wikiUrl ? `<a class="inat-view-link" href="${esc(wikiUrl)}" target="_blank" rel="noopener" style="display:inline-flex;margin-top:10px">View on iNaturalist →</a>` : ''}
+        </div>
+      </details>`;
+  }
+
+  const sampleNote = `<div class="sp-sample-note">
+    Climate envelope from ${entry.sample_count} representative locations (0.5° grid, dense-cluster selection).
+    ${entry.obs_count.toLocaleString()} total sightings.
+  </div>`;
+
+  // Assemble and inject
+  const inatUrl = entry.inat_url || '';
+  document.getElementById('panel-content').innerHTML = `
+    <div class="sp-header">
+      ${photoHtml}
+      <div class="sp-header-text">
+        <div class="sp-scientific-name">${esc(entry.scientific_name)}</div>
+        ${entry.common_name ? `<div class="sp-common-name">${esc(entry.common_name)}</div>` : ''}
+        <div class="sp-meta">${entry.obs_count.toLocaleString()} sightings${inatUrl ? ` · <a href="${esc(inatUrl)}" target="_blank" rel="noopener">iNaturalist →</a>` : ''}</div>
+      </div>
+    </div>
+    ${statsHtml}
+    ${chartHtml}
+    ${koppenHtml}
+    ${wikiHtml}
+    ${sampleNote}
+  `;
+
+  // Build chart
+  const monthly = speciesHemi === 'sh' && entry.monthly_sh ? entry.monthly_sh : entry.monthly_nh;
+  buildSpeciesClimateChart(monthly);
+
+  // Hemisphere toggle
+  document.getElementById('sp-hemi-toggle')?.addEventListener('click', () => {
+    speciesHemi = speciesHemi === 'nh' ? 'sh' : 'nh';
+    // Update title and button without rebuilding whole content
+    const titleEl = document.getElementById('sp-chart-title-text');
+    const btn     = document.getElementById('sp-hemi-toggle');
+    if (titleEl) titleEl.textContent = speciesHemi === 'sh' ? 'Monthly climate (Southern hemisphere)' : 'Monthly climate';
+    if (btn)     { btn.textContent = speciesHemi === 'sh' ? 'Northern ⇄' : 'Southern ⇄'; btn.classList.toggle('active-sh', speciesHemi === 'sh'); }
+    const newMonthly = speciesHemi === 'sh' && entry.monthly_sh ? entry.monthly_sh : entry.monthly_nh;
+    buildSpeciesClimateChart(newMonthly);
+  });
+
+  // Köppen expand/collapse
+  let koppenExpanded = false;
+  function renderKoppenItems() {
+    const body = document.getElementById('sp-koppen-body');
+    if (!body) return;
+    body.innerHTML = koppenRowsHtml(koppenExpanded ? koppenEntries : koppenEntries.slice(0, MAX_KP));
+    const ctrl = document.getElementById('sp-koppen-ctrl');
+    if (ctrl) {
+      const btn = ctrl.querySelector('#sp-koppen-btn');
+      if (btn) {
+        btn.textContent = koppenExpanded ? 'Show fewer ↑' : `Show all ${koppenEntries.length} zones ↓`;
+        btn.onclick = () => { koppenExpanded = !koppenExpanded; renderKoppenItems(); };
+      }
+    }
+  }
+  if (koppenEntries.length > MAX_KP) {
+    document.getElementById('sp-koppen-btn')?.addEventListener('click', () => {
+      koppenExpanded = !koppenExpanded;
+      renderKoppenItems();
+    });
+  }
+
+  // Wikipedia expand
+  if (wiki) {
+    document.getElementById('sp-wiki-expand')?.addEventListener('click', () => {
+      const el  = document.getElementById('sp-wiki-text');
+      const btn = document.getElementById('sp-wiki-expand');
+      if (el) el.textContent = wiki;
+      if (btn) btn.remove();
+    });
+  }
+}
+
+function buildSpeciesClimateChart(monthly) {
+  if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
+  const ctx = document.getElementById('sp-climate-chart');
+  if (!ctx || !monthly) return;
+
+  // p-index: 0=p25, 1=p50, 2=p75
+  const pick = (arr, pi) => {
+    if (!arr) return new Array(12).fill(null);
+    let data = arr.map(v => v ? v[pi] : null);
+    if (speciesHemi === 'sh') data = [...data.slice(6), ...data.slice(0, 6)];
+    return data;
+  };
+
+  const SH_MONTHS = ['Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar','Apr','May','Jun'];
+  const labels = speciesHemi === 'sh' ? SH_MONTHS : MONTHS;
+
+  speciesClimateChart = new Chart(ctx, {
+    data: {
+      labels,
+      datasets: [
+        { // band top — invisible border, fills downward to dataset[1]
+          type: 'line', label: '_top',
+          data: pick(monthly.tempMax, 2),  // p75 of tempMax
+          borderWidth: 0, borderColor: 'transparent',
+          backgroundColor: 'rgba(150,160,200,0.13)',
+          fill: '+1', tension: 0.4, pointRadius: 0, yAxisID: 'yTemp',
+        },
+        { // band bottom — base of fill
+          type: 'line', label: '_bot',
+          data: pick(monthly.tempMin, 0),  // p25 of tempMin
+          borderWidth: 0, borderColor: 'transparent',
+          backgroundColor: 'transparent',
+          fill: false, tension: 0.4, pointRadius: 0, yAxisID: 'yTemp',
+        },
+        {
+          type: 'line', label: 'Avg High',
+          data: pick(monthly.tempMax, 1),  // p50 of tempMax
+          borderColor: 'rgba(255,140,60,0.85)', backgroundColor: 'transparent',
+          fill: false, tension: 0.4, pointRadius: 2, pointHoverRadius: 5, yAxisID: 'yTemp',
+        },
+        {
+          type: 'line', label: 'Avg Low',
+          data: pick(monthly.tempMin, 1),  // p50 of tempMin
+          borderColor: 'rgba(100,180,255,0.85)', backgroundColor: 'transparent',
+          fill: false, tension: 0.4, pointRadius: 2, pointHoverRadius: 5, yAxisID: 'yTemp',
+        },
+        {
+          type: 'bar', label: 'Precip',
+          data: pick(monthly.precip, 1),   // p50 of precip
+          backgroundColor: 'rgba(80,160,240,0.45)',
+          borderColor: 'rgba(80,160,240,0.7)', borderWidth: 1, yAxisID: 'yPrecip',
+        },
+      ]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          labels: {
+            color: 'rgba(255,255,255,0.55)', font: { size: 11 }, boxWidth: 12,
+            filter: item => !item.text.startsWith('_'),
+          }
+        },
+        tooltip: {
+          backgroundColor: '#161b22', borderColor: '#30363d', borderWidth: 1,
+          titleColor: '#e6edf3', bodyColor: '#8b949e',
+          filter: item => !item.dataset.label.startsWith('_'),
+          callbacks: {
+            label(ctx) {
+              if (ctx.dataset.label === 'Precip') return `Precip: ${ctx.raw != null ? ctx.raw + 'mm' : '—'}`;
+              return `${ctx.dataset.label}: ${toDisplay(ctx.raw, tempUnit)}`;
+            }
+          }
+        }
+      },
+      scales: {
+        yTemp: {
+          type: 'linear', position: 'left',
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: 'rgba(255,255,255,0.45)', font: { size: 10 }, callback: v => toDisplay(v, tempUnit) }
+        },
+        yPrecip: {
+          type: 'linear', position: 'right',
+          grid: { drawOnChartArea: false },
+          ticks: { color: 'rgba(80,160,240,0.65)', font: { size: 10 }, callback: v => v + 'mm' }
+        },
+        x: {
+          grid: { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: 'rgba(255,255,255,0.45)', font: { size: 10 } }
+        }
+      }
+    }
+  });
+}
+
 function selectInatTaxon(result) {
   const { taxonName, count } = result;
   document.getElementById('search-input').value = taxonName;
@@ -2763,6 +3223,9 @@ function selectInatTaxon(result) {
   if (pts.length) {
     map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 9, animate: true, duration: 1.0 });
   }
+
+  // Open species sidebar (async — loads species-data.json lazily)
+  openSpeciesSidebar(result.taxonId, taxonName);
 }
 
 function initSearch() {
@@ -2833,6 +3296,10 @@ function initSearch() {
       searchInatTaxa._counts = null;
       rebuildInatIndex();
     }
+    inatSpeciesSidebarId     = null;
+    inatNav.speciesTaxonId   = null;
+    inatNav.speciesTaxonName = null;
+    if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
     input.focus();
   });
 
@@ -3141,16 +3608,23 @@ let inatTaxa          = [];         // merged taxa lookup [[id,name,genus,common
 let inatObs           = [];         // merged obs arrays [[id,lat,lng,ti,date,flags,photoId,koppen],...]
 let inatSpeciesFilter  = null;       // taxon_name string when a species is selected via search
 let inatDetailGen      = 0;          // incremented each time an obs panel opens; stale fetches are discarded
+let inatSpeciesDataPromise = null;   // singleton fetch promise for species-data.json
+let inatSpeciesData        = null;   // species data keyed by taxon_id (number)
+let inatSpeciesSidebarId   = null;   // taxon_id currently shown in species sidebar
+let speciesHemi            = 'nh';   // 'nh' | 'sh' for the species monthly chart
+let speciesClimateChart    = null;   // Chart.js instance for species sidebar chart
 let inatClusterGroup  = null;       // L.layerGroup
 let inatRectGroup     = null;       // L.layerGroup for obscured rectangles
 
 // Navigation state
 let inatNav = {
-  mode:           null,   // 'species-list'|'obs-list'|'obs-detail'
-  clusterLeaves:  null,   // all leaves in current cluster
-  clusterLatlng:  null,
-  speciesName:    null,   // currently drilled species
-  obsFeature:     null,   // currently viewed obs
+  mode:             null,   // 'species-sidebar'|'species-list'|'obs-list'|'obs-detail'
+  clusterLeaves:    null,   // all leaves in current cluster
+  clusterLatlng:    null,
+  speciesName:      null,   // currently drilled species within a cluster
+  obsFeature:       null,   // currently viewed obs
+  speciesTaxonId:   null,   // taxonId of species filter sidebar (for back nav)
+  speciesTaxonName: null,
 };
 
 const inatFilters = {
@@ -3398,6 +3872,7 @@ function openSidePanelForInat() {
 
 function renderInatSpeciesList(leaves) {
   inatNav.mode = 'species-list';
+  if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
   openSidePanelForInat();
 
   // Count by taxon name
@@ -3425,11 +3900,20 @@ function renderInatSpeciesList(leaves) {
     </div>`;
   }).join('');
 
+  const backToSpecies = inatNav.speciesTaxonId
+    ? `<button class="inat-panel-back" id="inat-back-species-sidebar">← Species Info</button>`
+    : '';
+
   document.getElementById('panel-content').innerHTML = `
+    ${backToSpecies}
     <div class="inat-cluster-title">${leaves.length.toLocaleString()} iNat sightings</div>
     <div class="inat-cluster-sub">${coord} · ${sorted.length} species</div>
     <div class="inat-species-list">${rows}</div>
   `;
+
+  document.getElementById('inat-back-species-sidebar')?.addEventListener('click', () => {
+    openSpeciesSidebar(inatNav.speciesTaxonId, inatNav.speciesTaxonName);
+  });
 
   document.querySelectorAll('.inat-species-row').forEach(el => {
     el.addEventListener('click', () => {
@@ -3445,6 +3929,7 @@ const INAT_OBS_PAGE = 20;
 
 function renderInatObsList(leaves, offset = 0) {
   inatNav.mode = 'obs-list';
+  if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
 
   const page    = leaves.slice(offset, offset + INAT_OBS_PAGE);
   const hasMore = leaves.length > offset + INAT_OBS_PAGE;
@@ -3514,6 +3999,7 @@ function obsCard(lf, idx = 0) {
 function openInatObsPanel(feature) {
   inatNav.mode       = 'obs-detail';
   inatNav.obsFeature = feature;
+  if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
   openSidePanelForInat();
 
   const p        = feature.properties;
