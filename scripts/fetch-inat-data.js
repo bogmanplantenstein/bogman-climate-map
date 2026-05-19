@@ -8,7 +8,7 @@
  * Output:   inat/all.json, inat/{genus}.json, inat/fetch-report.json
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join, resolve } from 'path';
 import parseGeoraster from 'georaster';
@@ -43,6 +43,11 @@ const OM_MIN_CELLS    = 3;            // skip species with fewer occupied cells
 const LAPSE_RATE      = 6.5 / 1000;  // °C per metre (standard environmental lapse)
 const OM_ARCHIVE      = 'https://archive-api.open-meteo.com/v1/archive';
 const OM_ELEVATION    = 'https://api.open-meteo.com/v1/elevation';
+const SRTM_RATE_MS    = 5_000;  // 5 s between SRTM batches — elevation API is strict
+const SRTM_BACKOFF    = [5_000, 15_000, 30_000];  // retry delays on 429
+const SRTM_CACHE_PATH = join(ROOT, 'inat', 'srtm-cache.json');  // persisted across runs
+
+const MODE = process.argv[2] || 'all';  // 'obs' | 'species' | 'all'
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -50,7 +55,8 @@ let koppenRaster   = null;
 let lastReqTime    = 0;
 let totalRequests  = 0;
 const startTime    = Date.now();
-let omLastReq      = 0;             // Open-Meteo rate-limit state
+let omLastReq      = 0;             // Open-Meteo archive rate-limit state
+let srtmLastReq    = 0;             // Open-Meteo elevation rate-limit state
 
 // ── Koppen lookup ─────────────────────────────────────────────────────────────
 
@@ -419,38 +425,86 @@ async function omGet(url) {
 
 // ── SRTM elevation batch fetch ────────────────────────────────────────────────
 
-async function fetchSRTMElevations(cellReps) {
-  const keys   = [...cellReps.keys()];
-  const result = new Map(); // cellKey → srtm_metres
-  const BATCH  = 100;
+async function srtmGet(url) {
+  const wait = SRTM_RATE_MS - (Date.now() - srtmLastReq);
+  if (wait > 0) await sleep(wait);
+  srtmLastReq = Date.now();
+  return fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+}
 
-  for (let i = 0; i < keys.length; i += BATCH) {
-    const batch  = keys.slice(i, i + BATCH);
+async function fetchSRTMElevations(cellReps) {
+  const keys = [...cellReps.keys()];
+  const BATCH = 100;
+
+  // Load persisted cache (elevation data never changes for a fixed grid cell)
+  let cache = {};
+  if (existsSync(SRTM_CACHE_PATH)) {
+    try {
+      cache = JSON.parse(readFileSync(SRTM_CACHE_PATH, 'utf8'));
+      console.log(`  Loaded ${Object.keys(cache).length.toLocaleString()} cached elevations`);
+    } catch (err) {
+      console.warn(`  ⚠ Could not read SRTM cache: ${err.message}`);
+    }
+  }
+
+  const missing = keys.filter(k => cache[k] == null);
+
+  if (missing.length === 0) {
+    console.log(`  ✓ All ${keys.length.toLocaleString()} elevations served from cache — no API calls needed`);
+    writeFileSync(SRTM_CACHE_PATH, JSON.stringify(cache)); // normalise / deduplicate
+    return new Map(keys.map(k => [k, cache[k]]));
+  }
+
+  console.log(`  ${missing.length.toLocaleString()} cells need fetching (${keys.length - missing.length} cached)`);
+
+  let fetched = 0;
+  for (let i = 0; i < missing.length; i += BATCH) {
+    const batch  = missing.slice(i, i + BATCH);
     const coords = batch.map(k => cellReps.get(k));
     const lats   = coords.map(c => c.lat.toFixed(4)).join(',');
     const lngs   = coords.map(c => c.lng.toFixed(4)).join(',');
     const url    = `${OM_ELEVATION}?latitude=${lats}&longitude=${lngs}`;
 
-    try {
-      const res = await omGet(url);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.elevation) {
-          batch.forEach((key, j) => result.set(key, data.elevation[j]));
+    let ok = false;
+    for (let attempt = 0; attempt <= SRTM_BACKOFF.length; attempt++) {
+      try {
+        const res = await srtmGet(url);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.elevation) {
+            batch.forEach((key, j) => { cache[key] = data.elevation[j]; });
+            fetched += batch.length;
+          }
+          ok = true;
+          break;
         }
-      } else {
-        console.warn(`  ⚠ SRTM batch ${i}–${i + BATCH}: HTTP ${res.status}`);
+        if (res.status === 429) {
+          const delay = SRTM_BACKOFF[attempt] ?? SRTM_BACKOFF[SRTM_BACKOFF.length - 1];
+          console.warn(`  ⚠ SRTM 429 — waiting ${delay / 1000}s (attempt ${attempt + 1}/${SRTM_BACKOFF.length + 1})`);
+          await sleep(delay);
+        } else {
+          console.warn(`  ⚠ SRTM batch: HTTP ${res.status} — skipping`);
+          break;
+        }
+      } catch (err) {
+        console.warn(`  ⚠ SRTM batch: ${err.message}`);
+        if (attempt < SRTM_BACKOFF.length) await sleep(SRTM_BACKOFF[attempt]);
+        else break;
       }
-    } catch (err) {
-      console.warn(`  ⚠ SRTM batch ${i}–${i + BATCH}: ${err.message}`);
     }
+    if (!ok) console.warn(`  ✗ SRTM batch ${i}–${i + BATCH}: gave up after retries`);
 
-    if (i % 1000 === 0 && i > 0) {
-      console.log(`  ${i.toLocaleString()}/${keys.length.toLocaleString()} SRTM batches done`);
+    // Flush cache to disk every 1,000 cells so partial progress survives cancellation
+    if ((i + BATCH) % 1000 === 0 || i + BATCH >= missing.length) {
+      writeFileSync(SRTM_CACHE_PATH, JSON.stringify(cache));
+    }
+    if (i % 2000 === 0 && i > 0) {
+      console.log(`  ${(i + BATCH).toLocaleString()}/${missing.length.toLocaleString()} missing cells processed`);
     }
   }
 
-  return result;
+  console.log(`  ✓ ${fetched.toLocaleString()} new elevations fetched; cache total: ${Object.keys(cache).length.toLocaleString()}`);
+  return new Map(keys.map(k => [k, cache[k] ?? null]));
 }
 
 // ── Climate fetch per cell ────────────────────────────────────────────────────
@@ -471,7 +525,7 @@ async function fetchCellClimate(lat, lng) {
     try {
       const res = await omGet(url);
       if (res.ok)           return parseClimateResponse(await res.json());
-      if (res.status === 429) { await sleep(60_000); continue; }
+      if (res.status === 429) { await sleep(15_000); continue; }
       if (res.status >= 500)  { await sleep(attempt * 15_000); continue; }
       return null;
     } catch (err) {
@@ -770,9 +824,56 @@ async function computeSpeciesData(allTaxa, allObs) {
   return output;
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
+// ── Species-only mode (reads inat/all.json written by obs job) ────────────────
+
+async function runSpeciesMode() {
+  console.log('╔══════════════════════════════════════════════════╗');
+  console.log('║  Bogman iNat Species Climate Precompute          ║');
+  console.log(`║  ${new Date().toISOString()}              ║`);
+  console.log('╚══════════════════════════════════════════════════╝\n');
+
+  const allPath = join(ROOT, 'inat', 'all.json');
+  if (!existsSync(allPath)) {
+    throw new Error('inat/all.json not found — run "node fetch-inat-data.js obs" first');
+  }
+
+  console.log('▶ Loading observation data from inat/all.json...');
+  const { taxa: allTaxa, obs: allObs } = JSON.parse(readFileSync(allPath, 'utf8'));
+  console.log(`  ${allObs.length.toLocaleString()} observations, ${allTaxa.length.toLocaleString()} taxa\n`);
+
+  await loadKoppenRaster();
+  mkdirSync(join(ROOT, 'inat'), { recursive: true });
+
+  const speciesResult = await computeSpeciesData(allTaxa, allObs);
+
+  const report = {
+    generated:     new Date().toISOString(),
+    obs_loaded:    allObs.length,
+    taxa_loaded:   allTaxa.length,
+    species_count: speciesResult.species_count,
+    cell_count:    speciesResult.cell_count,
+    durationMin:   Math.round((Date.now() - startTime) / 60000),
+  };
+  writeFileSync(join(ROOT, 'inat', 'species-report.json'), JSON.stringify(report, null, 2));
+
+  const mins = report.durationMin;
+  console.log('╔══════════════════════════════════════════════════╗');
+  console.log('║  Summary                                         ║');
+  console.log(`║  Obs loaded         : ${String(allObs.length.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  Species w/ data    : ${String(speciesResult.species_count.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  Climate cells      : ${String(speciesResult.cell_count.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  Duration           : ${String(mins + ' min').padEnd(27)}║`);
+  console.log('╚══════════════════════════════════════════════════╝');
+}
+
+// ── Obs fetch mode (and legacy all-in-one mode) ───────────────────────────────
 
 async function main() {
+  if (MODE === 'species') {
+    await runSpeciesMode();
+    return;
+  }
+
   console.log('╔══════════════════════════════════════════════════╗');
   console.log('║  Bogman iNat Data Fetch                          ║');
   console.log(`║  ${new Date().toISOString()}              ║`);
@@ -783,7 +884,6 @@ async function main() {
   }
 
   await loadKoppenRaster();
-
   mkdirSync(join(ROOT, 'inat'), { recursive: true });
 
   // Resolve taxon IDs for all genera
@@ -801,9 +901,9 @@ async function main() {
   console.log('');
 
   // Fetch each genus
-  const allTaxa    = [];
-  const allObs     = [];
-  const report     = { generated: new Date().toISOString(), genera: {}, totalRequests: 0, totalObs: 0 };
+  const allTaxa = [];
+  const allObs  = [];
+  const report  = { generated: new Date().toISOString(), genera: {}, totalRequests: 0, totalObs: 0 };
 
   for (const genus of generaResolved) {
     console.log(`▶ ${genus.name}`);
@@ -824,18 +924,20 @@ async function main() {
     console.log('');
   }
 
-  // Write combined file
+  // Write combined file (read by the species job)
   writeFileSync(join(ROOT, 'inat', 'all.json'), JSON.stringify({ v: 1, generated: new Date().toISOString(), taxa: allTaxa, obs: allObs }));
 
-  // Precompute species climate envelopes
-  const speciesResult = await computeSpeciesData(allTaxa, allObs);
+  if (MODE === 'all') {
+    // Legacy single-job mode: also run species precompute inline
+    const speciesResult = await computeSpeciesData(allTaxa, allObs);
+    report.speciesCount = speciesResult.species_count;
+    report.cellCount    = speciesResult.cell_count;
+  }
 
   // Write fetch report
-  report.totalRequests  = totalRequests;
-  report.totalObs       = allObs.length;
-  report.speciesCount   = speciesResult.species_count;
-  report.cellCount      = speciesResult.cell_count;
-  report.durationMin    = Math.round((Date.now() - startTime) / 60000);
+  report.totalRequests = totalRequests;
+  report.totalObs      = allObs.length;
+  report.durationMin   = Math.round((Date.now() - startTime) / 60000);
   writeFileSync(join(ROOT, 'inat', 'fetch-report.json'), JSON.stringify(report, null, 2));
 
   // Summary
@@ -843,8 +945,10 @@ async function main() {
   console.log('╔══════════════════════════════════════════════════╗');
   console.log('║  Summary                                         ║');
   console.log(`║  Total observations : ${String(allObs.length.toLocaleString()).padEnd(27)}║`);
-  console.log(`║  Species w/ data    : ${String(speciesResult.species_count.toLocaleString()).padEnd(27)}║`);
-  console.log(`║  Climate cells      : ${String(speciesResult.cell_count.toLocaleString()).padEnd(27)}║`);
+  if (report.speciesCount != null) {
+    console.log(`║  Species w/ data    : ${String(report.speciesCount.toLocaleString()).padEnd(27)}║`);
+    console.log(`║  Climate cells      : ${String(report.cellCount.toLocaleString()).padEnd(27)}║`);
+  }
   console.log(`║  API requests       : ${String(totalRequests.toLocaleString()).padEnd(27)}║`);
   console.log(`║  Duration           : ${String(mins + ' min').padEnd(27)}║`);
 
@@ -857,7 +961,7 @@ async function main() {
   if (failures.length) {
     console.log('\nFailed chunks (re-run manually if needed):');
     failures.forEach(f => console.log(`  ${f.genus} ${f.qg} ${f.year}: ${f.error}`));
-    process.exit(1); // Signal GitHub Actions that manual review is needed
+    process.exit(1);
   }
 }
 
