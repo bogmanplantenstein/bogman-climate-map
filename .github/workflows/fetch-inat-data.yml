@@ -72,10 +72,28 @@ jobs:
           INAT_API_TOKEN: ${{ secrets.INAT_API_TOKEN }}
         run: node scripts/fetch-inat-data.js species
 
-      # Always commit the SRTM cache — even if climate fetch timed out,
-      # the cache survives so the next run skips the SRTM API phase entirely.
+      # SUCCESS: one combined commit — srtm-cache + species-data + report together.
+      # Only one push happens, so there is no fast-forward conflict.
+      - name: Commit species data
+        if: success()
+        run: |
+          git config user.name  bogmanplantenstein
+          git config user.email bogman@bogmanplantenstein.com
+          git add inat/
+          if git diff --staged --quiet; then
+            echo "No changes to commit — species data is already up to date"
+          else
+            git commit -m "chore: monthly iNat species-climate refresh $(date -u +%Y-%m-%d)"
+            git push
+            echo "✓ Species data committed and pushed"
+          fi
+
+      # FAILURE / TIMEOUT: salvage whatever SRTM progress was written to disk.
+      # The script flushes srtm-cache.json every 1,000 cells, so even a mid-run
+      # timeout preserves partial elevation data for the next attempt.
+      # (Job timeout = cancelled(), script error = failure(); both are caught here.)
       - name: Commit SRTM elevation cache
-        if: always()
+        if: failure() || cancelled()
         run: |
           git config user.name  bogmanplantenstein
           git config user.email bogman@bogmanplantenstein.com
@@ -86,19 +104,6 @@ jobs:
             git commit -m "chore: update SRTM elevation cache $(date -u +%Y-%m-%d)"
             git push
             echo "✓ SRTM cache committed and pushed"
-          fi
-
-      # Only commit the full species data if the script completed successfully
-      - name: Commit species data
-        if: success()
-        run: |
-          git add inat/
-          if git diff --staged --quiet; then
-            echo "No changes to commit — species data is already up to date"
-          else
-            git commit -m "chore: monthly iNat species-climate refresh $(date -u +%Y-%m-%d)"
-            git push
-            echo "✓ Species data committed and pushed"
           fi
 
       - name: Show species report
