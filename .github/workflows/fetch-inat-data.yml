@@ -55,7 +55,7 @@ jobs:
   species-climate:
     needs: fetch-obs        # starts only after fetch-obs succeeds
     runs-on: ubuntu-latest
-    timeout-minutes: 240   # SRTM + climate fetch ~170-200 min
+    timeout-minutes: 240   # elevation + climate fetch ~170-200 min
 
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +74,7 @@ jobs:
           INAT_API_TOKEN: ${{ secrets.INAT_API_TOKEN }}
         run: node scripts/fetch-inat-data.js species
 
-      # SUCCESS: one combined commit — srtm-cache + species-data + report together.
+      # SUCCESS: one combined commit — elev-cache + species-data + report together.
       # Only one push happens, so there is no fast-forward conflict.
       - name: Commit species data
         if: success()
@@ -90,22 +90,22 @@ jobs:
             echo "✓ Species data committed and pushed"
           fi
 
-      # FAILURE / TIMEOUT: salvage whatever SRTM progress was written to disk.
-      # The script flushes srtm-cache.json every 1,000 cells, so even a mid-run
+      # FAILURE / TIMEOUT: salvage whatever elevation progress was written to disk.
+      # The script flushes elev-cache.json every 1,000 cells, so even a mid-run
       # timeout preserves partial elevation data for the next attempt.
       # (Job timeout = cancelled(), script error = failure(); both are caught here.)
-      - name: Commit SRTM elevation cache
+      - name: Commit elevation cache
         if: failure() || cancelled()
         run: |
           git config user.name  bogmanplantenstein
           git config user.email bogman@bogmanplantenstein.com
-          git add inat/srtm-cache.json 2>/dev/null || true
+          git add inat/elev-cache.json 2>/dev/null || true
           if git diff --staged --quiet; then
-            echo "No SRTM cache changes to commit"
+            echo "No elevation cache changes to commit"
           else
-            git commit -m "chore: update SRTM elevation cache $(date -u +%Y-%m-%d)"
+            git commit -m "chore: update elevation cache $(date -u +%Y-%m-%d)"
             git push
-            echo "✓ SRTM cache committed and pushed"
+            echo "✓ Elevation cache committed and pushed"
           fi
 
       - name: Show species report

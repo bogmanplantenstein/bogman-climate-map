@@ -42,10 +42,10 @@ const OM_RATE_MS      = 700;          // ~85 req/min — matches iNat pacing
 const OM_MIN_CELLS    = 3;            // skip species with fewer occupied cells
 const LAPSE_RATE      = 6.5 / 1000;  // °C per metre (standard environmental lapse)
 const OM_ARCHIVE      = 'https://archive-api.open-meteo.com/v1/archive';
-const OM_ELEVATION    = 'https://api.open-meteo.com/v1/elevation';
-const SRTM_RATE_MS    = 5_000;  // 5 s between SRTM batches — elevation API is strict
-const SRTM_BACKOFF    = [5_000, 15_000, 30_000];  // retry delays on 429
-const SRTM_CACHE_PATH = join(ROOT, 'inat', 'srtm-cache.json');  // persisted across runs
+const ELEV_API        = 'https://api.opentopodata.org/v1/copernicus30m';  // Copernicus GLO-30, ~30 m resolution
+const ELEV_RATE_MS    = 1_000;  // 1 s between batches — OpenTopoData allows 1 req/s
+const ELEV_BACKOFF    = [5_000, 15_000, 30_000];  // retry delays on 429 / errors
+const ELEV_CACHE_PATH = join(ROOT, 'inat', 'elev-cache.json');  // persisted across runs
 
 const MODE = process.argv[2] || 'all';  // 'obs' | 'species' | 'all'
 
@@ -56,7 +56,7 @@ let lastReqTime    = 0;
 let totalRequests  = 0;
 const startTime    = Date.now();
 let omLastReq      = 0;             // Open-Meteo archive rate-limit state
-let srtmLastReq    = 0;             // Open-Meteo elevation rate-limit state
+let elevLastReq    = 0;             // OpenTopoData elevation rate-limit state
 
 // ── Koppen lookup ─────────────────────────────────────────────────────────────
 
@@ -331,7 +331,7 @@ async function fetchGenus(genus, taxonId) {
 // After all obs are collected we:
 //   1. Assign every obs to a 0.5° global grid cell
 //   2. Pick one representative GPS point per cell (densest local cluster)
-//   3. Batch-fetch SRTM elevations (Open-Meteo elevation API, 100 per request)
+//   3. Batch-fetch Copernicus GLO-30 elevations (OpenTopoData API, 100 per request)
 //   4. Fetch climate normals per cell (Open-Meteo archive, temp+precip+RH combined)
 //   5. Apply lapse-rate elevation correction to temperatures
 //   6. For each taxon: aggregate p10/p25/p50/p75/p90 across its cells
@@ -423,27 +423,27 @@ async function omGet(url) {
   return fetch(url, { headers: { 'User-Agent': USER_AGENT } });
 }
 
-// ── SRTM elevation batch fetch ────────────────────────────────────────────────
+// ── Copernicus GLO-30 elevation batch fetch ───────────────────────────────────
 
-async function srtmGet(url) {
-  const wait = SRTM_RATE_MS - (Date.now() - srtmLastReq);
+async function elevGet(url) {
+  const wait = ELEV_RATE_MS - (Date.now() - elevLastReq);
   if (wait > 0) await sleep(wait);
-  srtmLastReq = Date.now();
+  elevLastReq = Date.now();
   return fetch(url, { headers: { 'User-Agent': USER_AGENT } });
 }
 
-async function fetchSRTMElevations(cellReps) {
+async function fetchElevations(cellReps) {
   const keys = [...cellReps.keys()];
   const BATCH = 100;
 
   // Load persisted cache (elevation data never changes for a fixed grid cell)
   let cache = {};
-  if (existsSync(SRTM_CACHE_PATH)) {
+  if (existsSync(ELEV_CACHE_PATH)) {
     try {
-      cache = JSON.parse(readFileSync(SRTM_CACHE_PATH, 'utf8'));
+      cache = JSON.parse(readFileSync(ELEV_CACHE_PATH, 'utf8'));
       console.log(`  Loaded ${Object.keys(cache).length.toLocaleString()} cached elevations`);
     } catch (err) {
-      console.warn(`  ⚠ Could not read SRTM cache: ${err.message}`);
+      console.warn(`  ⚠ Could not read elevation cache: ${err.message}`);
     }
   }
 
@@ -451,7 +451,7 @@ async function fetchSRTMElevations(cellReps) {
 
   if (missing.length === 0) {
     console.log(`  ✓ All ${keys.length.toLocaleString()} elevations served from cache — no API calls needed`);
-    writeFileSync(SRTM_CACHE_PATH, JSON.stringify(cache)); // normalise / deduplicate
+    writeFileSync(ELEV_CACHE_PATH, JSON.stringify(cache)); // normalise / deduplicate
     return new Map(keys.map(k => [k, cache[k]]));
   }
 
@@ -459,44 +459,48 @@ async function fetchSRTMElevations(cellReps) {
 
   let fetched = 0;
   for (let i = 0; i < missing.length; i += BATCH) {
-    const batch  = missing.slice(i, i + BATCH);
-    const coords = batch.map(k => cellReps.get(k));
-    const lats   = coords.map(c => c.lat.toFixed(4)).join(',');
-    const lngs   = coords.map(c => c.lng.toFixed(4)).join(',');
-    const url    = `${OM_ELEVATION}?latitude=${lats}&longitude=${lngs}`;
+    const batch     = missing.slice(i, i + BATCH);
+    const coords    = batch.map(k => cellReps.get(k));
+    // OpenTopoData uses pipe-separated "lat,lng" pairs
+    const locations = coords.map(c => `${c.lat.toFixed(4)},${c.lng.toFixed(4)}`).join('|');
+    const url       = `${ELEV_API}?locations=${locations}`;
 
     let ok = false;
-    for (let attempt = 0; attempt <= SRTM_BACKOFF.length; attempt++) {
+    for (let attempt = 0; attempt <= ELEV_BACKOFF.length; attempt++) {
       try {
-        const res = await srtmGet(url);
+        const res = await elevGet(url);
         if (res.ok) {
           const data = await res.json();
-          if (data.elevation) {
-            batch.forEach((key, j) => { cache[key] = data.elevation[j]; });
+          // OpenTopoData returns { results: [{elevation, location}, ...], status: "OK" }
+          if (data.results) {
+            batch.forEach((key, j) => {
+              const elev = data.results[j]?.elevation ?? null;  // null for ocean / no-data
+              cache[key] = elev;
+            });
             fetched += batch.length;
           }
           ok = true;
           break;
         }
         if (res.status === 429) {
-          const delay = SRTM_BACKOFF[attempt] ?? SRTM_BACKOFF[SRTM_BACKOFF.length - 1];
-          console.warn(`  ⚠ SRTM 429 — waiting ${delay / 1000}s (attempt ${attempt + 1}/${SRTM_BACKOFF.length + 1})`);
+          const delay = ELEV_BACKOFF[attempt] ?? ELEV_BACKOFF[ELEV_BACKOFF.length - 1];
+          console.warn(`  ⚠ Elev 429 — waiting ${delay / 1000}s (attempt ${attempt + 1}/${ELEV_BACKOFF.length + 1})`);
           await sleep(delay);
         } else {
-          console.warn(`  ⚠ SRTM batch: HTTP ${res.status} — skipping`);
+          console.warn(`  ⚠ Elev batch: HTTP ${res.status} — skipping`);
           break;
         }
       } catch (err) {
-        console.warn(`  ⚠ SRTM batch: ${err.message}`);
-        if (attempt < SRTM_BACKOFF.length) await sleep(SRTM_BACKOFF[attempt]);
+        console.warn(`  ⚠ Elev batch: ${err.message}`);
+        if (attempt < ELEV_BACKOFF.length) await sleep(ELEV_BACKOFF[attempt]);
         else break;
       }
     }
-    if (!ok) console.warn(`  ✗ SRTM batch ${i}–${i + BATCH}: gave up after retries`);
+    if (!ok) console.warn(`  ✗ Elev batch ${i}–${i + BATCH}: gave up after retries`);
 
     // Flush cache to disk every 1,000 cells so partial progress survives cancellation
     if ((i + BATCH) % 1000 === 0 || i + BATCH >= missing.length) {
-      writeFileSync(SRTM_CACHE_PATH, JSON.stringify(cache));
+      writeFileSync(ELEV_CACHE_PATH, JSON.stringify(cache));
     }
     if (i % 2000 === 0 && i > 0) {
       console.log(`  ${(i + BATCH).toLocaleString()}/${missing.length.toLocaleString()} missing cells processed`);
@@ -602,13 +606,13 @@ function parseClimateResponse(d) {
 /**
  * Adjusts tempMax and tempMin for the elevation difference between the
  * Open-Meteo ERA5 model grid (modelElev) and the actual observation site
- * (srtmElev). Uses standard environmental lapse rate: 6.5°C / 1000 m.
+ * (elev). Uses standard environmental lapse rate: 6.5°C / 1000 m.
  * Only temperature is corrected; precip and RH are left unchanged.
  */
-function applyLapseRate(climate, srtmElev) {
-  if (srtmElev == null || climate.modelElev == null) return climate;
+function applyLapseRate(climate, elev) {
+  if (elev == null || climate.modelElev == null) return climate;
   // Positive delta → obs is higher than model → obs is colder → subtract
-  const delta = LAPSE_RATE * (srtmElev - climate.modelElev);
+  const delta = LAPSE_RATE * (elev - climate.modelElev);
   return {
     ...climate,
     tempMax: climate.tempMax.map(v => v != null ? round1(v - delta) : null),
@@ -662,10 +666,10 @@ async function computeSpeciesData(allTaxa, allObs) {
   console.log('▶ Building global 0.5° grid...');
   const cellReps = buildGlobalGrid(allObs);
 
-  // ── 2. SRTM elevations ────────────────────────────────────────────────────
-  console.log('\n▶ Fetching SRTM elevations (batched 100/request)...');
-  const srtmElevs = await fetchSRTMElevations(cellReps);
-  console.log(`  ✓ ${srtmElevs.size.toLocaleString()} elevations fetched`);
+  // ── 2. Copernicus GLO-30 elevations ──────────────────────────────────────
+  console.log('\n▶ Fetching Copernicus GLO-30 elevations (batched 100/request)...');
+  const elevs = await fetchElevations(cellReps);
+  console.log(`  ✓ ${elevs.size.toLocaleString()} elevations fetched`);
 
   // ── 3. Climate per cell ───────────────────────────────────────────────────
   const cellKeys = [...cellReps.keys()];
@@ -679,8 +683,8 @@ async function computeSpeciesData(allTaxa, allObs) {
     const { lat, lng } = cellReps.get(key);
     const raw = await fetchCellClimate(lat, lng);
     if (raw) {
-      const srtmElev = srtmElevs.get(key) ?? null;
-      cellClimates.set(key, applyLapseRate(raw, srtmElev));
+      const elev = elevs.get(key) ?? null;
+      cellClimates.set(key, applyLapseRate(raw, elev));
       omFetched++;
     } else {
       omFailed++;
