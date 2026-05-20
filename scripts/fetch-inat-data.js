@@ -447,7 +447,7 @@ async function fetchElevations(cellReps) {
     }
   }
 
-  const missing = keys.filter(k => cache[k] == null);
+  const missing = keys.filter(k => !(k in cache));  // null = cached no-data (ocean); undefined = never fetched
 
   if (missing.length === 0) {
     console.log(`  ✓ All ${keys.length.toLocaleString()} elevations served from cache — no API calls needed`);
