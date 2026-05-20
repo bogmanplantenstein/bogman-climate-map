@@ -58,7 +58,9 @@ jobs:
     timeout-minutes: 240   # SRTM + climate fetch ~170-200 min
 
     steps:
-      - uses: actions/checkout@v4   # fresh checkout picks up obs data committed above
+      - uses: actions/checkout@v4
+        with:
+          ref: main   # get latest HEAD, not the trigger SHA — picks up obs data committed by fetch-obs
 
       - uses: actions/setup-node@v4
         with:
