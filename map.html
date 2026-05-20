@@ -2555,6 +2555,7 @@ async function fetchSearchClimateNormals(lat, lng) {
     });
 
     return {
+      modelElev:  d.elevation ?? null,   // ERA5 model grid elevation (m) — used for lapse-rate correction
       tempMax:    tmaxSum.map((s, m) => tmaxCnt[m] ? s / tmaxCnt[m] : null),
       tempMin:    tminSum.map((s, m) => tminCnt[m] ? s / tminCnt[m] : null),
       precipMm:   precSum.map((s, m) => precYrs[m].size ? s / precYrs[m].size : null),
@@ -2605,8 +2606,29 @@ async function fetchRHNormals(lat, lng) {
   } catch { return null; }
 }
 
+async function fetchTerrainElevation(lat, lng) {
+  // Copernicus GLO-30 via OpenTopoData — same source used by the backend script
+  try {
+    const url = `https://api.opentopodata.org/v1/copernicus30m?locations=${lat.toFixed(4)},${lng.toFixed(4)}`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d.results?.[0]?.elevation ?? null;  // null for ocean / no-data
+  } catch { return null; }
+}
+
+function applyLapseRateCorrection(normals, terrainElev) {
+  // Adjusts ERA5 temperatures for the difference between model grid elevation
+  // and actual terrain elevation. Standard lapse rate: 6.5°C per 1000 m.
+  const modelElev = normals.modelElev;
+  if (terrainElev == null || modelElev == null) return normals;
+  const delta = (6.5 / 1000) * (terrainElev - modelElev); // positive = terrain higher = colder
+  const adj = v => v != null ? Math.round((v - delta) * 10) / 10 : null;
+  return { ...normals, tempMax: normals.tempMax.map(adj), tempMin: normals.tempMin.map(adj) };
+}
+
 function buildLocationPanel(state) {
-  const { result, lat, lng, normals, loading } = state;
+  const { result, lat, lng, normals, loading, elevInfo } = state;
   const name = result._name || result.display_name.split(',')[0];
   const a = result.address || {};
   const subLabel = [a.state, a.country].filter(Boolean).join(', ');
@@ -2651,7 +2673,19 @@ function buildLocationPanel(state) {
           <div class="climate-stat-value">${avgDLI.toFixed(1)}<span class="climate-stat-unit">mol/m²</span></div></div>` : ''}
         ${annRHAvg != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg RH</div>
           <div class="climate-stat-value">${Math.round(annRHAvg)}<span class="climate-stat-unit">%</span></div></div>` : ''}
+        ${elevInfo ? `<div class="climate-stat"><div class="climate-stat-label">Elevation</div>
+          <div class="climate-stat-value">${elevInfo.terrainElev.toLocaleString()}<span class="climate-stat-unit">m</span></div></div>` : ''}
       </div>
+      ${elevInfo ? (() => {
+        const diff    = elevInfo.elevDiff;
+        const diffAbs = Math.abs(diff);
+        const dir     = diff > 0 ? 'higher' : 'lower';
+        const sign    = diff > 0 ? '−' : '+';  // higher → cooler → negative adjustment
+        const adj     = Math.abs(elevInfo.tempDelta).toFixed(1);
+        return `<div class="sp-chart-note">ERA5 climate model elevation: ${elevInfo.modelElev.toLocaleString()} m. ` +
+               `This location is ${diffAbs.toLocaleString()} m ${dir} (${elevInfo.terrainElev.toLocaleString()} m), ` +
+               `corresponding to a ~${sign}${adj}°C temperature adjustment using a standard 6.5°C/1000 m lapse rate.</div>`;
+      })() : ''}
       <button class="expand-btn" id="expand-btn">↓ Monthly Climate Data</button>
       <div id="climate-expanded">
         <div class="section-divider"></div>
@@ -2736,11 +2770,12 @@ window.openClimateAt = async function(lat, lng) {
   searchPanelOpen = true;
   buildLocationPanel(searchState);
 
-  const [geocode, normals, rh] = await Promise.all([
+  const [geocode, normals, rh, terrainElev] = await Promise.all([
     fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json`, { headers: { 'Accept-Language': 'en' } })
       .then(r => r.ok ? r.json() : null).catch(() => null),
     fetchSearchClimateNormals(lat, lng),
-    fetchRHNormals(lat, lng)
+    fetchRHNormals(lat, lng),
+    fetchTerrainElevation(lat, lng)
   ]);
 
   if (!searchPanelOpen || !searchState || searchState.token !== token) return;
@@ -2754,8 +2789,25 @@ window.openClimateAt = async function(lat, lng) {
       address: geocode.address || {}
     };
   }
-  searchState.normals = normals ? { ...normals, ...(rh || {}) } : null;
-  searchState.loading = false;
+
+  let mergedNormals = normals ? { ...normals, ...(rh || {}) } : null;
+  let elevInfo = null;
+  if (mergedNormals && terrainElev != null && mergedNormals.modelElev != null) {
+    const modelElev = mergedNormals.modelElev;
+    const elevDiff  = terrainElev - modelElev;
+    const tempDelta = (6.5 / 1000) * elevDiff;  // °C subtracted from raw temps
+    mergedNormals   = applyLapseRateCorrection(mergedNormals, terrainElev);
+    elevInfo = {
+      terrainElev: Math.round(terrainElev),
+      modelElev:   Math.round(modelElev),
+      elevDiff:    Math.round(elevDiff),
+      tempDelta:   Math.round(tempDelta * 10) / 10,
+    };
+  }
+
+  searchState.normals  = mergedNormals;
+  searchState.elevInfo = elevInfo;
+  searchState.loading  = false;
   buildLocationPanel(searchState);
 };
 
