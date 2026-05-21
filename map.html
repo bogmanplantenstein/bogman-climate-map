@@ -2609,7 +2609,7 @@ async function fetchRHNormals(lat, lng) {
 async function fetchTerrainElevation(lat, lng) {
   // SRTM 30m via OpenTopoData public API — same source used by the backend script
   try {
-    const url = `https://api.opentopodata.org/v1/srtm30m?locations=${lat.toFixed(4)},${lng.toFixed(4)}`;
+    const url = `https://api.opentopodata.org/v1/aster30m?locations=${lat.toFixed(4)},${lng.toFixed(4)}`;
     const r = await fetch(url);
     if (!r.ok) return null;
     const d = await r.json();
