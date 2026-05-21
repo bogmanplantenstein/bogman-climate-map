@@ -42,7 +42,7 @@ const OM_RATE_MS      = 700;          // ~85 req/min — matches iNat pacing
 const OM_MIN_CELLS    = 3;            // skip species with fewer occupied cells
 const LAPSE_RATE      = 6.5 / 1000;  // °C per metre (standard environmental lapse)
 const OM_ARCHIVE      = 'https://archive-api.open-meteo.com/v1/archive';
-const ELEV_API        = 'https://api.opentopodata.org/v1/copernicus30m';  // Copernicus GLO-30, ~30 m resolution
+const ELEV_API        = 'https://api.opentopodata.org/v1/srtm30m';  // SRTM 30m — available on public OpenTopoData API
 const ELEV_RATE_MS    = 1_000;  // 1 s between batches — OpenTopoData allows 1 req/s
 const ELEV_BACKOFF    = [5_000, 15_000, 30_000];  // retry delays on 429 / errors
 const ELEV_CACHE_PATH = join(ROOT, 'inat', 'elev-cache.json');  // persisted across runs
@@ -669,7 +669,8 @@ async function computeSpeciesData(allTaxa, allObs) {
   // ── 2. Copernicus GLO-30 elevations ──────────────────────────────────────
   console.log('\n▶ Fetching Copernicus GLO-30 elevations (batched 100/request)...');
   const elevs = await fetchElevations(cellReps);
-  console.log(`  ✓ ${elevs.size.toLocaleString()} elevations fetched`);
+  const elevHits = [...elevs.values()].filter(v => v != null).length;
+  console.log(`  ✓ ${elevHits.toLocaleString()}/${elevs.size.toLocaleString()} elevations resolved (${elevs.size - elevHits} null/ocean)`);
 
   // ── 3. Climate per cell ───────────────────────────────────────────────────
   const cellKeys = [...cellReps.keys()];

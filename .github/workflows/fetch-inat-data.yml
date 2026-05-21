@@ -8,6 +8,9 @@ on:
 permissions:
   contents: write           # needed to commit updated inat/ files back to repo
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true   # suppress Node.js 20 deprecation warnings
+
 jobs:
 
   # ── Job 1: fetch all observations ──────────────────────────────────────────
@@ -39,6 +42,7 @@ jobs:
             echo "No changes to commit — obs data is already up to date"
           else
             git commit -m "chore: monthly iNat obs refresh $(date -u +%Y-%m-%d)"
+            git pull --rebase origin main
             git push
             echo "✓ Obs data committed and pushed"
           fi
@@ -86,6 +90,7 @@ jobs:
             echo "No changes to commit — species data is already up to date"
           else
             git commit -m "chore: monthly iNat species-climate refresh $(date -u +%Y-%m-%d)"
+            git pull --rebase origin main
             git push
             echo "✓ Species data committed and pushed"
           fi
@@ -104,6 +109,7 @@ jobs:
             echo "No elevation cache changes to commit"
           else
             git commit -m "chore: update elevation cache $(date -u +%Y-%m-%d)"
+            git pull --rebase origin main
             git push
             echo "✓ Elevation cache committed and pushed"
           fi
