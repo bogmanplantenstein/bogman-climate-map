@@ -674,7 +674,8 @@ async function computeSpeciesData(allTaxa, allObs) {
 
   // ── 3. Climate per cell ───────────────────────────────────────────────────
   const cellKeys = [...cellReps.keys()];
-  const estMin   = Math.round(cellKeys.length * OM_RATE_MS / 60_000);
+  // Effective rate is ~1.4s/cell (700ms rate-limit wait + ~700ms Open-Meteo response latency)
+  const estMin   = Math.round(cellKeys.length * 1400 / 60_000);
   console.log(`\n▶ Fetching climate data for ${cellKeys.length.toLocaleString()} cells (~${estMin} min)...`);
 
   const cellClimates = new Map(); // cellKey → parsed climate object

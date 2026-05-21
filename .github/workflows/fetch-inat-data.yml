@@ -59,7 +59,7 @@ jobs:
   species-climate:
     needs: fetch-obs        # starts only after fetch-obs succeeds
     runs-on: ubuntu-latest
-    timeout-minutes: 240   # elevation + climate fetch ~170-200 min
+    timeout-minutes: 360   # climate fetch alone takes ~240 min (10k cells × ~1.4s/cell incl. response latency)
 
     steps:
       - uses: actions/checkout@v4
