@@ -1,5 +1,5 @@
 {
-  "generated": "2026-05-21T06:54:05.160Z",
+  "generated": "2026-05-21T22:18:12.336Z",
   "genera": {
     "Aldrovanda": {
       "fetched": 110,
@@ -17,18 +17,18 @@
       "failed": []
     },
     "Darlingtonia": {
-      "fetched": 4364,
-      "expected": 4401,
+      "fetched": 4365,
+      "expected": 4402,
       "failed": []
     },
     "Dionaea": {
-      "fetched": 2891,
-      "expected": 2991,
+      "fetched": 2888,
+      "expected": 2988,
       "failed": []
     },
     "Drosera": {
-      "fetched": 162259,
-      "expected": 163973,
+      "fetched": 162308,
+      "expected": 164025,
       "failed": []
     },
     "Drosophyllum": {
@@ -47,13 +47,13 @@
       "failed": []
     },
     "Nepenthes": {
-      "fetched": 12191,
-      "expected": 12550,
+      "fetched": 12194,
+      "expected": 12553,
       "failed": []
     },
     "Pinguicula": {
-      "fetched": 37846,
-      "expected": 38561,
+      "fetched": 37869,
+      "expected": 38584,
       "failed": []
     },
     "Roridula": {
@@ -62,17 +62,17 @@
       "failed": []
     },
     "Sarracenia": {
-      "fetched": 60213,
-      "expected": 61330,
+      "fetched": 60234,
+      "expected": 61351,
       "failed": []
     },
     "Utricularia": {
-      "fetched": 62136,
-      "expected": 62797,
+      "fetched": 62153,
+      "expected": 62814,
       "failed": []
     }
   },
-  "totalRequests": 2743,
-  "totalObs": 343836,
-  "durationMin": 47
+  "totalRequests": 2745,
+  "totalObs": 343947,
+  "durationMin": 46
 }
