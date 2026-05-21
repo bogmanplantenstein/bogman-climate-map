@@ -1348,6 +1348,144 @@ html, body {
   border-top: 1px solid var(--border);
   line-height: 1.5;
 }
+
+/* ── Soil layer controls ─────────────────────────────────── */
+.soil-layer-wrap { position: relative; }
+.soil-layer-panel {
+  display: none;
+  position: absolute;
+  right: 0;
+  top: 38px;
+  width: 192px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.55);
+  z-index: 800;
+  overflow: hidden;
+}
+.soil-layer-panel.open { display: block; }
+.soil-panel-title {
+  padding: 6px 10px 5px;
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.soil-radio-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+  border-bottom: 1px solid rgba(48,54,61,0.4);
+}
+.soil-radio-row:last-child { border-bottom: none; }
+.soil-radio-row:hover { background: var(--bg-elevated); }
+.soil-radio-row input[type=radio] {
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.soil-radio-label { font-size: 12px; color: var(--text-primary); user-select: none; }
+.soil-radio-sub { font-size: 10px; color: var(--text-muted); margin-top: 1px; }
+
+/* ── Soil map legend ─────────────────────────────────────── */
+#soil-legend {
+  position: absolute;
+  bottom: 48px;
+  left: 10px;
+  z-index: 700;
+  background: rgba(22,27,34,0.94);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px 9px;
+  min-width: 148px;
+  max-width: 198px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+  display: none;
+  backdrop-filter: blur(4px);
+}
+#soil-legend.visible { display: block; }
+.soil-legend-title {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.soil-legend-gradient {
+  height: 10px;
+  border-radius: 3px;
+  margin-bottom: 3px;
+}
+.soil-legend-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: 9.5px;
+  color: var(--text-muted);
+}
+.soil-legend-list { display: flex; flex-direction: column; gap: 2px; }
+.soil-legend-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.soil-legend-swatch {
+  width: 10px; height: 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+.soil-legend-name { font-size: 10px; color: var(--text-muted); }
+.soil-legend-src {
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-top: 5px;
+  display: block;
+  opacity: 0.7;
+}
+
+/* ── Soil data section (side panel) ─────────────────────── */
+.soil-type-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.soil-type-swatch {
+  width: 13px; height: 13px;
+  border-radius: 3px;
+  flex-shrink: 0;
+  margin-top: 2px;
+  border: 1px solid rgba(255,255,255,0.12);
+}
+.soil-type-name { font-size: 13px; font-weight: 600; color: var(--text-primary); line-height: 1.3; }
+.soil-type-desc { font-size: 11px; color: var(--text-muted); line-height: 1.4; margin-top: 1px; }
+.soil-props-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 5px;
+  margin-top: 8px;
+}
+.soil-prop-card {
+  background: var(--bg);
+  border-radius: 5px;
+  padding: 6px 8px;
+}
+.soil-prop-label {
+  font-size: 9.5px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 2px;
+}
+.soil-prop-value { font-size: 14px; font-weight: 600; color: var(--text-primary); line-height: 1.2; }
+.soil-prop-unit  { font-size: 9.5px; color: var(--text-muted); }
+.soil-data-note  { font-size: 10px; color: var(--text-muted); margin-top: 8px; line-height: 1.5; font-style: italic; }
+.soil-loading    { color: var(--text-muted); font-size: 12px; padding: 2px 0; }
 </style>
 </head>
 <body>
@@ -1444,6 +1582,9 @@ html, body {
       </div>
       <div id="unmapped-list"></div>
     </div>
+
+    <!-- Soil map legend — updated by updateSoilLegend() -->
+    <div id="soil-legend"></div>
   </div>
 
   <div id="side-panel">
@@ -1567,6 +1708,69 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 
 const FLY_ZOOM = { exact: 9, regional: 6, country: 4 };
 
+// ── SoilGrids WMS layer definitions ──────────────────────
+const SOIL_LAYERS = {
+  wrb: {
+    label: 'Soil Type (WRB)', wmsMap: 'wrb', wmsLayer: 'MostProbable',
+    legend: 'wrb',
+  },
+  phh2o: {
+    label: 'pH', wmsMap: 'phh2o', wmsLayer: 'phh2o_0-5cm_mean',
+    legend: 'gradient',
+    gradMin: 'pH 3.5', gradMax: 'pH 9.5',
+    gradCss: 'linear-gradient(to right,#d73027,#f46d43,#fdae61,#fee08b,#d9ef8b,#a6d96a,#66bd63,#1a9850)',
+  },
+  soc: {
+    label: 'Organic Carbon', wmsMap: 'soc', wmsLayer: 'soc_0-5cm_mean',
+    legend: 'gradient',
+    gradMin: '0 g/kg', gradMax: '500+ g/kg',
+    gradCss: 'linear-gradient(to right,#fffde7,#f9a825,#6d4c41,#1a0800)',
+  },
+  nitrogen: {
+    label: 'Nitrogen', wmsMap: 'nitrogen', wmsLayer: 'nitrogen_0-5cm_mean',
+    legend: 'gradient',
+    gradMin: '0 g/kg', gradMax: '20+ g/kg',
+    gradCss: 'linear-gradient(to right,#f1f8e9,#aed581,#558b2f,#1b5e20)',
+  },
+};
+
+// WRB Reference Soil Group integer codes → display info
+// Featured subset shown in legend (ordered by carnivorous-plant relevance)
+const WRB_LEGEND_FEATURED = [15, 24, 13, 28, 7, 19, 1, 9, 4, 17, 25];
+const WRB_GROUPS = {
+  1:  { name: 'Acrisols',     desc: 'Highly weathered, acidic tropical soils',   color: '#FD9B5E' },
+  2:  { name: 'Albeluvisols', desc: 'Pale, eluviated soils',                     color: '#EDD5B0' },
+  3:  { name: 'Alisols',      desc: 'Acidic, clay-rich soils',                   color: '#F0B87A' },
+  4:  { name: 'Andosols',     desc: 'Volcanic ash soils',                        color: '#7B5726' },
+  5:  { name: 'Arenosols',    desc: 'Sandy, low-nutrient soils',                 color: '#F5DEB3' },
+  6:  { name: 'Calcisols',    desc: 'Calcium carbonate-rich soils',              color: '#F0EBA0' },
+  7:  { name: 'Cambisols',    desc: 'Moderately developed soils',                color: '#B8C6A3' },
+  8:  { name: 'Chernozems',   desc: 'Deep, fertile black grassland soils',       color: '#4A3220' },
+  9:  { name: 'Cryosols',     desc: 'Permafrost-affected frozen soils',          color: '#DDE3EA' },
+  10: { name: 'Durisols',     desc: 'Silica-cemented soils',                     color: '#F5C896' },
+  11: { name: 'Ferralsols',   desc: 'Deeply weathered red tropical soils',       color: '#C8581E' },
+  12: { name: 'Fluvisols',    desc: 'Young alluvial (floodplain) soils',         color: '#8DB4DA' },
+  13: { name: 'Gleysols',     desc: 'Waterlogged mineral soils (wetlands)',      color: '#7FBFBF' },
+  14: { name: 'Gypsisols',    desc: 'Gypsum-rich arid soils',                   color: '#E8D5A3' },
+  15: { name: 'Histosols',    desc: 'Peat soils — high organic content',         color: '#5B3C11' },
+  16: { name: 'Kastanozems',  desc: 'Brown, moderately fertile soils',           color: '#8A6845' },
+  17: { name: 'Leptosols',    desc: 'Thin soils over rock or gravel',            color: '#D3C9C1' },
+  18: { name: 'Lixisols',     desc: 'Tropical clay-accumulation soils',          color: '#E8A87C' },
+  19: { name: 'Luvisols',     desc: 'Clay-enriched subsoil soils',               color: '#9AB87A' },
+  20: { name: 'Nitisols',     desc: 'Friable, structured clay soils',            color: '#C17C55' },
+  21: { name: 'Phaeozems',    desc: 'Dark, humus-rich fertile soils',            color: '#6E5040' },
+  22: { name: 'Planosols',    desc: 'Seasonally waterlogged, eluviated soils',   color: '#B5C4C1' },
+  23: { name: 'Plinthosols',  desc: 'Iron-rich, hardening tropical soils',       color: '#C97E7E' },
+  24: { name: 'Podzols',      desc: 'Acidic sandy soils with bleached layer',    color: '#CCCCCC' },
+  25: { name: 'Regosols',     desc: 'Weakly developed soils on loose material',  color: '#E2CFBE' },
+  26: { name: 'Solonchaks',   desc: 'Salt-accumulating soils',                   color: '#E8E8A0' },
+  27: { name: 'Solonetz',     desc: 'Sodium-rich alkaline soils',                color: '#D6C870' },
+  28: { name: 'Stagnosols',   desc: 'Seasonally waterlogged stagnant soils',     color: '#7F9B8A' },
+  29: { name: 'Technosols',   desc: 'Human-made or heavily modified soils',      color: '#A0A0A0' },
+  30: { name: 'Umbrisols',    desc: 'Dark, acidic, humus-rich soils',            color: '#9B8070' },
+  31: { name: 'Vertisols',    desc: 'Shrink-swell clay soils',                   color: '#4A3728' },
+};
+
 const ELEV_BANDS = ['lowland','intermediate','highland','ultra-highland'];
 
 const ENTRY_LABELS = {
@@ -1585,6 +1789,9 @@ let searchState = null; // { result, lat, lng, normals, loading }
 let lightChart = null;
 let satelliteActive = false;
 let koppenVisible   = true;
+let activeSoilLayer = null;       // SOIL_LAYERS key or null
+const soilWmsCache  = {};         // lazily-built L.tileLayer.wms instances
+let soilFetchToken  = 0;          // incremented on each panel open; stale fetches bail
 
 let allMapTaxa    = [];   // eligible taxa with coords
 let unmappedTaxa  = [];   // eligible taxa without coords
@@ -1839,6 +2046,63 @@ function buildMapControls() {
     }
   });
 
+  // Soil layer control
+  const SoilCtrl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const wrap  = L.DomUtil.create('div', 'soil-layer-wrap');
+      const btn   = L.DomUtil.create('button', 'map-btn', wrap);
+      btn.title   = 'Soil layers';
+      btn.innerHTML = '🌱';
+      const panel = L.DomUtil.create('div', 'soil-layer-panel', wrap);
+
+      const options = [
+        ['none',     'Off',             ''],
+        ['wrb',      'Soil Type (WRB)', 'Classification'],
+        ['phh2o',    'pH',              'Acidity / alkalinity'],
+        ['soc',      'Organic Carbon',  'Peat & organic matter'],
+        ['nitrogen', 'Nitrogen',        'Total soil nitrogen'],
+      ];
+      panel.innerHTML =
+        `<div class="soil-panel-title">Soil Layer</div>` +
+        options.map(([val, label, sub]) =>
+          `<label class="soil-radio-row">
+            <input type="radio" name="soil-layer" value="${val}"${val === 'none' ? ' checked' : ''}>
+            <div>
+              <div class="soil-radio-label">${label}</div>
+              ${sub ? `<div class="soil-radio-sub">${sub}</div>` : ''}
+            </div>
+          </label>`
+        ).join('');
+
+      // Keep button highlight in sync with both panel-open and active-layer states
+      const syncBtn = () => btn.classList.toggle('active', panel.classList.contains('open') || activeSoilLayer != null);
+
+      panel.querySelectorAll('input[type=radio]').forEach(radio => {
+        radio.addEventListener('change', () => {
+          if (radio.checked) {
+            setSoilLayer(radio.value === 'none' ? null : radio.value);
+            syncBtn();
+          }
+        });
+      });
+
+      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
+      L.DomEvent.on(btn, 'click', () => {
+        panel.classList.toggle('open');
+        syncBtn();
+        // Close the Köppen legend if open
+        document.querySelector('.koppen-legend-panel')?.classList.remove('open');
+        document.querySelector('.koppen-legend-wrap .map-btn')?.classList.remove('active');
+      });
+
+      // Dismiss panel on map click
+      map.on('click', () => { panel.classList.remove('open'); syncBtn(); });
+      L.DomEvent.disableClickPropagation(wrap);
+      return wrap;
+    }
+  });
+
   // iNaturalist toggle button
   const InatCtrl = L.Control.extend({
     options: { position: 'topright' },
@@ -1863,6 +2127,7 @@ function buildMapControls() {
   new KoppenCtrl().addTo(map);
   new LegendCtrl().addTo(map);
   new InatCtrl().addTo(map);
+  new SoilCtrl().addTo(map);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1895,6 +2160,190 @@ async function loadKoppen() {
     if (koppenVisible) koppenLayer.addTo(map);
     updateKoppenBlur();
   } catch { /* overlay unavailable */ }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  SOIL LAYER — WMS + LEGEND + POINT DATA
+// ═══════════════════════════════════════════════════════════
+
+function setSoilLayer(key) {
+  // Remove current active WMS layer from map
+  if (activeSoilLayer && soilWmsCache[activeSoilLayer]) {
+    map.removeLayer(soilWmsCache[activeSoilLayer]);
+  }
+  activeSoilLayer = key;
+  if (!key) { updateSoilLegend(null); return; }
+
+  const def = SOIL_LAYERS[key];
+  // Build lazily — only create the WMS layer object once per key
+  if (!soilWmsCache[key]) {
+    soilWmsCache[key] = L.tileLayer.wms(
+      `https://maps.isric.org/mapserv?map=/map/${def.wmsMap}.map`,
+      {
+        layers:      def.wmsLayer,
+        format:      'image/png',
+        transparent: true,
+        version:     '1.1.1',
+        opacity:     0.65,
+        attribution: 'Soil: <a href="https://www.isric.org" target="_blank">ISRIC SoilGrids</a>',
+        zIndex:      300,
+      }
+    );
+  }
+  soilWmsCache[key].addTo(map);
+  updateSoilLegend(key);
+}
+
+function updateSoilLegend(key) {
+  const el = document.getElementById('soil-legend');
+  if (!el) return;
+  if (!key || !SOIL_LAYERS[key]) { el.classList.remove('visible'); el.innerHTML = ''; return; }
+
+  const def = SOIL_LAYERS[key];
+  let html  = `<div class="soil-legend-title">${def.label}</div>`;
+
+  if (def.legend === 'gradient') {
+    html += `<div class="soil-legend-gradient" style="background:${def.gradCss}"></div>
+             <div class="soil-legend-labels"><span>${def.gradMin}</span><span>${def.gradMax}</span></div>`;
+  } else {
+    // WRB categorical — show a curated selection ordered by CP relevance
+    html += `<div class="soil-legend-list">` +
+      WRB_LEGEND_FEATURED.map(id => {
+        const g = WRB_GROUPS[id];
+        return g
+          ? `<div class="soil-legend-row">
+               <span class="soil-legend-swatch" style="background:${g.color}"></span>
+               <span class="soil-legend-name">${g.name}</span>
+             </div>`
+          : '';
+      }).join('') +
+      `</div>`;
+  }
+  html += `<span class="soil-legend-src">SoilGrids 250m · ISRIC</span>`;
+  el.innerHTML = html;
+  el.classList.add('visible');
+}
+
+// ── SoilGrids REST API (point query) ─────────────────────
+
+async function fetchSoilData(lat, lng) {
+  try {
+    const url = `https://rest.isric.org/soilgrids/v2.0/properties/query` +
+      `?lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}` +
+      `&property=wrb&property=phh2o&property=soc&property=nitrogen` +
+      `&depth=0-5cm&value=mean`;
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const json = await r.json();
+    const layers = json?.properties?.layers;
+    if (!Array.isArray(layers)) return null;
+
+    // Helper: divide raw value by d_factor to get physical units
+    const parse = name => {
+      const layer = layers.find(l => l.name === name);
+      if (!layer) return null;
+      const raw = layer.depths?.[0]?.values?.mean;
+      if (raw == null) return null;
+      const d = layer.unit_measure?.d_factor ?? 1;
+      return d > 0 ? raw / d : raw;
+    };
+
+    // WRB returns an integer RSG code (d_factor=1, no conversion)
+    const wrbLayer = layers.find(l => l.name === 'wrb');
+    const wrbCode  = wrbLayer?.depths?.[0]?.values?.mean ?? null;
+
+    return {
+      wrb:      wrbCode != null ? Math.round(wrbCode) : null,
+      ph:       parse('phh2o'),
+      soc:      parse('soc'),
+      nitrogen: parse('nitrogen'),
+    };
+  } catch { return null; }
+}
+
+function renderSoilBody(data) {
+  if (!data) {
+    return `<div class="soil-loading">Soil data unavailable for this location.</div>`;
+  }
+
+  const wrb = data.wrb != null ? WRB_GROUPS[data.wrb] : null;
+
+  const typeHtml = wrb
+    ? `<div class="soil-type-row">
+         <span class="soil-type-swatch" style="background:${wrb.color}"></span>
+         <div>
+           <div class="soil-type-name">${wrb.name}</div>
+           <div class="soil-type-desc">${wrb.desc}</div>
+         </div>
+       </div>`
+    : '';
+
+  const ph  = data.ph       != null ? data.ph.toFixed(1)            : null;
+  const soc = data.soc      != null ? Math.round(data.soc)          : null;
+  const nit = data.nitrogen != null ? data.nitrogen.toFixed(1)       : null;
+
+  const cards = [
+    ph  != null ? { label: 'pH',          value: ph,  unit: ''     } : null,
+    soc != null ? { label: 'Org. Carbon', value: soc, unit: 'g/kg' } : null,
+    nit != null ? { label: 'Nitrogen',    value: nit, unit: 'g/kg' } : null,
+  ].filter(Boolean);
+
+  const propsHtml = cards.length
+    ? `<div class="soil-props-grid">` +
+        cards.map(c =>
+          `<div class="soil-prop-card">
+             <div class="soil-prop-label">${c.label}</div>
+             <div class="soil-prop-value">${c.value}<span class="soil-prop-unit">${c.unit ? ' ' + c.unit : ''}</span></div>
+           </div>`
+        ).join('') +
+      `</div>`
+    : '';
+
+  return typeHtml + propsHtml +
+    `<div class="soil-data-note">SoilGrids 250 m (ISRIC), surface 0–5 cm.</div>`;
+}
+
+// Called after panel innerHTML is set; updates #soil-section-body when data arrives.
+async function loadAndRenderSoilSection(lat, lng) {
+  const myToken = ++soilFetchToken;
+  const data    = await fetchSoilData(lat, lng);
+  // Bail if a newer request superseded this one, or the section was removed
+  if (soilFetchToken !== myToken) return;
+  const body = document.getElementById('soil-section-body');
+  if (!body) return;
+  body.innerHTML = renderSoilBody(data);
+}
+
+// For the species sidebar — compute centroid from loaded observations
+async function loadSpeciesSoilSection(taxonName) {
+  const body = document.getElementById('soil-section-body');
+  if (!body) return;
+
+  const pts = [];
+  for (const o of inatObs) {
+    if (inatTaxa[o[OBS_TI]]?.[1] === taxonName) pts.push([o[OBS_LAT], o[OBS_LNG]]);
+  }
+
+  if (!pts.length) {
+    body.innerHTML = `<div class="soil-loading">Enable iNaturalist layer to load soil data.</div>`;
+    return;
+  }
+
+  // Centroid of all observation points
+  const lat = pts.reduce((s, p) => s + p[0], 0) / pts.length;
+  const lng = pts.reduce((s, p) => s + p[1], 0) / pts.length;
+
+  // Reuse the same token-guarded loader — species panel rebuilds on each navigation
+  await loadAndRenderSoilSection(lat, lng);
+}
+
+function buildSoilSectionHtml() {
+  return `<details class="inat-section" style="margin-top:8px">
+    <summary>🌱 Soil Data</summary>
+    <div class="inat-section-body" id="soil-section-body">
+      <div class="soil-loading">Loading soil data…</div>
+    </div>
+  </details>`;
 }
 
 function getKoppenAt(lat, lng) {
@@ -2711,9 +3160,13 @@ function buildLocationPanel(state) {
     <div class="section-divider"></div>
     <div class="section-label">Climate (2014–2023 avg)</div>
     ${climateHtml}
+    ${!loading ? buildSoilSectionHtml() : ''}
   `;
 
   document.getElementById('side-panel').classList.add('open');
+
+  // Fetch soil data asynchronously and populate the section once data arrives
+  if (!loading) loadAndRenderSoilSection(lat, lng);
 
   const expandBtn = document.getElementById('expand-btn');
   if (expandBtn && normals && !loading) {
@@ -3102,9 +3555,13 @@ function buildSpeciesSidebarContent(entry) {
     ${statsHtml}
     ${chartHtml}
     ${koppenHtml}
+    ${buildSoilSectionHtml()}
     ${wikiHtml}
     ${sampleNote}
   `;
+
+  // Fetch soil data using centroid of loaded observations for this species
+  loadSpeciesSoilSection(entry.scientific_name);
 
   // Build chart
   const monthly = speciesHemi === 'sh' && entry.monthly_sh ? entry.monthly_sh : entry.monthly_nh;
