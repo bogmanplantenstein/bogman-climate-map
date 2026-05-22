@@ -58,7 +58,7 @@ const SOIL_BACKOFF      = [3_000, 15_000, 45_000];
 const SOIL_CACHE_PATH   = join(ROOT, 'inat', 'soil-cache.json');
 const SOIL_SPECIES_PATH = join(ROOT, 'inat', 'species-soil.json');
 const SOIL_MIN_CELLS    = 3;     // skip species with fewer occupied cells
-const SOIL_CACHE_VER    = 2;     // bump when cache format changes to force re-fetch
+const SOIL_CACHE_VER    = 3;     // bump when cache format changes to force re-fetch
 
 // WRB RSG name → integer code (mirrors map.html WRB_GROUPS, used to parse
 // classification API responses that return a soil group name string).
