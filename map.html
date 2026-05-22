@@ -1771,6 +1771,12 @@ const WRB_GROUPS = {
   31: { name: 'Vertisols',    desc: 'Shrink-swell clay soils',                   color: '#4A3728' },
 };
 
+// Derived from WRB_GROUPS — maps soil group name strings returned by the
+// SoilGrids classification API back to the integer codes used as keys above.
+const WRB_NAME_TO_CODE = Object.fromEntries(
+  Object.entries(WRB_GROUPS).map(([code, g]) => [g.name, +code])
+);
+
 const ELEV_BANDS = ['lowland','intermediate','highland','ultra-highland'];
 
 const ENTRY_LABELS = {
@@ -2229,39 +2235,56 @@ function updateSoilLegend(key) {
 }
 
 // ── SoilGrids REST API (point query) ─────────────────────
+// Uses two separate endpoints:
+//   /properties/query  — continuous properties (pH, SOC, nitrogen)
+//   /classification/query — WRB soil group (categorical, own endpoint)
+// Mixing &property=wrb into the properties request causes HTTP 500.
 
 async function fetchSoilData(lat, lng) {
   try {
-    const url = `https://rest.isric.org/soilgrids/v2.0/properties/query` +
-      `?lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}` +
-      `&property=wrb&property=phh2o&property=soc&property=nitrogen` +
-      `&depth=0-5cm&value=mean`;
-    const r = await fetch(url);
-    if (!r.ok) return null;
-    const json = await r.json();
-    const layers = json?.properties?.layers;
-    if (!Array.isArray(layers)) return null;
+    const coord = `lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}`;
+    const [propsRes, classRes] = await Promise.all([
+      fetch(`https://rest.isric.org/soilgrids/v2.0/properties/query?${coord}` +
+            `&property=phh2o&property=soc&property=nitrogen&depth=0-5cm&value=mean`),
+      fetch(`https://rest.isric.org/soilgrids/v2.0/classification/query?${coord}&number_classes=1`),
+    ]);
 
-    // Helper: divide raw value by d_factor to get physical units
-    const parse = name => {
-      const layer = layers.find(l => l.name === name);
-      if (!layer) return null;
-      const raw = layer.depths?.[0]?.values?.mean;
-      if (raw == null) return null;
-      const d = layer.unit_measure?.d_factor ?? 1;
-      return d > 0 ? raw / d : raw;
-    };
+    // Parse continuous properties
+    let ph = null, soc = null, nitrogen = null;
+    if (propsRes.ok) {
+      const json   = await propsRes.json();
+      const layers = json?.properties?.layers;
+      if (Array.isArray(layers)) {
+        const parse = name => {
+          const layer = layers.find(l => l.name === name);
+          if (!layer) return null;
+          const raw = layer.depths?.[0]?.values?.mean;
+          if (raw == null) return null;
+          const d = layer.unit_measure?.d_factor ?? 1;
+          return d > 0 ? raw / d : raw;
+        };
+        ph       = parse('phh2o');
+        soc      = parse('soc');
+        nitrogen = parse('nitrogen');
+      }
+    }
 
-    // WRB returns an integer RSG code (d_factor=1, no conversion)
-    const wrbLayer = layers.find(l => l.name === 'wrb');
-    const wrbCode  = wrbLayer?.depths?.[0]?.values?.mean ?? null;
+    // Parse WRB classification — try numeric code fields, then name→code lookup
+    let wrb = null;
+    if (classRes.ok) {
+      const json = await classRes.json();
+      const p = json?.properties ?? json;
+      const code = p?.wrb_class_code ?? p?.wrb_class_value ?? p?.wrb_code ?? p?.WRB_class ?? null;
+      if (code != null) {
+        wrb = Math.round(Number(code)) || null;
+      } else {
+        const name = p?.most_probable_soil_type ?? p?.WRB_Soil_Group ?? null;
+        if (name) wrb = WRB_NAME_TO_CODE[name] ?? null;
+      }
+    }
 
-    return {
-      wrb:      wrbCode != null ? Math.round(wrbCode) : null,
-      ph:       parse('phh2o'),
-      soc:      parse('soc'),
-      nitrogen: parse('nitrogen'),
-    };
+    if (ph == null && soc == null && nitrogen == null && wrb == null) return null;
+    return { wrb, ph, soc, nitrogen };
   } catch { return null; }
 }
 
@@ -2331,7 +2354,12 @@ function loadSoilCache() {
   if (!soilCachePromise) {
     soilCachePromise = fetch('./inat/soil-cache.json')
       .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
-      .then(d => { soilCacheData = d; return d; })
+      .then(d => {
+        // Strip internal metadata key before storing — cell keys are "row:col" format
+        const { _v: _ignored, ...cells } = d;
+        soilCacheData = cells;
+        return cells;
+      })
       .catch(err => {
         console.warn('soil-cache.json not yet available:', err.message);
         soilCachePromise = null;  // allow retry on next call

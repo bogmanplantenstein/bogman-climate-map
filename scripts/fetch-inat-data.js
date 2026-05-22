@@ -48,12 +48,28 @@ const ELEV_BACKOFF    = [5_000, 15_000, 30_000];  // retry delays on 429 / error
 const ELEV_CACHE_PATH = join(ROOT, 'inat', 'elev-cache.json');  // persisted across runs
 
 // ── Soil constants ────────────────────────────────────────────────────────────
-const SOIL_API          = 'https://rest.isric.org/soilgrids/v2.0/properties/query';
+// NOTE: WRB (soil type) is a *classification* property — it has its own endpoint.
+//       Mixing &property=wrb into /properties/query causes HTTP 500 for all cells.
+const SOIL_PROPS_API    = 'https://rest.isric.org/soilgrids/v2.0/properties/query';
+const SOIL_CLASS_API    = 'https://rest.isric.org/soilgrids/v2.0/classification/query';
 const SOIL_RATE_MS      = 300;   // ~3 req/s — SoilGrids allows 5/s; conservative
 const SOIL_BACKOFF      = [3_000, 15_000, 45_000];
 const SOIL_CACHE_PATH   = join(ROOT, 'inat', 'soil-cache.json');
 const SOIL_SPECIES_PATH = join(ROOT, 'inat', 'species-soil.json');
 const SOIL_MIN_CELLS    = 3;     // skip species with fewer occupied cells
+const SOIL_CACHE_VER    = 2;     // bump when cache format changes to force re-fetch
+
+// WRB RSG name → integer code (mirrors map.html WRB_GROUPS, used to parse
+// classification API responses that return a soil group name string).
+const WRB_NAME_TO_CODE = {
+  'Acrisols':1,'Albeluvisols':2,'Alisols':3,'Andosols':4,'Arenosols':5,
+  'Calcisols':6,'Cambisols':7,'Chernozems':8,'Cryosols':9,'Durisols':10,
+  'Ferralsols':11,'Fluvisols':12,'Gleysols':13,'Gypsisols':14,'Histosols':15,
+  'Kastanozems':16,'Leptosols':17,'Lixisols':18,'Luvisols':19,'Nitisols':20,
+  'Phaeozems':21,'Planosols':22,'Plinthosols':23,'Podzols':24,'Regosols':25,
+  'Solonchaks':26,'Solonetz':27,'Stagnosols':28,'Technosols':29,'Umbrisols':30,
+  'Vertisols':31,
+};
 
 const MODE = process.argv[2] || 'all';  // 'obs' | 'species' | 'soil' | 'all'
 
@@ -850,103 +866,142 @@ async function soilGet(url) {
 
 // ── Soil data fetch per cell ──────────────────────────────────────────────────
 
+// Helper: retry wrapper for a single soilGet request.
+// Returns { ok: true, json } on success or { ok: false } on permanent failure.
+async function soilFetch(url, label) {
+  for (let attempt = 0; attempt <= SOIL_BACKOFF.length; attempt++) {
+    let res;
+    try {
+      res = await soilGet(url);
+    } catch (err) {
+      if (attempt < SOIL_BACKOFF.length) { await sleep(SOIL_BACKOFF[attempt]); continue; }
+      console.warn(`  ⚠ ${label} network error: ${err.message}`);
+      return { ok: false };
+    }
+    if (res.ok) {
+      try { return { ok: true, json: await res.json() }; }
+      catch (err) { return { ok: false }; }
+    }
+    if (res.status === 429) {
+      const delay = SOIL_BACKOFF[Math.min(attempt, SOIL_BACKOFF.length - 1)];
+      console.warn(`  ⚠ ${label} 429 — waiting ${delay / 1000}s (attempt ${attempt + 1})`);
+      await sleep(delay);
+    } else {
+      // Non-retriable HTTP error (e.g. 404 for ocean locations)
+      return { ok: false };
+    }
+  }
+  return { ok: false };
+}
+
 async function fetchSoilForCells(cellReps) {
   const keys = [...cellReps.keys()];
 
-  // Load existing cache (persists across partial runs)
+  // Load existing cache — persists across partial runs.
+  // If the cache version doesn't match (e.g. stale data from a broken run),
+  // discard it so all cells are re-fetched with the corrected API calls.
   let cache = {};
   if (existsSync(SOIL_CACHE_PATH)) {
     try {
-      cache = JSON.parse(readFileSync(SOIL_CACHE_PATH, 'utf8'));
-      console.log(`  Loaded ${Object.keys(cache).length.toLocaleString()} cached soil entries`);
+      const raw = JSON.parse(readFileSync(SOIL_CACHE_PATH, 'utf8'));
+      if (raw._v === SOIL_CACHE_VER) {
+        cache = raw;
+        const cellCount = Object.keys(cache).filter(k => k !== '_v').length;
+        console.log(`  Loaded ${cellCount.toLocaleString()} cached soil entries`);
+      } else {
+        console.log(`  Old cache version (${raw._v ?? 'none'} → ${SOIL_CACHE_VER}) — clearing for re-fetch`);
+      }
     } catch (err) {
       console.warn(`  ⚠ Could not read soil cache: ${err.message}`);
     }
   }
 
+  // A cell is "missing" if it's not in the cache at all.
+  // Cells with null in the cache are assumed to be ocean/no-data (legitimate).
   const missing = keys.filter(k => !(k in cache));
 
   if (!missing.length) {
+    const cellCount = Object.keys(cache).filter(k => k !== '_v').length;
     console.log(`  ✓ All ${keys.length.toLocaleString()} cells served from cache — no API calls needed`);
+    cache._v = SOIL_CACHE_VER;
     writeFileSync(SOIL_CACHE_PATH, JSON.stringify(cache));
-    return new Map(keys.map(k => [k, cache[k]]));
+    return new Map(keys.map(k => [k, cache[k] ?? null]));
   }
 
-  const estMin = Math.round(missing.length * SOIL_RATE_MS / 60_000);
-  console.log(`  ${missing.length.toLocaleString()} cells need fetching (${keys.length - missing.length} cached) — ~${estMin} min`);
+  // Each cell requires 2 API calls (properties + classification), so estimated time doubles.
+  const estMin = Math.round(missing.length * SOIL_RATE_MS * 2 / 60_000);
+  console.log(`  ${missing.length.toLocaleString()} cells to fetch (${keys.length - missing.length} cached) — ~${estMin} min est.`);
 
-  let fetched = 0, failed = 0;
+  // Helper: parse a named continuous property from the properties API response layers.
+  const parseLayer = (layers, name) => {
+    const layer = layers.find(l => l.name === name);
+    if (!layer) return null;
+    const raw = layer.depths?.[0]?.values?.mean;
+    if (raw == null) return null;
+    const d = layer.unit_measure?.d_factor ?? 1;
+    return d > 0 ? Math.round(raw / d * 10) / 10 : raw;
+  };
+
+  // Helper: extract WRB integer code from a classification API response.
+  const parseWrb = json => {
+    if (!json) return null;
+    const p = json.properties ?? json;
+    // Try numeric code fields (various possible field names ISRIC may use)
+    const code = p?.wrb_class_code ?? p?.wrb_class_value ?? p?.wrb_code ?? p?.WRB_class ?? null;
+    if (code != null) return Math.round(Number(code)) || null;
+    // Fall back to string name → code lookup
+    const name = p?.most_probable_soil_type ?? p?.WRB_Soil_Group ?? null;
+    return name ? (WRB_NAME_TO_CODE[name] ?? null) : null;
+  };
+
+  let fetched = 0, nulled = 0;
 
   for (let i = 0; i < missing.length; i++) {
-    const key   = missing[i];
+    const key = missing[i];
     const { lat, lng } = cellReps.get(key);
-    const url   = `${SOIL_API}?lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}` +
-      `&property=wrb&property=phh2o&property=soc&property=nitrogen&depth=0-5cm&value=mean`;
+    const coord = `lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}`;
 
-    let ok = false;
-    for (let attempt = 0; attempt <= SOIL_BACKOFF.length; attempt++) {
-      try {
-        const res = await soilGet(url);
-        if (res.ok) {
-          const json   = await res.json();
-          const layers = json?.properties?.layers;
-          if (Array.isArray(layers)) {
-            const parse = name => {
-              const layer = layers.find(l => l.name === name);
-              if (!layer) return null;
-              const raw = layer.depths?.[0]?.values?.mean;
-              if (raw == null) return null;
-              const d = layer.unit_measure?.d_factor ?? 1;
-              return d > 0 ? Math.round(raw / d * 10) / 10 : raw;
-            };
-            const wrbLayer = layers.find(l => l.name === 'wrb');
-            const wrbCode  = wrbLayer?.depths?.[0]?.values?.mean ?? null;
-            cache[key] = {
-              wrb:      wrbCode != null ? Math.round(wrbCode) : null,
-              ph:       parse('phh2o'),
-              soc:      parse('soc'),
-              nitrogen: parse('nitrogen'),
-            };
-            fetched++;
-          } else {
-            cache[key] = null; // no data for this location
-          }
-          ok = true;
-          break;
-        }
-        if (res.status === 429) {
-          const delay = SOIL_BACKOFF[Math.min(attempt, SOIL_BACKOFF.length - 1)];
-          console.warn(`  ⚠ Soil 429 — waiting ${delay / 1000}s (attempt ${attempt + 1})`);
-          await sleep(delay);
-        } else {
-          console.warn(`  ⚠ Soil HTTP ${res.status} for cell ${key} — skipping`);
-          cache[key] = null;
-          ok = true;
-          break;
-        }
-      } catch (err) {
-        if (attempt < SOIL_BACKOFF.length) {
-          await sleep(SOIL_BACKOFF[attempt]);
-        } else {
-          console.warn(`  ⚠ Soil error for cell ${key}: ${err.message}`);
-          cache[key] = null;
-          ok = true;
-        }
-      }
+    // Request 1: continuous properties (pH, SOC, nitrogen)
+    // NOTE: &property=wrb must NOT be included here — WRB is a classification
+    //       property and its presence causes HTTP 500 for the entire request.
+    const propsResult = await soilFetch(
+      `${SOIL_PROPS_API}?${coord}&property=phh2o&property=soc&property=nitrogen&depth=0-5cm&value=mean`,
+      `props/${key}`
+    );
+
+    // Request 2: WRB soil classification
+    const classResult = await soilFetch(
+      `${SOIL_CLASS_API}?${coord}&number_classes=1`,
+      `class/${key}`
+    );
+
+    const ph       = propsResult.ok ? parseLayer(propsResult.json?.properties?.layers ?? [], 'phh2o')  : null;
+    const soc      = propsResult.ok ? parseLayer(propsResult.json?.properties?.layers ?? [], 'soc')     : null;
+    const nitrogen = propsResult.ok ? parseLayer(propsResult.json?.properties?.layers ?? [], 'nitrogen') : null;
+    const wrb      = classResult.ok ? parseWrb(classResult.json) : null;
+
+    if (ph != null || soc != null || nitrogen != null || wrb != null) {
+      cache[key] = { wrb, ph, soc, nitrogen };
+      fetched++;
+    } else {
+      cache[key] = null;  // ocean or genuinely no-data
+      nulled++;
     }
-    if (!ok) { cache[key] = null; failed++; }
 
-    // Flush to disk every 100 cells — preserves progress on timeout
+    // Flush to disk every 100 cells — preserves progress on job timeout
     if ((i + 1) % 100 === 0 || i === missing.length - 1) {
+      cache._v = SOIL_CACHE_VER;
       writeFileSync(SOIL_CACHE_PATH, JSON.stringify(cache));
     }
     if ((i + 1) % 500 === 0) {
       const pct = Math.round((i + 1) / missing.length * 100);
-      console.log(`  [${pct}%] ${i + 1}/${missing.length} (${fetched} fetched, ${failed} failed)`);
+      console.log(`  [${pct}%] ${i + 1}/${missing.length} (${fetched} with data, ${nulled} no-data)`);
     }
   }
 
-  console.log(`  ✓ ${fetched.toLocaleString()} new entries; cache total: ${Object.keys(cache).length.toLocaleString()}`);
+  const total = Object.keys(cache).filter(k => k !== '_v').length;
+  console.log(`  ✓ ${fetched.toLocaleString()} cells with data, ${nulled.toLocaleString()} no-data; cache total: ${total.toLocaleString()}`);
+  cache._v = SOIL_CACHE_VER;
   writeFileSync(SOIL_CACHE_PATH, JSON.stringify(cache));
   return new Map(keys.map(k => [k, cache[k] ?? null]));
 }
