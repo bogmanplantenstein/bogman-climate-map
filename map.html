@@ -1440,6 +1440,13 @@ html, body {
   flex-shrink: 0;
 }
 .soil-legend-name { font-size: 10px; color: var(--text-muted); }
+/* Official ISRIC legend graphic — colors always match the WMS overlay */
+.soil-legend-img {
+  display: block;
+  max-width: 130px;
+  margin: 2px 0 4px;
+  image-rendering: crisp-edges;
+}
 .soil-legend-src {
   font-size: 9px;
   color: var(--text-muted);
@@ -1735,8 +1742,7 @@ const SOIL_LAYERS = {
 };
 
 // WRB Reference Soil Group integer codes → display info
-// Featured subset shown in legend (ordered by carnivorous-plant relevance)
-const WRB_LEGEND_FEATURED = [15, 24, 13, 28, 7, 19, 1, 9, 4, 17, 25];
+// Codes 1–30, alphabetical, matching SoilGrids MostProbable raster values.
 const WRB_GROUPS = {
   1:  { name: 'Acrisols',     desc: 'Highly weathered, acidic tropical soils',   color: '#FD9B5E' },
   2:  { name: 'Albeluvisols', desc: 'Pale, eluviated soils',                     color: '#EDD5B0' },
@@ -1766,9 +1772,9 @@ const WRB_GROUPS = {
   26: { name: 'Solonchaks',   desc: 'Salt-accumulating soils',                   color: '#E8E8A0' },
   27: { name: 'Solonetz',     desc: 'Sodium-rich alkaline soils',                color: '#D6C870' },
   28: { name: 'Stagnosols',   desc: 'Seasonally waterlogged stagnant soils',     color: '#7F9B8A' },
-  29: { name: 'Technosols',   desc: 'Human-made or heavily modified soils',      color: '#A0A0A0' },
-  30: { name: 'Umbrisols',    desc: 'Dark, acidic, humus-rich soils',            color: '#9B8070' },
-  31: { name: 'Vertisols',    desc: 'Shrink-swell clay soils',                   color: '#4A3728' },
+  // SoilGrids WRB uses 30 groups (alphabetical, codes 1–30). No Technosols.
+  29: { name: 'Umbrisols',    desc: 'Dark, acidic, humus-rich soils',            color: '#9B8070' },
+  30: { name: 'Vertisols',    desc: 'Shrink-swell clay soils',                   color: '#4A3728' },
 };
 
 // Derived from WRB_GROUPS — maps soil group name strings returned by the
@@ -2216,18 +2222,11 @@ function updateSoilLegend(key) {
     html += `<div class="soil-legend-gradient" style="background:${def.gradCss}"></div>
              <div class="soil-legend-labels"><span>${def.gradMin}</span><span>${def.gradMax}</span></div>`;
   } else {
-    // WRB categorical — show a curated selection ordered by CP relevance
-    html += `<div class="soil-legend-list">` +
-      WRB_LEGEND_FEATURED.map(id => {
-        const g = WRB_GROUPS[id];
-        return g
-          ? `<div class="soil-legend-row">
-               <span class="soil-legend-swatch" style="background:${g.color}"></span>
-               <span class="soil-legend-name">${g.name}</span>
-             </div>`
-          : '';
-      }).join('') +
-      `</div>`;
+    // WRB categorical — embed ISRIC's official GetLegendGraphic so the swatch
+    // colors exactly match the WMS tile layer rendered on the map.
+    html += `<img class="soil-legend-img"
+               src="https://maps.isric.org/mapserv?map=/map/wrb.map&SERVICE=WMS&REQUEST=GetLegendGraphic&VERSION=1.1.1&LAYER=MostProbable&FORMAT=image/png"
+               alt="WRB Soil Groups" loading="lazy">`;
   }
   html += `<span class="soil-legend-src">SoilGrids 250m · ISRIC</span>`;
   el.innerHTML = html;
@@ -2496,8 +2495,8 @@ async function loadSpeciesSoilSection(taxonId, taxonName) {
   await loadAndRenderSoilSection(lat, lng);
 }
 
-function buildSoilSectionHtml() {
-  return `<details class="inat-section" style="margin-top:8px">
+function buildSoilSectionHtml(autoOpen = false) {
+  return `<details class="inat-section" style="margin-top:8px"${autoOpen ? ' open' : ''}>
     <summary>🌱 Soil Data</summary>
     <div class="inat-section-body" id="soil-section-body">
       <div class="soil-loading">Loading soil data…</div>
@@ -3319,7 +3318,7 @@ function buildLocationPanel(state) {
     <div class="section-divider"></div>
     <div class="section-label">Climate (2014–2023 avg)</div>
     ${climateHtml}
-    ${!loading ? buildSoilSectionHtml() : ''}
+    ${!loading ? buildSoilSectionHtml(true) : ''}
   `;
 
   document.getElementById('side-panel').classList.add('open');

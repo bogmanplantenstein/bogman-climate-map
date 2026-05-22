@@ -61,14 +61,15 @@ const SOIL_CACHE_VER    = 2;     // bump when cache format changes to force re-f
 
 // WRB RSG name → integer code (mirrors map.html WRB_GROUPS, used to parse
 // classification API responses that return a soil group name string).
+// SoilGrids WRB uses exactly 30 groups (alphabetical, codes 1–30). No Technosols.
+// These codes match the integer raster values in the WRB MostProbable layer.
 const WRB_NAME_TO_CODE = {
   'Acrisols':1,'Albeluvisols':2,'Alisols':3,'Andosols':4,'Arenosols':5,
   'Calcisols':6,'Cambisols':7,'Chernozems':8,'Cryosols':9,'Durisols':10,
   'Ferralsols':11,'Fluvisols':12,'Gleysols':13,'Gypsisols':14,'Histosols':15,
   'Kastanozems':16,'Leptosols':17,'Lixisols':18,'Luvisols':19,'Nitisols':20,
   'Phaeozems':21,'Planosols':22,'Plinthosols':23,'Podzols':24,'Regosols':25,
-  'Solonchaks':26,'Solonetz':27,'Stagnosols':28,'Technosols':29,'Umbrisols':30,
-  'Vertisols':31,
+  'Solonchaks':26,'Solonetz':27,'Stagnosols':28,'Umbrisols':29,'Vertisols':30,
 };
 
 const MODE = process.argv[2] || 'all';  // 'obs' | 'species' | 'soil' | 'all'
