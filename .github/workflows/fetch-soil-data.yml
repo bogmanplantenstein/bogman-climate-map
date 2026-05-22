@@ -1,0 +1,85 @@
+name: Precompute Soil Data
+
+on:
+  workflow_dispatch:        # one-time manual trigger — soil data is permanent
+
+permissions:
+  contents: write           # needed to commit soil cache files back to repo
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  fetch-soil:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90    # ~10k cells × 300ms/cell = ~50 min; 90 min gives headroom
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main   # always work from latest HEAD
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install script dependencies
+        run: cd scripts && npm install
+
+      - name: Precompute soil data
+        run: node scripts/fetch-inat-data.js soil
+
+      # SUCCESS: commit both soil-cache.json and species-soil.json together
+      - name: Commit soil data
+        if: success()
+        run: |
+          git config user.name  bogmanplantenstein
+          git config user.email bogman@bogmanplantenstein.com
+          git add inat/soil-cache.json inat/species-soil.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit — soil data is already up to date"
+          else
+            git commit -m "chore: precompute soil data $(date -u +%Y-%m-%d)"
+            git pull --rebase origin main
+            git push
+            echo "✓ Soil data committed and pushed"
+          fi
+
+      # FAILURE / TIMEOUT: salvage whatever partial soil-cache.json was written
+      # The script flushes soil-cache.json every 100 cells, so even a mid-run
+      # timeout preserves partial data for the next attempt.
+      - name: Commit partial soil cache
+        if: failure() || cancelled()
+        run: |
+          git config user.name  bogmanplantenstein
+          git config user.email bogman@bogmanplantenstein.com
+          git add inat/soil-cache.json 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "No soil cache changes to commit"
+          else
+            git commit -m "chore: update partial soil cache $(date -u +%Y-%m-%d)"
+            git pull --rebase origin main
+            git push
+            echo "✓ Partial soil cache committed and pushed"
+          fi
+
+      - name: Show soil report
+        if: always()
+        run: |
+          if [ -f inat/species-soil.json ]; then
+            echo "=== Species Soil Report ==="
+            node -e "
+              const d = JSON.parse(require('fs').readFileSync('inat/species-soil.json','utf8'));
+              console.log('Generated:', d.generated);
+              console.log('Cells:', d.cell_count);
+              console.log('Species:', d.species_count);
+            "
+          elif [ -f inat/soil-cache.json ]; then
+            echo "=== Partial Soil Cache ==="
+            node -e "
+              const d = JSON.parse(require('fs').readFileSync('inat/soil-cache.json','utf8'));
+              console.log('Cached cells:', Object.keys(d).length);
+            "
+          else
+            echo "No soil data files found"
+          fi

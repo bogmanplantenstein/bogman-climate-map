@@ -1792,6 +1792,10 @@ let koppenVisible   = true;
 let activeSoilLayer = null;       // SOIL_LAYERS key or null
 const soilWmsCache  = {};         // lazily-built L.tileLayer.wms instances
 let soilFetchToken  = 0;          // incremented on each panel open; stale fetches bail
+let soilCachePromise   = null;    // singleton fetch for inat/soil-cache.json
+let soilCacheData      = null;    // flat { cellKey: data|null } from soil-cache.json
+let speciesSoilPromise = null;    // singleton fetch for inat/species-soil.json
+let speciesSoilData    = null;    // keyed by taxon_id (string) → { wrb, ph, soc, nitrogen }
 
 let allMapTaxa    = [];   // eligible taxa with coords
 let unmappedTaxa  = [];   // eligible taxa without coords
@@ -2303,10 +2307,124 @@ function renderSoilBody(data) {
     `<div class="soil-data-note">SoilGrids 250 m (ISRIC), surface 0–5 cm.</div>`;
 }
 
+// ── Soil precomputed data helpers ─────────────────────────────────────────────
+
+function getGridKey(lat, lng) {
+  return `${Math.floor(lat / 0.5)}:${Math.floor(lng / 0.5)}`;
+}
+
+function lsSoilGet(key) {
+  // Returns undefined (never stored), null (cached no-data), or object (valid data)
+  const raw = localStorage.getItem('bmg_soil_' + key);
+  if (raw === null) return undefined;       // not in storage
+  if (raw === 'null') return null;           // cached ocean / no-data
+  try { return JSON.parse(raw); } catch { return undefined; }
+}
+
+function lsSoilSet(key, data) {
+  try {
+    localStorage.setItem('bmg_soil_' + key, data === null ? 'null' : JSON.stringify(data));
+  } catch { /* localStorage full — skip silently */ }
+}
+
+function loadSoilCache() {
+  if (!soilCachePromise) {
+    soilCachePromise = fetch('./inat/soil-cache.json')
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(d => { soilCacheData = d; return d; })
+      .catch(err => {
+        console.warn('soil-cache.json not yet available:', err.message);
+        soilCachePromise = null;  // allow retry on next call
+        return null;
+      });
+  }
+  return soilCachePromise;
+}
+
+function loadSpeciesSoilData() {
+  if (!speciesSoilPromise) {
+    speciesSoilPromise = fetch('./inat/species-soil.json')
+      .then(r => r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`)))
+      .then(d => { speciesSoilData = d.species; return d.species; })
+      .catch(err => {
+        console.warn('species-soil.json not yet available:', err.message);
+        speciesSoilPromise = null;  // allow retry on next call
+        return null;
+      });
+  }
+  return speciesSoilPromise;
+}
+
+// Lookup chain: precomputed grid → localStorage → precomputed fetch → live API + cache
+async function getSoilForLocation(lat, lng) {
+  const key = getGridKey(lat, lng);
+
+  // 1. Already-loaded precomputed cache (fastest — in-memory)
+  if (soilCacheData && key in soilCacheData) return soilCacheData[key];
+
+  // 2. localStorage (cells fetched live in previous sessions)
+  const cached = lsSoilGet(key);
+  if (cached !== undefined) return cached;
+
+  // 3. Try to load the precomputed cache file (may already be in-flight)
+  const cache = await loadSoilCache();
+  if (cache && key in cache) return cache[key];
+
+  // 4. Live API fallback for locations outside the precomputed grid
+  const data = await fetchSoilData(lat, lng);
+  lsSoilSet(key, data);
+  return data;
+}
+
+// Display precomputed species-level soil summary
+function renderSpeciesSoilBody(entry) {
+  // entry: { wrb: [{code, name, pct}, ...], ph, soc, nitrogen }
+  let html = '';
+
+  if (entry.wrb && entry.wrb.length) {
+    html += entry.wrb.slice(0, 3).map(w => {
+      const grp = WRB_GROUPS[w.code];
+      if (!grp) return '';
+      const pct = Math.round(w.pct * 100);
+      return `<div class="soil-type-row">
+        <span class="soil-type-swatch" style="background:${grp.color}"></span>
+        <div>
+          <div class="soil-type-name">${esc(grp.name)}<span style="opacity:.55;font-size:.85em;margin-left:5px">${pct}%</span></div>
+          <div class="soil-type-desc">${esc(grp.desc)}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  const ph  = entry.ph       != null ? entry.ph.toFixed(1)       : null;
+  const soc = entry.soc      != null ? Math.round(entry.soc)     : null;
+  const nit = entry.nitrogen != null ? entry.nitrogen.toFixed(1) : null;
+
+  const cards = [
+    ph  != null ? { label: 'pH',          value: ph,  unit: ''     } : null,
+    soc != null ? { label: 'Org. Carbon', value: soc, unit: 'g/kg' } : null,
+    nit != null ? { label: 'Nitrogen',    value: nit, unit: 'g/kg' } : null,
+  ].filter(Boolean);
+
+  if (cards.length) {
+    html += `<div class="soil-props-grid">` +
+      cards.map(c =>
+        `<div class="soil-prop-card">
+           <div class="soil-prop-label">${c.label}</div>
+           <div class="soil-prop-value">${c.value}<span class="soil-prop-unit">${c.unit ? ' ' + c.unit : ''}</span></div>
+         </div>`
+      ).join('') +
+      `</div>`;
+  }
+
+  html += `<div class="soil-data-note">Median across species range. SoilGrids 250 m (ISRIC), surface 0–5 cm.</div>`;
+  return html || `<div class="soil-loading">No soil data available for this species.</div>`;
+}
+
 // Called after panel innerHTML is set; updates #soil-section-body when data arrives.
 async function loadAndRenderSoilSection(lat, lng) {
   const myToken = ++soilFetchToken;
-  const data    = await fetchSoilData(lat, lng);
+  const data    = await getSoilForLocation(lat, lng);
   // Bail if a newer request superseded this one, or the section was removed
   if (soilFetchToken !== myToken) return;
   const body = document.getElementById('soil-section-body');
@@ -2314,11 +2432,24 @@ async function loadAndRenderSoilSection(lat, lng) {
   body.innerHTML = renderSoilBody(data);
 }
 
-// For the species sidebar — compute centroid from loaded observations
-async function loadSpeciesSoilSection(taxonName) {
+// For the species sidebar — uses precomputed species-soil.json when available,
+// falls back to centroid of loaded observations.
+async function loadSpeciesSoilSection(taxonId, taxonName) {
   const body = document.getElementById('soil-section-body');
   if (!body) return;
 
+  const myToken = soilFetchToken;  // capture before any awaits
+
+  // 1. Try precomputed species-soil.json (fast, pre-loaded)
+  const speciesSoil = await loadSpeciesSoilData();
+  if (soilFetchToken !== myToken || !body.isConnected) return;
+
+  if (speciesSoil && speciesSoil[taxonId]) {
+    body.innerHTML = renderSpeciesSoilBody(speciesSoil[taxonId]);
+    return;
+  }
+
+  // 2. Centroid fallback using observation points (requires iNat layer loaded)
   const pts = [];
   for (const o of inatObs) {
     if (inatTaxa[o[OBS_TI]]?.[1] === taxonName) pts.push([o[OBS_LAT], o[OBS_LNG]]);
@@ -2333,7 +2464,7 @@ async function loadSpeciesSoilSection(taxonName) {
   const lat = pts.reduce((s, p) => s + p[0], 0) / pts.length;
   const lng = pts.reduce((s, p) => s + p[1], 0) / pts.length;
 
-  // Reuse the same token-guarded loader — species panel rebuilds on each navigation
+  // Reuse the token-guarded loader — species panel rebuilds on each navigation
   await loadAndRenderSoilSection(lat, lng);
 }
 
@@ -3560,8 +3691,8 @@ function buildSpeciesSidebarContent(entry) {
     ${sampleNote}
   `;
 
-  // Fetch soil data using centroid of loaded observations for this species
-  loadSpeciesSoilSection(entry.scientific_name);
+  // Load soil data — tries precomputed species-soil.json first, centroid fallback
+  loadSpeciesSoilSection(entry.taxon_id, entry.scientific_name);
 
   // Build chart
   const monthly = speciesHemi === 'sh' && entry.monthly_sh ? entry.monthly_sh : entry.monthly_nh;
@@ -4061,6 +4192,10 @@ async function init() {
     handleUrlParams();
     buildInatFilterPanel();
     scheduleInatPrefetch();
+
+    // Pre-load soil data files in the background so panels open instantly
+    loadSoilCache();
+    loadSpeciesSoilData();
 
     // Close iNat panel on map click
     map.on('click', () => {

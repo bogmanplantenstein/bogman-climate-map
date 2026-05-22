@@ -47,7 +47,15 @@ const ELEV_RATE_MS    = 1_000;  // 1 s between batches — OpenTopoData allows 1
 const ELEV_BACKOFF    = [5_000, 15_000, 30_000];  // retry delays on 429 / errors
 const ELEV_CACHE_PATH = join(ROOT, 'inat', 'elev-cache.json');  // persisted across runs
 
-const MODE = process.argv[2] || 'all';  // 'obs' | 'species' | 'all'
+// ── Soil constants ────────────────────────────────────────────────────────────
+const SOIL_API          = 'https://rest.isric.org/soilgrids/v2.0/properties/query';
+const SOIL_RATE_MS      = 300;   // ~3 req/s — SoilGrids allows 5/s; conservative
+const SOIL_BACKOFF      = [3_000, 15_000, 45_000];
+const SOIL_CACHE_PATH   = join(ROOT, 'inat', 'soil-cache.json');
+const SOIL_SPECIES_PATH = join(ROOT, 'inat', 'species-soil.json');
+const SOIL_MIN_CELLS    = 3;     // skip species with fewer occupied cells
+
+const MODE = process.argv[2] || 'all';  // 'obs' | 'species' | 'soil' | 'all'
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -57,6 +65,7 @@ let totalRequests  = 0;
 const startTime    = Date.now();
 let omLastReq      = 0;             // Open-Meteo archive rate-limit state
 let elevLastReq    = 0;             // OpenTopoData elevation rate-limit state
+let soilLastReq    = 0;             // SoilGrids rate-limit state
 
 // ── Koppen lookup ─────────────────────────────────────────────────────────────
 
@@ -830,6 +839,230 @@ async function computeSpeciesData(allTaxa, allObs) {
   return output;
 }
 
+// ── SoilGrids rate-limited fetch ──────────────────────────────────────────────
+
+async function soilGet(url) {
+  const wait = SOIL_RATE_MS - (Date.now() - soilLastReq);
+  if (wait > 0) await sleep(wait);
+  soilLastReq = Date.now();
+  return fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+}
+
+// ── Soil data fetch per cell ──────────────────────────────────────────────────
+
+async function fetchSoilForCells(cellReps) {
+  const keys = [...cellReps.keys()];
+
+  // Load existing cache (persists across partial runs)
+  let cache = {};
+  if (existsSync(SOIL_CACHE_PATH)) {
+    try {
+      cache = JSON.parse(readFileSync(SOIL_CACHE_PATH, 'utf8'));
+      console.log(`  Loaded ${Object.keys(cache).length.toLocaleString()} cached soil entries`);
+    } catch (err) {
+      console.warn(`  ⚠ Could not read soil cache: ${err.message}`);
+    }
+  }
+
+  const missing = keys.filter(k => !(k in cache));
+
+  if (!missing.length) {
+    console.log(`  ✓ All ${keys.length.toLocaleString()} cells served from cache — no API calls needed`);
+    writeFileSync(SOIL_CACHE_PATH, JSON.stringify(cache));
+    return new Map(keys.map(k => [k, cache[k]]));
+  }
+
+  const estMin = Math.round(missing.length * SOIL_RATE_MS / 60_000);
+  console.log(`  ${missing.length.toLocaleString()} cells need fetching (${keys.length - missing.length} cached) — ~${estMin} min`);
+
+  let fetched = 0, failed = 0;
+
+  for (let i = 0; i < missing.length; i++) {
+    const key   = missing[i];
+    const { lat, lng } = cellReps.get(key);
+    const url   = `${SOIL_API}?lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}` +
+      `&property=wrb&property=phh2o&property=soc&property=nitrogen&depth=0-5cm&value=mean`;
+
+    let ok = false;
+    for (let attempt = 0; attempt <= SOIL_BACKOFF.length; attempt++) {
+      try {
+        const res = await soilGet(url);
+        if (res.ok) {
+          const json   = await res.json();
+          const layers = json?.properties?.layers;
+          if (Array.isArray(layers)) {
+            const parse = name => {
+              const layer = layers.find(l => l.name === name);
+              if (!layer) return null;
+              const raw = layer.depths?.[0]?.values?.mean;
+              if (raw == null) return null;
+              const d = layer.unit_measure?.d_factor ?? 1;
+              return d > 0 ? Math.round(raw / d * 10) / 10 : raw;
+            };
+            const wrbLayer = layers.find(l => l.name === 'wrb');
+            const wrbCode  = wrbLayer?.depths?.[0]?.values?.mean ?? null;
+            cache[key] = {
+              wrb:      wrbCode != null ? Math.round(wrbCode) : null,
+              ph:       parse('phh2o'),
+              soc:      parse('soc'),
+              nitrogen: parse('nitrogen'),
+            };
+            fetched++;
+          } else {
+            cache[key] = null; // no data for this location
+          }
+          ok = true;
+          break;
+        }
+        if (res.status === 429) {
+          const delay = SOIL_BACKOFF[Math.min(attempt, SOIL_BACKOFF.length - 1)];
+          console.warn(`  ⚠ Soil 429 — waiting ${delay / 1000}s (attempt ${attempt + 1})`);
+          await sleep(delay);
+        } else {
+          console.warn(`  ⚠ Soil HTTP ${res.status} for cell ${key} — skipping`);
+          cache[key] = null;
+          ok = true;
+          break;
+        }
+      } catch (err) {
+        if (attempt < SOIL_BACKOFF.length) {
+          await sleep(SOIL_BACKOFF[attempt]);
+        } else {
+          console.warn(`  ⚠ Soil error for cell ${key}: ${err.message}`);
+          cache[key] = null;
+          ok = true;
+        }
+      }
+    }
+    if (!ok) { cache[key] = null; failed++; }
+
+    // Flush to disk every 100 cells — preserves progress on timeout
+    if ((i + 1) % 100 === 0 || i === missing.length - 1) {
+      writeFileSync(SOIL_CACHE_PATH, JSON.stringify(cache));
+    }
+    if ((i + 1) % 500 === 0) {
+      const pct = Math.round((i + 1) / missing.length * 100);
+      console.log(`  [${pct}%] ${i + 1}/${missing.length} (${fetched} fetched, ${failed} failed)`);
+    }
+  }
+
+  console.log(`  ✓ ${fetched.toLocaleString()} new entries; cache total: ${Object.keys(cache).length.toLocaleString()}`);
+  writeFileSync(SOIL_CACHE_PATH, JSON.stringify(cache));
+  return new Map(keys.map(k => [k, cache[k] ?? null]));
+}
+
+// ── Per-species soil summary ──────────────────────────────────────────────────
+
+function computeSpeciesSoil(allTaxa, allObs, soilData) {
+  // Build taxon → occupied cell set
+  const taxonCells    = new Map(); // ti → Set<cellKey>
+  const taxonObsCount = new Map(); // ti → count
+
+  for (const o of allObs) {
+    const ti  = o[3];
+    const lat = o[1], lng = o[2];
+    const key = `${Math.floor(lat / GRID_DEG)}:${Math.floor(lng / GRID_DEG)}`;
+    if (!taxonCells.has(ti))  taxonCells.set(ti, new Set());
+    taxonCells.get(ti).add(key);
+    taxonObsCount.set(ti, (taxonObsCount.get(ti) || 0) + 1);
+  }
+
+  const speciesSoil = {};
+
+  for (let ti = 0; ti < allTaxa.length; ti++) {
+    const cells = taxonCells.get(ti);
+    if (!cells || cells.size < SOIL_MIN_CELLS) continue;
+
+    const [taxonId] = allTaxa[ti];
+    const wrbCounts = new Map();
+    const phVals = [], socVals = [], nitVals = [];
+
+    for (const key of cells) {
+      const soil = soilData.get(key);
+      if (!soil) continue;
+      if (soil.wrb != null)      wrbCounts.set(soil.wrb, (wrbCounts.get(soil.wrb) || 0) + 1);
+      if (soil.ph != null)       phVals.push(soil.ph);
+      if (soil.soc != null)      socVals.push(soil.soc);
+      if (soil.nitrogen != null) nitVals.push(soil.nitrogen);
+    }
+
+    if (!wrbCounts.size && !phVals.length) continue;
+
+    const wrbDist = [...wrbCounts.entries()].sort((a, b) => b[1] - a[1]);
+    const wrbMode = wrbDist[0]?.[0] ?? null;
+
+    const median = arr => {
+      if (!arr.length) return null;
+      const s = [...arr].sort((a, b) => a - b);
+      const m = Math.floor(s.length / 2);
+      const v = s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+      return Math.round(v * 10) / 10;
+    };
+
+    speciesSoil[taxonId] = {
+      wrb_mode: wrbMode,
+      wrb_dist: wrbDist,        // [[code, count], ...] sorted by count desc
+      ph:       median(phVals),
+      soc:      median(socVals),
+      nitrogen: median(nitVals),
+      cells:    cells.size,
+    };
+  }
+
+  return speciesSoil;
+}
+
+// ── Soil-only mode ────────────────────────────────────────────────────────────
+
+async function runSoilMode() {
+  console.log('╔══════════════════════════════════════════════════╗');
+  console.log('║  Bogman iNat Soil Data Precompute                ║');
+  console.log(`║  ${new Date().toISOString()}              ║`);
+  console.log('╚══════════════════════════════════════════════════╝\n');
+
+  const allPath = join(ROOT, 'inat', 'all.json');
+  if (!existsSync(allPath)) {
+    throw new Error('inat/all.json not found — run "node fetch-inat-data.js obs" first');
+  }
+
+  console.log('▶ Loading observation data from inat/all.json...');
+  const { taxa: allTaxa, obs: allObs } = JSON.parse(readFileSync(allPath, 'utf8'));
+  console.log(`  ${allObs.length.toLocaleString()} observations, ${allTaxa.length.toLocaleString()} taxa\n`);
+
+  mkdirSync(join(ROOT, 'inat'), { recursive: true });
+
+  console.log('▶ Building 0.5° observation grid...');
+  const cellReps = buildGlobalGrid(allObs);
+
+  console.log(`\n▶ Fetching SoilGrids data for ${cellReps.size.toLocaleString()} cells...`);
+  const soilData = await fetchSoilForCells(cellReps);
+  const soilHits = [...soilData.values()].filter(v => v != null).length;
+  console.log(`  ✓ ${soilHits.toLocaleString()} cells with soil data (${soilData.size - soilHits} null/ocean)\n`);
+
+  console.log('▶ Computing per-species soil summaries...');
+  const speciesSoil = computeSpeciesSoil(allTaxa, allObs, soilData);
+  console.log(`  ✓ ${Object.keys(speciesSoil).length} species with ≥${SOIL_MIN_CELLS} cells\n`);
+
+  const output = {
+    v:             1,
+    generated:     new Date().toISOString(),
+    cell_count:    soilData.size,
+    species_count: Object.keys(speciesSoil).length,
+    species:       speciesSoil,
+  };
+  writeFileSync(SOIL_SPECIES_PATH, JSON.stringify(output));
+  console.log(`✓ Written inat/species-soil.json\n`);
+
+  const mins = Math.round((Date.now() - startTime) / 60_000);
+  console.log('╔══════════════════════════════════════════════════╗');
+  console.log('║  Summary                                         ║');
+  console.log(`║  Grid cells         : ${String(cellReps.size.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  Cells with data    : ${String(soilHits.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  Species with data  : ${String(Object.keys(speciesSoil).length).padEnd(27)}║`);
+  console.log(`║  Duration           : ${String(mins + ' min').padEnd(27)}║`);
+  console.log('╚══════════════════════════════════════════════════╝');
+}
+
 // ── Species-only mode (reads inat/all.json written by obs job) ────────────────
 
 async function runSpeciesMode() {
@@ -877,6 +1110,11 @@ async function runSpeciesMode() {
 async function main() {
   if (MODE === 'species') {
     await runSpeciesMode();
+    return;
+  }
+
+  if (MODE === 'soil') {
+    await runSoilMode();
     return;
   }
 
