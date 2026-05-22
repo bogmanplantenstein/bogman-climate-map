@@ -13,9 +13,9 @@ env:
 jobs:
   fetch-soil:
     runs-on: ubuntu-latest
-    timeout-minutes: 240   # 10k cells × 300ms rate + response latency ≈ 80-120 min;
-                           # 240 min gives ample headroom for 429 backoffs and slow responses.
-                           # Partial cache is committed on timeout so any subsequent run resumes.
+    timeout-minutes: 360   # GitHub Actions maximum. With one request/cell at 300ms rate,
+                           # 10k cells takes ~50–80 min; 360 min covers 429 backoffs and resumes
+                           # from existing partial cache so re-runs only fetch remaining cells.
 
     steps:
       - uses: actions/checkout@v4

@@ -929,8 +929,11 @@ async function fetchSoilForCells(cellReps) {
     return new Map(keys.map(k => [k, cache[k] ?? null]));
   }
 
-  // Each cell requires 2 API calls (properties + classification), so estimated time doubles.
-  const estMin = Math.round(missing.length * SOIL_RATE_MS * 2 / 60_000);
+  // One request per cell — properties only. WRB classification is fetched live in
+  // the browser for single-point queries; fetching it here via a second per-cell
+  // API call doubles the total requests (to ~20k), causes severe rate-limiting,
+  // and would require ~9 hours — well over GitHub Actions' 360-minute ceiling.
+  const estMin = Math.round(missing.length * SOIL_RATE_MS / 60_000);
   console.log(`  ${missing.length.toLocaleString()} cells to fetch (${keys.length - missing.length} cached) — ~${estMin} min est.`);
 
   // Helper: parse a named continuous property from the properties API response layers.
@@ -943,18 +946,6 @@ async function fetchSoilForCells(cellReps) {
     return d > 0 ? Math.round(raw / d * 10) / 10 : raw;
   };
 
-  // Helper: extract WRB integer code from a classification API response.
-  const parseWrb = json => {
-    if (!json) return null;
-    const p = json.properties ?? json;
-    // Try numeric code fields (various possible field names ISRIC may use)
-    const code = p?.wrb_class_code ?? p?.wrb_class_value ?? p?.wrb_code ?? p?.WRB_class ?? null;
-    if (code != null) return Math.round(Number(code)) || null;
-    // Fall back to string name → code lookup
-    const name = p?.most_probable_soil_type ?? p?.WRB_Soil_Group ?? null;
-    return name ? (WRB_NAME_TO_CODE[name] ?? null) : null;
-  };
-
   let fetched = 0, nulled = 0;
 
   for (let i = 0; i < missing.length; i++) {
@@ -962,18 +953,12 @@ async function fetchSoilForCells(cellReps) {
     const { lat, lng } = cellReps.get(key);
     const coord = `lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}`;
 
-    // Request 1: continuous properties (pH, SOC, nitrogen, sand)
-    // NOTE: &property=wrb must NOT be included here — WRB is a classification
-    //       property and its presence causes HTTP 500 for the entire request.
+    // Single request per cell: continuous properties (pH, SOC, nitrogen, sand).
+    // WRB is omitted here — it requires a separate /classification/query endpoint
+    // which has stricter rate limits and caused the prior run to time out.
     const propsResult = await soilFetch(
       `${SOIL_PROPS_API}?${coord}&property=phh2o&property=soc&property=nitrogen&property=sand&depth=0-5cm&value=mean`,
-      `props/${key}`
-    );
-
-    // Request 2: WRB soil classification
-    const classResult = await soilFetch(
-      `${SOIL_CLASS_API}?${coord}&number_classes=1`,
-      `class/${key}`
+      `cell/${key}`
     );
 
     const layers   = propsResult.ok ? (propsResult.json?.properties?.layers ?? []) : [];
@@ -981,10 +966,9 @@ async function fetchSoilForCells(cellReps) {
     const soc      = parseLayer(layers, 'soc');
     const nitrogen = parseLayer(layers, 'nitrogen');
     const sand     = parseLayer(layers, 'sand');
-    const wrb      = classResult.ok ? parseWrb(classResult.json) : null;
 
-    if (ph != null || soc != null || nitrogen != null || sand != null || wrb != null) {
-      cache[key] = { wrb, ph, soc, nitrogen, sand };
+    if (ph != null || soc != null || nitrogen != null || sand != null) {
+      cache[key] = { ph, soc, nitrogen, sand };
       fetched++;
     } else {
       cache[key] = null;  // ocean or genuinely no-data
