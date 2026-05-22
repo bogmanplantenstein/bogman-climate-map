@@ -1739,6 +1739,12 @@ const SOIL_LAYERS = {
     gradMin: '0 g/kg', gradMax: '20+ g/kg',
     gradCss: 'linear-gradient(to right,#f1f8e9,#aed581,#558b2f,#1b5e20)',
   },
+  sand: {
+    label: 'Sand Content', wmsMap: 'sand', wmsLayer: 'sand_0-5cm_mean',
+    legend: 'gradient',
+    gradMin: '0%', gradMax: '100%',
+    gradCss: 'linear-gradient(to right,#5d4037,#8d6e63,#d7ccc8,#efebe9,#fff8e1)',
+  },
 };
 
 // WRB Reference Soil Group integer codes → display info
@@ -2078,6 +2084,7 @@ function buildMapControls() {
         ['phh2o',    'pH',              'Acidity / alkalinity'],
         ['soc',      'Organic Carbon',  'Peat & organic matter'],
         ['nitrogen', 'Nitrogen',        'Total soil nitrogen'],
+        ['sand',     'Sand Content',    'Texture & drainage'],
       ];
       panel.innerHTML =
         `<div class="soil-panel-title">Soil Layer</div>` +
@@ -2244,12 +2251,12 @@ async function fetchSoilData(lat, lng) {
     const coord = `lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}`;
     const [propsRes, classRes] = await Promise.all([
       fetch(`https://rest.isric.org/soilgrids/v2.0/properties/query?${coord}` +
-            `&property=phh2o&property=soc&property=nitrogen&depth=0-5cm&value=mean`),
+            `&property=phh2o&property=soc&property=nitrogen&property=sand&depth=0-5cm&value=mean`),
       fetch(`https://rest.isric.org/soilgrids/v2.0/classification/query?${coord}&number_classes=1`),
     ]);
 
     // Parse continuous properties
-    let ph = null, soc = null, nitrogen = null;
+    let ph = null, soc = null, nitrogen = null, sand = null;
     if (propsRes.ok) {
       const json   = await propsRes.json();
       const layers = json?.properties?.layers;
@@ -2265,6 +2272,7 @@ async function fetchSoilData(lat, lng) {
         ph       = parse('phh2o');
         soc      = parse('soc');
         nitrogen = parse('nitrogen');
+        sand     = parse('sand');
       }
     }
 
@@ -2282,8 +2290,8 @@ async function fetchSoilData(lat, lng) {
       }
     }
 
-    if (ph == null && soc == null && nitrogen == null && wrb == null) return null;
-    return { wrb, ph, soc, nitrogen };
+    if (ph == null && soc == null && nitrogen == null && sand == null && wrb == null) return null;
+    return { wrb, ph, soc, nitrogen, sand };
   } catch { return null; }
 }
 
@@ -2304,14 +2312,17 @@ function renderSoilBody(data) {
        </div>`
     : '';
 
-  const ph  = data.ph       != null ? data.ph.toFixed(1)            : null;
-  const soc = data.soc      != null ? Math.round(data.soc)          : null;
-  const nit = data.nitrogen != null ? data.nitrogen.toFixed(1)       : null;
+  const ph   = data.ph       != null ? data.ph.toFixed(1)                  : null;
+  const soc  = data.soc      != null ? Math.round(data.soc)                : null;
+  const nit  = data.nitrogen != null ? data.nitrogen.toFixed(1)            : null;
+  // Sand is stored in g/kg (0–1000); divide by 10 to display as percentage.
+  const sand = data.sand     != null ? Math.round(data.sand / 10)          : null;
 
   const cards = [
-    ph  != null ? { label: 'pH',          value: ph,  unit: ''     } : null,
-    soc != null ? { label: 'Org. Carbon', value: soc, unit: 'g/kg' } : null,
-    nit != null ? { label: 'Nitrogen',    value: nit, unit: 'g/kg' } : null,
+    ph   != null ? { label: 'pH',          value: ph,   unit: ''  } : null,
+    soc  != null ? { label: 'Org. Carbon', value: soc,  unit: 'g/kg' } : null,
+    nit  != null ? { label: 'Nitrogen',    value: nit,  unit: 'g/kg' } : null,
+    sand != null ? { label: 'Sand',        value: sand, unit: '%' } : null,
   ].filter(Boolean);
 
   const propsHtml = cards.length
@@ -2423,14 +2434,16 @@ function renderSpeciesSoilBody(entry) {
     }).join('');
   }
 
-  const ph  = entry.ph       != null ? entry.ph.toFixed(1)       : null;
-  const soc = entry.soc      != null ? Math.round(entry.soc)     : null;
-  const nit = entry.nitrogen != null ? entry.nitrogen.toFixed(1) : null;
+  const ph   = entry.ph       != null ? entry.ph.toFixed(1)              : null;
+  const soc  = entry.soc      != null ? Math.round(entry.soc)            : null;
+  const nit  = entry.nitrogen != null ? entry.nitrogen.toFixed(1)        : null;
+  const sand = entry.sand     != null ? Math.round(entry.sand / 10)      : null;
 
   const cards = [
-    ph  != null ? { label: 'pH',          value: ph,  unit: ''     } : null,
-    soc != null ? { label: 'Org. Carbon', value: soc, unit: 'g/kg' } : null,
-    nit != null ? { label: 'Nitrogen',    value: nit, unit: 'g/kg' } : null,
+    ph   != null ? { label: 'pH',          value: ph,   unit: ''  } : null,
+    soc  != null ? { label: 'Org. Carbon', value: soc,  unit: 'g/kg' } : null,
+    nit  != null ? { label: 'Nitrogen',    value: nit,  unit: 'g/kg' } : null,
+    sand != null ? { label: 'Sand',        value: sand, unit: '%' } : null,
   ].filter(Boolean);
 
   if (cards.length) {

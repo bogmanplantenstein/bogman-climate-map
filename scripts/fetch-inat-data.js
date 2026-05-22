@@ -962,11 +962,11 @@ async function fetchSoilForCells(cellReps) {
     const { lat, lng } = cellReps.get(key);
     const coord = `lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}`;
 
-    // Request 1: continuous properties (pH, SOC, nitrogen)
+    // Request 1: continuous properties (pH, SOC, nitrogen, sand)
     // NOTE: &property=wrb must NOT be included here — WRB is a classification
     //       property and its presence causes HTTP 500 for the entire request.
     const propsResult = await soilFetch(
-      `${SOIL_PROPS_API}?${coord}&property=phh2o&property=soc&property=nitrogen&depth=0-5cm&value=mean`,
+      `${SOIL_PROPS_API}?${coord}&property=phh2o&property=soc&property=nitrogen&property=sand&depth=0-5cm&value=mean`,
       `props/${key}`
     );
 
@@ -976,13 +976,15 @@ async function fetchSoilForCells(cellReps) {
       `class/${key}`
     );
 
-    const ph       = propsResult.ok ? parseLayer(propsResult.json?.properties?.layers ?? [], 'phh2o')  : null;
-    const soc      = propsResult.ok ? parseLayer(propsResult.json?.properties?.layers ?? [], 'soc')     : null;
-    const nitrogen = propsResult.ok ? parseLayer(propsResult.json?.properties?.layers ?? [], 'nitrogen') : null;
+    const layers   = propsResult.ok ? (propsResult.json?.properties?.layers ?? []) : [];
+    const ph       = parseLayer(layers, 'phh2o');
+    const soc      = parseLayer(layers, 'soc');
+    const nitrogen = parseLayer(layers, 'nitrogen');
+    const sand     = parseLayer(layers, 'sand');
     const wrb      = classResult.ok ? parseWrb(classResult.json) : null;
 
-    if (ph != null || soc != null || nitrogen != null || wrb != null) {
-      cache[key] = { wrb, ph, soc, nitrogen };
+    if (ph != null || soc != null || nitrogen != null || sand != null || wrb != null) {
+      cache[key] = { wrb, ph, soc, nitrogen, sand };
       fetched++;
     } else {
       cache[key] = null;  // ocean or genuinely no-data
@@ -1031,18 +1033,19 @@ function computeSpeciesSoil(allTaxa, allObs, soilData) {
 
     const [taxonId] = allTaxa[ti];
     const wrbCounts = new Map();
-    const phVals = [], socVals = [], nitVals = [];
+    const phVals = [], socVals = [], nitVals = [], sandVals = [];
 
     for (const key of cells) {
       const soil = soilData.get(key);
       if (!soil) continue;
-      if (soil.wrb != null)      wrbCounts.set(soil.wrb, (wrbCounts.get(soil.wrb) || 0) + 1);
-      if (soil.ph != null)       phVals.push(soil.ph);
-      if (soil.soc != null)      socVals.push(soil.soc);
+      if (soil.wrb      != null) wrbCounts.set(soil.wrb, (wrbCounts.get(soil.wrb) || 0) + 1);
+      if (soil.ph       != null) phVals.push(soil.ph);
+      if (soil.soc      != null) socVals.push(soil.soc);
       if (soil.nitrogen != null) nitVals.push(soil.nitrogen);
+      if (soil.sand     != null) sandVals.push(soil.sand);
     }
 
-    if (!wrbCounts.size && !phVals.length) continue;
+    if (!wrbCounts.size && !phVals.length && !sandVals.length) continue;
 
     // Compute WRB distribution as [{code, pct}, ...] sorted by frequency desc.
     // pct is the fraction of WRB-bearing cells covered by that soil group.
@@ -1060,10 +1063,11 @@ function computeSpeciesSoil(allTaxa, allObs, soilData) {
     };
 
     speciesSoil[taxonId] = {
-      wrb:      wrb,            // [{code, pct}, ...] sorted by frequency desc
+      wrb:      wrb,              // [{code, pct}, ...] sorted by frequency desc
       ph:       median(phVals),
       soc:      median(socVals),
       nitrogen: median(nitVals),
+      sand:     median(sandVals), // g/kg (0–1000); divide by 10 for %
       cells:    cells.size,
     };
   }
