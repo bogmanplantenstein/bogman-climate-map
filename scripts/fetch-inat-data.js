@@ -988,8 +988,12 @@ function computeSpeciesSoil(allTaxa, allObs, soilData) {
 
     if (!wrbCounts.size && !phVals.length) continue;
 
-    const wrbDist = [...wrbCounts.entries()].sort((a, b) => b[1] - a[1]);
-    const wrbMode = wrbDist[0]?.[0] ?? null;
+    // Compute WRB distribution as [{code, pct}, ...] sorted by frequency desc.
+    // pct is the fraction of WRB-bearing cells covered by that soil group.
+    const totalWrb = [...wrbCounts.values()].reduce((a, b) => a + b, 0);
+    const wrb = [...wrbCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([code, count]) => ({ code, pct: count / totalWrb }));
 
     const median = arr => {
       if (!arr.length) return null;
@@ -1000,8 +1004,7 @@ function computeSpeciesSoil(allTaxa, allObs, soilData) {
     };
 
     speciesSoil[taxonId] = {
-      wrb_mode: wrbMode,
-      wrb_dist: wrbDist,        // [[code, count], ...] sorted by count desc
+      wrb:      wrb,            // [{code, pct}, ...] sorted by frequency desc
       ph:       median(phVals),
       soc:      median(socVals),
       nitrogen: median(nitVals),

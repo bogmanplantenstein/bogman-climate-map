@@ -2,6 +2,7 @@ name: Precompute Soil Data
 
 on:
   workflow_dispatch:        # one-time manual trigger — soil data is permanent
+                            # Prerequisite: inat/all.json must exist (run "Refresh iNat Data" first)
 
 permissions:
   contents: write           # needed to commit soil cache files back to repo
@@ -12,7 +13,9 @@ env:
 jobs:
   fetch-soil:
     runs-on: ubuntu-latest
-    timeout-minutes: 90    # ~10k cells × 300ms/cell = ~50 min; 90 min gives headroom
+    timeout-minutes: 240   # 10k cells × 300ms rate + response latency ≈ 80-120 min;
+                           # 240 min gives ample headroom for 429 backoffs and slow responses.
+                           # Partial cache is committed on timeout so any subsequent run resumes.
 
     steps:
       - uses: actions/checkout@v4
