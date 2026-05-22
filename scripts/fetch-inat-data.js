@@ -1177,22 +1177,14 @@ async function runWrbMode() {
 
       let code = 0;  // 0 = sentinel: fetched but no valid classification
       if (result.ok) {
-        // Classification API returns a 'wrb' layer whose first depth has a
-        // values object: { "Cambisols": 1000, "Leptosols": 200, ... }
-        // The most probable group is the key with the highest integer value.
-        const layer  = result.json?.properties?.layers?.find(l => l.name === 'wrb');
-        const values = layer?.depths?.[0]?.values;
-        if (values) {
-          let bestName = null, bestVal = -1;
-          for (const [name, val] of Object.entries(values)) {
-            if (typeof val === 'number' && val > bestVal) { bestVal = val; bestName = name; }
-          }
-          code = WRB_NAME_TO_CODE[bestName] ?? 0;
-          if (code) fetched++;
-          else      nulled++;
-        } else {
-          nulled++;
-        }
+        // Classification API response is a flat object (no properties.layers).
+        // The most probable WRB group is given directly as wrb_class_name (string).
+        // wrb_class_value is a 0-based index and does NOT map to our 1-based WRB_GROUPS,
+        // so we always use wrb_class_name → WRB_NAME_TO_CODE for the correct code.
+        const name = result.json?.wrb_class_name ?? null;
+        code = name ? (WRB_NAME_TO_CODE[name] ?? 0) : 0;
+        if (code) fetched++;
+        else      nulled++;
       } else {
         nulled++;
       }
