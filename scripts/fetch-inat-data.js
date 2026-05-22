@@ -52,7 +52,8 @@ const ELEV_CACHE_PATH = join(ROOT, 'inat', 'elev-cache.json');  // persisted acr
 //       Mixing &property=wrb into /properties/query causes HTTP 500 for all cells.
 const SOIL_PROPS_API    = 'https://rest.isric.org/soilgrids/v2.0/properties/query';
 const SOIL_CLASS_API    = 'https://rest.isric.org/soilgrids/v2.0/classification/query';
-const SOIL_RATE_MS      = 300;   // ~3 req/s — SoilGrids allows 5/s; conservative
+const SOIL_RATE_MS      = 300;   // ~3 req/s — SoilGrids properties endpoint
+const WRB_RATE_MS       = 600;   // ~1.7 req/s — classification endpoint is stricter
 const SOIL_BACKOFF      = [3_000, 15_000, 45_000];
 const SOIL_CACHE_PATH   = join(ROOT, 'inat', 'soil-cache.json');
 const SOIL_SPECIES_PATH = join(ROOT, 'inat', 'species-soil.json');
@@ -72,7 +73,7 @@ const WRB_NAME_TO_CODE = {
   'Solonchaks':26,'Solonetz':27,'Stagnosols':28,'Umbrisols':29,'Vertisols':30,
 };
 
-const MODE = process.argv[2] || 'all';  // 'obs' | 'species' | 'soil' | 'all'
+const MODE = process.argv[2] || 'all';  // 'obs' | 'species' | 'soil' | 'wrb' | 'all'
 
 // ── State ─────────────────────────────────────────────────────────────────────
 
@@ -82,7 +83,8 @@ let totalRequests  = 0;
 const startTime    = Date.now();
 let omLastReq      = 0;             // Open-Meteo archive rate-limit state
 let elevLastReq    = 0;             // OpenTopoData elevation rate-limit state
-let soilLastReq    = 0;             // SoilGrids rate-limit state
+let soilLastReq    = 0;             // SoilGrids properties rate-limit state
+let wrbLastReq     = 0;             // SoilGrids classification rate-limit state
 
 // ── Koppen lookup ─────────────────────────────────────────────────────────────
 
@@ -895,6 +897,42 @@ async function soilFetch(url, label) {
   return { ok: false };
 }
 
+// ── WRB classification rate-limited fetch ─────────────────────────────────────
+// Uses a separate rate-limit state and a more conservative interval (600 ms)
+// because the classification endpoint is independently rate-limited by ISRIC.
+
+async function wrbGet(url) {
+  const wait = WRB_RATE_MS - (Date.now() - wrbLastReq);
+  if (wait > 0) await sleep(wait);
+  wrbLastReq = Date.now();
+  return fetch(url, { headers: { 'User-Agent': USER_AGENT } });
+}
+
+async function wrbFetch(url, label) {
+  for (let attempt = 0; attempt <= SOIL_BACKOFF.length; attempt++) {
+    let res;
+    try {
+      res = await wrbGet(url);
+    } catch (err) {
+      if (attempt < SOIL_BACKOFF.length) { await sleep(SOIL_BACKOFF[attempt]); continue; }
+      console.warn(`  ⚠ ${label} network error: ${err.message}`);
+      return { ok: false };
+    }
+    if (res.ok) {
+      try { return { ok: true, json: await res.json() }; }
+      catch { return { ok: false }; }
+    }
+    if (res.status === 429) {
+      const delay = SOIL_BACKOFF[Math.min(attempt, SOIL_BACKOFF.length - 1)];
+      console.warn(`  ⚠ ${label} 429 — waiting ${delay / 1000}s (attempt ${attempt + 1})`);
+      await sleep(delay);
+    } else {
+      return { ok: false };  // 404 = ocean / genuinely unclassified
+    }
+  }
+  return { ok: false };
+}
+
 async function fetchSoilForCells(cellReps) {
   const keys = [...cellReps.keys()];
 
@@ -1022,7 +1060,7 @@ function computeSpeciesSoil(allTaxa, allObs, soilData) {
     for (const key of cells) {
       const soil = soilData.get(key);
       if (!soil) continue;
-      if (soil.wrb      != null) wrbCounts.set(soil.wrb, (wrbCounts.get(soil.wrb) || 0) + 1);
+      if (soil.wrb) wrbCounts.set(soil.wrb, (wrbCounts.get(soil.wrb) || 0) + 1);  // 0 = fetched/no-data sentinel
       if (soil.ph       != null) phVals.push(soil.ph);
       if (soil.soc      != null) socVals.push(soil.soc);
       if (soil.nitrogen != null) nitVals.push(soil.nitrogen);
@@ -1057,6 +1095,170 @@ function computeSpeciesSoil(allTaxa, allObs, soilData) {
   }
 
   return speciesSoil;
+}
+
+// ── WRB-only mode ─────────────────────────────────────────────────────────────
+// Reads soil-cache.json, finds cells that have props data but no WRB field,
+// fetches /classification/query for each, and updates cache[key].wrb.
+// Designed for multiple incremental runs: cells with any wrb field are skipped.
+// Sets wrb=0 on cells where the API returns no usable classification (ocean, etc.)
+// so they won't be re-attempted in future runs.
+// Rewrites species-soil.json at the end of every run (full + partial).
+
+async function runWrbMode() {
+  console.log('╔══════════════════════════════════════════════════╗');
+  console.log('║  Bogman iNat WRB Classification Precompute       ║');
+  console.log(`║  ${new Date().toISOString()}              ║`);
+  console.log('╚══════════════════════════════════════════════════╝\n');
+
+  if (!existsSync(SOIL_CACHE_PATH)) {
+    throw new Error('inat/soil-cache.json not found — run soil mode first: node fetch-inat-data.js soil');
+  }
+  const allPath = join(ROOT, 'inat', 'all.json');
+  if (!existsSync(allPath)) {
+    throw new Error('inat/all.json not found — run obs mode first: node fetch-inat-data.js obs');
+  }
+
+  // Load existing soil cache
+  console.log('▶ Loading soil cache...');
+  let cache = {};
+  try {
+    const raw = JSON.parse(readFileSync(SOIL_CACHE_PATH, 'utf8'));
+    if (raw._v !== SOIL_CACHE_VER) {
+      throw new Error(`Cache version mismatch (${raw._v ?? 'none'} → ${SOIL_CACHE_VER}) — run soil mode first`);
+    }
+    cache = raw;
+    const cellCount = Object.keys(cache).filter(k => k !== '_v').length;
+    console.log(`  Loaded ${cellCount.toLocaleString()} cached soil entries\n`);
+  } catch (err) {
+    throw new Error(`Could not read soil cache: ${err.message}`);
+  }
+
+  // Load observation data to get cell representative coordinates
+  console.log('▶ Loading observation data from inat/all.json...');
+  const { taxa: allTaxa, obs: allObs } = JSON.parse(readFileSync(allPath, 'utf8'));
+  console.log(`  ${allObs.length.toLocaleString()} observations, ${allTaxa.length.toLocaleString()} taxa\n`);
+
+  console.log('▶ Building 0.5° observation grid...');
+  const cellReps = buildGlobalGrid(allObs);
+
+  // Find cells that have props data (cache[key] is an object, not null/undefined)
+  // but have not yet had WRB fetched ('wrb' key absent from the object).
+  const missing = [];
+  let alreadyDone = 0;
+  for (const key of cellReps.keys()) {
+    const entry = cache[key];
+    if (entry && typeof entry === 'object') {
+      if ('wrb' in entry) alreadyDone++;
+      else missing.push(key);
+    }
+    // entry === null  → ocean/no-data from soil run, skip
+    // entry undefined → props not yet fetched, skip
+  }
+
+  console.log(`\n▶ WRB classification status:`);
+  console.log(`  ${alreadyDone.toLocaleString()} cells already have WRB data (done)`);
+  console.log(`  ${missing.length.toLocaleString()} cells need WRB fetch`);
+
+  if (!missing.length) {
+    console.log('\n  ✓ All cells with props data already have WRB — nothing to fetch\n');
+  } else {
+    const estMin = Math.round(missing.length * WRB_RATE_MS / 60_000);
+    console.log(`  Estimated time: ~${estMin} min at ${WRB_RATE_MS}ms/req (plus any 429 backoffs)\n`);
+
+    let fetched = 0, nulled = 0;
+
+    for (let i = 0; i < missing.length; i++) {
+      const key = missing[i];
+      const { lat, lng } = cellReps.get(key);
+      const coord = `lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}`;
+
+      const result = await wrbFetch(`${SOIL_CLASS_API}?${coord}`, `wrb/${key}`);
+
+      let code = 0;  // 0 = sentinel: fetched but no valid classification
+      if (result.ok) {
+        // Classification API returns a 'wrb' layer whose first depth has a
+        // values object: { "Cambisols": 1000, "Leptosols": 200, ... }
+        // The most probable group is the key with the highest integer value.
+        const layer  = result.json?.properties?.layers?.find(l => l.name === 'wrb');
+        const values = layer?.depths?.[0]?.values;
+        if (values) {
+          let bestName = null, bestVal = -1;
+          for (const [name, val] of Object.entries(values)) {
+            if (typeof val === 'number' && val > bestVal) { bestVal = val; bestName = name; }
+          }
+          code = WRB_NAME_TO_CODE[bestName] ?? 0;
+          if (code) fetched++;
+          else      nulled++;
+        } else {
+          nulled++;
+        }
+      } else {
+        nulled++;
+      }
+
+      cache[key].wrb = code;
+
+      // Flush every 100 cells — preserves progress on job timeout
+      if ((i + 1) % 100 === 0 || i === missing.length - 1) {
+        cache._v = SOIL_CACHE_VER;
+        writeFileSync(SOIL_CACHE_PATH, JSON.stringify(cache));
+      }
+      if ((i + 1) % 500 === 0) {
+        const pct = Math.round((i + 1) / missing.length * 100);
+        console.log(`  [${pct}%] ${i + 1}/${missing.length} (${fetched} with WRB, ${nulled} no-data)`);
+      }
+    }
+
+    cache._v = SOIL_CACHE_VER;
+    writeFileSync(SOIL_CACHE_PATH, JSON.stringify(cache));
+    console.log(`\n  ✓ ${fetched.toLocaleString()} cells with WRB, ${nulled.toLocaleString()} no-data`);
+  }
+
+  // Recompute species-soil.json with the full updated cache (including WRB)
+  console.log('\n▶ Recomputing per-species soil summaries...');
+  const soilData = new Map(
+    Object.entries(cache)
+      .filter(([k]) => k !== '_v')
+      .map(([k, v]) => [k, v])
+  );
+  const speciesSoil = computeSpeciesSoil(allTaxa, allObs, soilData);
+  console.log(`  ✓ ${Object.keys(speciesSoil).length} species with ≥${SOIL_MIN_CELLS} cells\n`);
+
+  const output = {
+    v:             1,
+    generated:     new Date().toISOString(),
+    cell_count:    soilData.size,
+    species_count: Object.keys(speciesSoil).length,
+    species:       speciesSoil,
+  };
+  writeFileSync(SOIL_SPECIES_PATH, JSON.stringify(output));
+  console.log(`✓ Written inat/species-soil.json\n`);
+
+  const mins      = Math.round((Date.now() - startTime) / 60_000);
+  const cacheKeys = Object.keys(cache).filter(k => k !== '_v');
+  const wrbDone   = cacheKeys.filter(k => cache[k] && typeof cache[k] === 'object' && 'wrb' in cache[k]).length;
+  const wrbValid  = cacheKeys.filter(k => cache[k] && typeof cache[k] === 'object' && cache[k].wrb > 0).length;
+  const wrbRemain = [...cellReps.keys()].filter(k => {
+    const e = cache[k];
+    return e && typeof e === 'object' && !('wrb' in e);
+  }).length;
+
+  console.log('╔══════════════════════════════════════════════════╗');
+  console.log('║  Summary                                         ║');
+  console.log(`║  Cache cells total  : ${String(cacheKeys.length.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  WRB fetched so far : ${String(wrbDone.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  Valid WRB codes    : ${String(wrbValid.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  Still need WRB     : ${String(wrbRemain.toLocaleString()).padEnd(27)}║`);
+  console.log(`║  Species with data  : ${String(Object.keys(speciesSoil).length).padEnd(27)}║`);
+  console.log(`║  Duration           : ${String(mins + ' min').padEnd(27)}║`);
+  console.log('╚══════════════════════════════════════════════════╝');
+
+  if (wrbRemain > 0) {
+    console.log(`\n  ℹ ${wrbRemain.toLocaleString()} cells still need WRB — re-run this workflow to continue.`);
+  } else {
+    console.log('\n  ✓ WRB classification complete for all cells with props data.');
+  }
 }
 
 // ── Soil-only mode ────────────────────────────────────────────────────────────
@@ -1162,6 +1364,11 @@ async function main() {
 
   if (MODE === 'soil') {
     await runSoilMode();
+    return;
+  }
+
+  if (MODE === 'wrb') {
+    await runWrbMode();
     return;
   }
 

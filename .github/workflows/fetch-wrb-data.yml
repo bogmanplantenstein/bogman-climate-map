@@ -1,0 +1,99 @@
+name: Precompute WRB Soil Classification
+
+on:
+  workflow_dispatch:        # manual trigger — re-run until all cells are covered
+                            # Prerequisite: inat/soil-cache.json must exist (run "Precompute Soil Data" first)
+                            # Cells with existing wrb field are skipped; re-runs pick up where the last left off.
+
+permissions:
+  contents: write           # needed to commit updated soil cache files back to repo
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  fetch-wrb:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360   # GitHub Actions maximum. At 600ms/cell, ~9,000 cells ≈ 90 min;
+                           # 360 min covers heavy 429 backoff. Re-runs are safe — already-fetched
+                           # cells are skipped, so each run makes forward progress.
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main   # always work from latest HEAD
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Install script dependencies
+        run: cd scripts && npm install
+
+      - name: Precompute WRB classification data
+        run: node scripts/fetch-inat-data.js wrb
+
+      # SUCCESS: commit both soil-cache.json (with wrb fields) and species-soil.json
+      - name: Commit WRB data
+        if: success()
+        run: |
+          git config user.name  bogmanplantenstein
+          git config user.email bogman@bogmanplantenstein.com
+          git add inat/soil-cache.json inat/species-soil.json
+          if git diff --staged --quiet; then
+            echo "No changes to commit — WRB data is already up to date"
+          else
+            git commit -m "chore: precompute WRB classification $(date -u +%Y-%m-%d)"
+            git pull --rebase origin main
+            git push
+            echo "✓ WRB data committed and pushed"
+          fi
+
+      # FAILURE / TIMEOUT: salvage whatever partial soil-cache.json was written
+      # The script flushes soil-cache.json every 100 cells, so even a mid-run
+      # timeout preserves partial WRB data for the next attempt.
+      # Also commits species-soil.json if it exists (written at end of each run).
+      - name: Commit partial WRB cache
+        if: failure() || cancelled()
+        run: |
+          git config user.name  bogmanplantenstein
+          git config user.email bogman@bogmanplantenstein.com
+          git add inat/soil-cache.json 2>/dev/null || true
+          git add inat/species-soil.json 2>/dev/null || true
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: update partial WRB cache $(date -u +%Y-%m-%d)"
+            git pull --rebase origin main
+            git push
+            echo "✓ Partial WRB cache committed and pushed"
+          fi
+
+      - name: Show WRB report
+        if: always()
+        run: |
+          if [ -f inat/soil-cache.json ]; then
+            echo "=== WRB Cache Report ==="
+            node -e "
+              const d = JSON.parse(require('fs').readFileSync('inat/soil-cache.json','utf8'));
+              const keys = Object.keys(d).filter(k => k !== '_v');
+              const withWrb   = keys.filter(k => d[k] && typeof d[k] === 'object' && 'wrb' in d[k]).length;
+              const validWrb  = keys.filter(k => d[k] && typeof d[k] === 'object' && d[k].wrb > 0).length;
+              const noWrbYet  = keys.filter(k => d[k] && typeof d[k] === 'object' && !('wrb' in d[k])).length;
+              console.log('Cache cells total :', keys.length);
+              console.log('WRB fetched so far:', withWrb);
+              console.log('Valid WRB codes   :', validWrb);
+              console.log('Still need WRB    :', noWrbYet);
+            "
+          else
+            echo "No soil-cache.json found"
+          fi
+          if [ -f inat/species-soil.json ]; then
+            echo "=== Species Soil Report ==="
+            node -e "
+              const d = JSON.parse(require('fs').readFileSync('inat/species-soil.json','utf8'));
+              console.log('Generated:', d.generated);
+              console.log('Cells    :', d.cell_count);
+              console.log('Species  :', d.species_count);
+            "
+          fi
