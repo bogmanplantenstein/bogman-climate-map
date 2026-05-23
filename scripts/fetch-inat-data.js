@@ -547,11 +547,14 @@ async function fetchElevations(cellReps) {
  * Combined daily temp/precip + hourly RH in one request.
  */
 async function fetchCellClimate(lat, lng) {
+  // OM_API_KEY is optional — Open-Meteo archive requires registration for free key.
+  // Add as GitHub secret OM_API_KEY. Without it, requests will be rate-limited.
+  const apiKey = process.env.OM_API_KEY ? `&apikey=${process.env.OM_API_KEY}` : '';
   const url = `${OM_ARCHIVE}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}` +
     `&start_date=2019-01-01&end_date=2023-12-31` +
     `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum` +
     `&hourly=relative_humidity_2m` +
-    `&timezone=UTC`;
+    `&timezone=UTC` + apiKey;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {

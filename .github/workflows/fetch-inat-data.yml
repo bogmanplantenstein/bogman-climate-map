@@ -76,6 +76,7 @@ jobs:
       - name: Precompute species climate envelopes
         env:
           INAT_API_TOKEN: ${{ secrets.INAT_API_TOKEN }}
+          OM_API_KEY: ${{ secrets.OM_API_KEY }}   # free key from open-meteo.com registration
         run: node scripts/fetch-inat-data.js species
 
       # SUCCESS: one combined commit — elev-cache + species-data + report together.
