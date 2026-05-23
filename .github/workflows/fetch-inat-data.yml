@@ -76,7 +76,6 @@ jobs:
       - name: Precompute species climate envelopes
         env:
           INAT_API_TOKEN: ${{ secrets.INAT_API_TOKEN }}
-          OM_API_KEY: ${{ secrets.OM_API_KEY }}   # free key from open-meteo.com registration
         run: node scripts/fetch-inat-data.js species
 
       # SUCCESS: one combined commit — elev-cache + species-data + report together.
@@ -96,23 +95,23 @@ jobs:
             echo "✓ Species data committed and pushed"
           fi
 
-      # FAILURE / TIMEOUT: salvage whatever elevation progress was written to disk.
-      # The script flushes elev-cache.json every 1,000 cells, so even a mid-run
-      # timeout preserves partial elevation data for the next attempt.
+      # FAILURE / TIMEOUT: salvage whatever cache progress was written to disk.
+      # Both caches flush every 100–1,000 cells, so even a mid-run timeout
+      # preserves partial data for the next attempt.
       # (Job timeout = cancelled(), script error = failure(); both are caught here.)
-      - name: Commit elevation cache
+      - name: Commit caches on failure
         if: failure() || cancelled()
         run: |
           git config user.name  bogmanplantenstein
           git config user.email bogman@bogmanplantenstein.com
-          git add inat/elev-cache.json 2>/dev/null || true
+          git add inat/elev-cache.json inat/climate-cache.json 2>/dev/null || true
           if git diff --staged --quiet; then
-            echo "No elevation cache changes to commit"
+            echo "No cache changes to commit"
           else
-            git commit -m "chore: update elevation cache $(date -u +%Y-%m-%d)"
+            git commit -m "chore: update elev/climate cache $(date -u +%Y-%m-%d)"
             git pull --rebase origin main
             git push
-            echo "✓ Elevation cache committed and pushed"
+            echo "✓ Cache data committed and pushed"
           fi
 
       - name: Show species report

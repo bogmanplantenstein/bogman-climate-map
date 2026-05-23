@@ -45,7 +45,8 @@ const OM_ARCHIVE      = 'https://archive-api.open-meteo.com/v1/archive';
 const ELEV_API        = 'https://api.opentopodata.org/v1/aster30m';  // ASTER 30m — covers 83°N–83°S (SRTM misses >60°N, losing Nordic/sub-arctic species)
 const ELEV_RATE_MS    = 1_000;  // 1 s between batches — OpenTopoData allows 1 req/s
 const ELEV_BACKOFF    = [5_000, 15_000, 30_000];  // retry delays on 429 / errors
-const ELEV_CACHE_PATH = join(ROOT, 'inat', 'elev-cache.json');  // persisted across runs
+const ELEV_CACHE_PATH = join(ROOT, 'inat', 'elev-cache.json');   // persisted across runs
+const CLIM_CACHE_PATH = join(ROOT, 'inat', 'climate-cache.json'); // persisted across runs — avoids re-fetching 10k+ cells
 
 // ── Soil constants ────────────────────────────────────────────────────────────
 // NOTE: WRB (soil type) is a *classification* property — it has its own endpoint.
@@ -547,14 +548,11 @@ async function fetchElevations(cellReps) {
  * Combined daily temp/precip + hourly RH in one request.
  */
 async function fetchCellClimate(lat, lng) {
-  // OM_API_KEY is optional — Open-Meteo archive requires registration for free key.
-  // Add as GitHub secret OM_API_KEY. Without it, requests will be rate-limited.
-  const apiKey = process.env.OM_API_KEY ? `&apikey=${process.env.OM_API_KEY}` : '';
   const url = `${OM_ARCHIVE}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}` +
     `&start_date=2019-01-01&end_date=2023-12-31` +
     `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum` +
     `&hourly=relative_humidity_2m` +
-    `&timezone=UTC` + apiKey;
+    `&timezone=UTC`;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -705,30 +703,60 @@ async function computeSpeciesData(allTaxa, allObs) {
 
   // ── 3. Climate per cell ───────────────────────────────────────────────────
   const cellKeys = [...cellReps.keys()];
-  // Effective rate is ~1.4s/cell (700ms rate-limit wait + ~700ms Open-Meteo response latency)
-  const estMin   = Math.round(cellKeys.length * 1400 / 60_000);
-  console.log(`\n▶ Fetching climate data for ${cellKeys.length.toLocaleString()} cells (~${estMin} min)...`);
 
-  const cellClimates = new Map(); // cellKey → parsed climate object
+  // Load persisted climate cache (fixed 5-year period 2019-2023 — stable across runs).
+  // Caching avoids re-fetching all 10k+ cells every run and keeps us under Open-Meteo's
+  // 10,000 req/day free-tier limit. Stores raw parseClimateResponse output (pre-lapse-rate)
+  // so the elevation correction is applied fresh each time from the elev cache.
+  let climCache = {};
+  if (existsSync(CLIM_CACHE_PATH)) {
+    try {
+      climCache = JSON.parse(readFileSync(CLIM_CACHE_PATH, 'utf8'));
+      console.log(`  Loaded ${Object.keys(climCache).length.toLocaleString()} cached cell climates`);
+    } catch (err) {
+      console.warn(`  ⚠ Could not read climate cache: ${err.message}`);
+    }
+  }
+
+  const missingClim = cellKeys.filter(k => !(k in climCache));
+  const estMin = Math.round(missingClim.length * 1400 / 60_000);
+  console.log(`\n▶ Fetching climate data for ${cellKeys.length.toLocaleString()} cells (${missingClim.length.toLocaleString()} uncached, ~${estMin} min)...`);
+
   let omFetched = 0, omFailed = 0;
 
-  for (const key of cellKeys) {
+  for (const key of missingClim) {
     const { lat, lng } = cellReps.get(key);
     const raw = await fetchCellClimate(lat, lng);
     if (raw) {
-      const elev = elevs.get(key) ?? null;
-      cellClimates.set(key, applyLapseRate(raw, elev));
+      climCache[key] = raw;
       omFetched++;
     } else {
       omFailed++;
     }
     const done = omFetched + omFailed;
     if (done % 500 === 0) {
-      const pct = Math.round(done / cellKeys.length * 100);
-      console.log(`  [${pct}%] ${done.toLocaleString()}/${cellKeys.length.toLocaleString()} (${omFailed} failed)`);
+      const pct = Math.round(done / missingClim.length * 100);
+      console.log(`  [${pct}%] ${done.toLocaleString()}/${missingClim.length.toLocaleString()} (${omFailed} failed)`);
+    }
+    // Flush every 100 cells so partial progress survives a timeout or cancellation
+    if (done % 100 === 0) {
+      writeFileSync(CLIM_CACHE_PATH, JSON.stringify(climCache));
     }
   }
-  console.log(`  ✓ ${omFetched.toLocaleString()} cells with climate data (${omFailed} failed)\n`);
+  if (missingClim.length > 0) {
+    writeFileSync(CLIM_CACHE_PATH, JSON.stringify(climCache)); // final flush
+  }
+  console.log(`  ✓ ${omFetched.toLocaleString()} new climates fetched, ${omFailed} failed; cache total: ${Object.keys(climCache).length.toLocaleString()}\n`);
+
+  // Build cellClimates map with lapse-rate correction applied from cached raw data
+  const cellClimates = new Map(); // cellKey → lapse-rate-corrected climate object
+  for (const key of cellKeys) {
+    const raw = climCache[key];
+    if (raw) {
+      const elev = elevs.get(key) ?? null;
+      cellClimates.set(key, applyLapseRate(raw, elev));
+    }
+  }
 
   // ── 4. Build per-taxon indices ────────────────────────────────────────────
   console.log('▶ Building species indices...');
