@@ -53,6 +53,9 @@ jobs:
       # The script flushes soil-cache.json every 100 cells, so even a mid-run
       # timeout preserves partial WRB data for the next attempt.
       # Also commits species-soil.json if it exists (written at end of each run).
+      # NOTE: push uses an explicit token-in-URL because the auth header set up
+      # by actions/checkout stops working the moment a job is cancelled, and a
+      # plain `git push` then dies trying to prompt for credentials.
       - name: Commit partial WRB cache
         if: failure() || cancelled()
         run: |
@@ -65,7 +68,7 @@ jobs:
           else
             git commit -m "chore: update partial WRB cache $(date -u +%Y-%m-%d)"
             git pull --rebase origin main
-            git push
+            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
             echo "✓ Partial WRB cache committed and pushed"
           fi
 

@@ -99,6 +99,10 @@ jobs:
       # Both caches flush every 100–1,000 cells, so even a mid-run timeout
       # preserves partial data for the next attempt.
       # (Job timeout = cancelled(), script error = failure(); both are caught here.)
+      # NOTE: push uses an explicit token-in-URL because GitHub revokes the auth
+      # configured by actions/checkout the moment a job is cancelled. A plain
+      # `git push` falls back to interactive credential prompting and dies on
+      # the runner (no TTY). Embedding the token directly bypasses this.
       - name: Commit caches on failure
         if: failure() || cancelled()
         run: |
@@ -110,7 +114,7 @@ jobs:
           else
             git commit -m "chore: update elev/climate cache $(date -u +%Y-%m-%d)"
             git pull --rebase origin main
-            git push
+            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
             echo "✓ Cache data committed and pushed"
           fi
 
