@@ -1493,6 +1493,182 @@ html, body {
 .soil-prop-unit  { font-size: 9.5px; color: var(--text-muted); }
 .soil-data-note  { font-size: 10px; color: var(--text-muted); margin-top: 8px; line-height: 1.5; font-style: italic; }
 .soil-loading    { color: var(--text-muted); font-size: 12px; padding: 2px 0; }
+
+/* ─── Welcome / Info modal ─────────────────────────────────────── */
+.bmg-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(2px);
+  z-index: 9000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  animation: bmg-modal-fade 0.18s ease-out;
+}
+.bmg-modal-overlay.hidden { display: none; }
+@keyframes bmg-modal-fade { from { opacity: 0; } to { opacity: 1; } }
+
+.bmg-modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  max-width: 560px;
+  width: 100%;
+  max-height: 85vh;
+  overflow-y: auto;
+  position: relative;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+  animation: bmg-modal-pop 0.22s ease-out;
+}
+@keyframes bmg-modal-pop {
+  from { transform: translateY(8px) scale(0.98); opacity: 0; }
+  to   { transform: translateY(0)   scale(1);    opacity: 1; }
+}
+
+.bmg-modal-close {
+  position: absolute;
+  top: 8px;
+  right: 12px;
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 26px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+.bmg-modal-close:hover { color: var(--text-primary); background: var(--bg-elevated); }
+
+.bmg-modal-body {
+  padding: 28px 28px 24px;
+}
+.bmg-modal-body h2 {
+  margin: 0 0 6px;
+  font-size: 18px;
+  color: var(--text-primary);
+}
+.bmg-modal-body .bmg-modal-subtitle {
+  color: var(--text-muted);
+  font-size: 13px;
+  margin-bottom: 18px;
+  line-height: 1.5;
+}
+.bmg-modal-body h3 {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--accent);
+  margin: 18px 0 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.bmg-modal-body p,
+.bmg-modal-body li {
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-primary);
+}
+.bmg-modal-body ul { padding-left: 0; list-style: none; margin: 8px 0; }
+.bmg-modal-body li {
+  margin-bottom: 10px;
+  padding-left: 28px;
+  position: relative;
+}
+.bmg-modal-body li .bmg-li-icon {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 16px;
+}
+.bmg-modal-body li strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+.bmg-modal-body a {
+  color: var(--accent);
+  text-decoration: none;
+}
+.bmg-modal-body a:hover { text-decoration: underline; }
+
+.bmg-modal-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+.bmg-modal-primary {
+  background: var(--accent);
+  color: #0d1117;
+  border: none;
+  border-radius: 4px;
+  padding: 8px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.bmg-modal-primary:hover { background: #4ed366; }
+.bmg-modal-link {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 6px 4px;
+  text-decoration: underline;
+}
+.bmg-modal-link:hover { color: var(--text-primary); }
+
+.bmg-source-row {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.bmg-source-row .bmg-source-label {
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.bmg-source-row .bmg-source-value { color: var(--text-primary); }
+
+/* Floating info button (bottom-right of map) */
+.bmg-info-btn {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 16px;
+  font-weight: 600;
+  font-family: Georgia, serif;
+  font-style: italic;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 500;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  transition: color 0.15s, border-color 0.15s;
+}
+.bmg-info-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+@media (max-width: 600px) {
+  .bmg-modal-body { padding: 22px 18px 18px; }
+  .bmg-source-row { grid-template-columns: 1fr; gap: 2px; margin-bottom: 12px; }
+}
 </style>
 </head>
 <body>
@@ -1592,6 +1768,9 @@ html, body {
 
     <!-- Soil map legend — updated by updateSoilLegend() -->
     <div id="soil-legend"></div>
+
+    <!-- Info button: opens data-sources + methodology dialog -->
+    <button id="bmg-info-btn" class="bmg-info-btn" title="About this map · data sources">i</button>
   </div>
 
   <div id="side-panel">
@@ -1605,6 +1784,14 @@ html, body {
     </div>
     <div id="panel-scroll">
       <div id="panel-content"></div>
+    </div>
+  </div>
+
+  <!-- Reusable modal — content swapped between welcome and info dialogs -->
+  <div id="bmg-modal-overlay" class="bmg-modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="bmg-modal" role="document">
+      <button class="bmg-modal-close" id="bmg-modal-close" aria-label="Close">×</button>
+      <div class="bmg-modal-body" id="bmg-modal-body"></div>
     </div>
   </div>
 
@@ -5117,8 +5304,197 @@ function scheduleInatPrefetch() {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  WELCOME + INFO DIALOG
+// ═══════════════════════════════════════════════════════════
+
+// Bump this if the welcome content meaningfully changes — users who'd already
+// dismissed an older version will see the new one once.
+const WELCOME_VERSION = '1';
+
+function getWelcomeHtml() {
+  return `
+    <h2>Welcome to the Carnivorous Plant Climate Map</h2>
+    <div class="bmg-modal-subtitle">
+      A habitat reference for cultivators — built from real iNaturalist observations
+      of 14 carnivorous plant genera worldwide.
+    </div>
+
+    <ul>
+      <li>
+        <span class="bmg-li-icon">🌍</span>
+        <strong>Browse observations</strong> — Toggle pins on in the iNaturalist panel
+        and click any marker to see the observer, photos, and that exact location's
+        climate and soil.
+      </li>
+      <li>
+        <span class="bmg-li-icon">🌿</span>
+        <strong>Explore by species</strong> — Click a species in the iNat list to see
+        its climate envelope, dominant soil types, and where it lives.
+      </li>
+      <li>
+        <span class="bmg-li-icon">📍</span>
+        <strong>Check any location</strong> — Search a place or click any point on the
+        map to see local climate normals and soil — handy for planning a bog garden
+        or matching native conditions.
+      </li>
+      <li>
+        <span class="bmg-li-icon">🎛️</span>
+        <strong>Filter and narrow</strong> — Right panel lets you filter by genus,
+        Köppen zone, observation quality, and more.
+      </li>
+      <li>
+        <span class="bmg-li-icon">ⓘ</span>
+        <strong>Data sources</strong> — Click the small <em>i</em> button in the
+        bottom-right to see where the data comes from and how it's computed.
+      </li>
+    </ul>
+
+    <div class="bmg-modal-actions">
+      <button class="bmg-modal-link" id="bmg-show-info-from-welcome">View data sources →</button>
+      <button class="bmg-modal-primary" id="bmg-welcome-dismiss">Got it</button>
+    </div>
+  `;
+}
+
+function getInfoHtml() {
+  return `
+    <h2>Data Sources &amp; Methodology</h2>
+    <div class="bmg-modal-subtitle">
+      Everything on this map comes from public, peer-reviewed scientific datasets.
+      Climate, soil, and elevation are precomputed per 0.5° grid cell and refreshed
+      automatically.
+    </div>
+
+    <h3>Data Sources</h3>
+    <div class="bmg-source-row">
+      <div class="bmg-source-label">Observations</div>
+      <div class="bmg-source-value">
+        <a href="https://www.inaturalist.org/" target="_blank" rel="noopener">iNaturalist</a>
+        — research grade + needs ID, 14 carnivorous plant genera, monthly refresh.
+      </div>
+    </div>
+    <div class="bmg-source-row">
+      <div class="bmg-source-label">Climate</div>
+      <div class="bmg-source-value">
+        <a href="https://power.larc.nasa.gov/" target="_blank" rel="noopener">NASA POWER</a>
+        (MERRA-2 reanalysis): temperature, precipitation, humidity, shortwave radiation.
+        Species envelopes use a 5-year window (2019–2023); live point queries use 10 years (2014–2023).
+      </div>
+    </div>
+    <div class="bmg-source-row">
+      <div class="bmg-source-label">Soil properties</div>
+      <div class="bmg-source-value">
+        <a href="https://www.isric.org/explore/soilgrids" target="_blank" rel="noopener">SoilGrids 250 m</a>
+        (ISRIC): pH (H₂O), organic carbon, nitrogen, sand fraction. Surface depth 0–5 cm.
+      </div>
+    </div>
+    <div class="bmg-source-row">
+      <div class="bmg-source-label">Soil class (WRB)</div>
+      <div class="bmg-source-value">
+        SoilGrids WRB <em>Most Probable</em> layer — World Reference Base for Soil Resources reference soil group.
+      </div>
+    </div>
+    <div class="bmg-source-row">
+      <div class="bmg-source-label">Elevation</div>
+      <div class="bmg-source-value">
+        ASTER GDEM 30 m via
+        <a href="https://www.opentopodata.org/" target="_blank" rel="noopener">OpenTopoData</a>.
+        Covers 83°N–83°S (better than SRTM for sub-arctic species).
+      </div>
+    </div>
+    <div class="bmg-source-row">
+      <div class="bmg-source-label">Köppen zones</div>
+      <div class="bmg-source-value">
+        <a href="https://www.nature.com/articles/sdata2018214" target="_blank" rel="noopener">Beck et al. 2018</a>
+        — 1991–2020 climatology at 0.1° resolution.
+      </div>
+    </div>
+    <div class="bmg-source-row">
+      <div class="bmg-source-label">Daylight hours</div>
+      <div class="bmg-source-value">
+        Computed astronomically from latitude (standard solar-declination formula,
+        evaluated at the 15th of each month).
+      </div>
+    </div>
+
+    <h3>Methodology</h3>
+    <ul>
+      <li><strong>Grid</strong> — Observations are aggregated into 0.5° cells (~55 km north-south). One representative GPS point per cell is chosen as the densest local cluster.</li>
+      <li><strong>Lapse-rate correction</strong> — Temperatures are adjusted by 6.5 °C per 1000 m for the difference between the MERRA-2 model grid surface and actual terrain elevation at the sample point.</li>
+      <li><strong>Species filter</strong> — Only species with at least 3 occupied cells are summarized. Sparser species are listed under "Unmapped Taxa".</li>
+      <li><strong>Statistics</strong> — Annual values use p10/p25/p50/p75/p90 percentiles across all occupied cells. Monthly charts split Northern and Southern Hemisphere observations to show the correct seasonal cycle for each.</li>
+      <li><strong>Median soil values</strong> — Per-species soil props (pH, carbon, N, sand) are medians across the cells that species occupies; WRB shows the distribution of soil groups it's been observed on.</li>
+    </ul>
+
+    <h3>About the Map</h3>
+    <p>
+      Built and maintained by
+      <a href="https://www.burymeinthebog.com/" target="_blank" rel="noopener">Bury Me in the Bog</a>.
+      Source code on
+      <a href="https://github.com/bogmanplantenstein/bogman-climate-map" target="_blank" rel="noopener">GitHub</a>.
+      Carnivorous plant data refreshed monthly.
+    </p>
+
+    <div class="bmg-modal-actions">
+      <button class="bmg-modal-link" id="bmg-show-welcome-from-info">Show welcome guide</button>
+      <button class="bmg-modal-primary" id="bmg-info-dismiss">Close</button>
+    </div>
+  `;
+}
+
+let bmgModalMode = null;  // 'welcome' | 'info' — tracks which dialog is open
+function bmgOpenWelcome() {
+  bmgModalMode = 'welcome';
+  document.getElementById('bmg-modal-body').innerHTML = getWelcomeHtml();
+  document.getElementById('bmg-modal-overlay').classList.remove('hidden');
+  // Wire dismiss buttons (re-bind each open since innerHTML replaces the nodes)
+  document.getElementById('bmg-welcome-dismiss')?.addEventListener('click', bmgCloseModal);
+  document.getElementById('bmg-show-info-from-welcome')?.addEventListener('click', bmgOpenInfo);
+}
+function bmgOpenInfo() {
+  bmgModalMode = 'info';
+  document.getElementById('bmg-modal-body').innerHTML = getInfoHtml();
+  document.getElementById('bmg-modal-overlay').classList.remove('hidden');
+  document.getElementById('bmg-info-dismiss')?.addEventListener('click', bmgCloseModal);
+  document.getElementById('bmg-show-welcome-from-info')?.addEventListener('click', bmgOpenWelcome);
+}
+function bmgCloseModal() {
+  // Mark welcome as seen on ANY dismissal (button, ×, overlay click, ESC) so
+  // it doesn't pop up next visit. Users can re-open it via the info dialog.
+  if (bmgModalMode === 'welcome') {
+    try { localStorage.setItem('bmg_welcome_seen', WELCOME_VERSION); } catch {}
+  }
+  document.getElementById('bmg-modal-overlay').classList.add('hidden');
+  bmgModalMode = null;
+}
+
+function bmgSetupModalHandlers() {
+  document.getElementById('bmg-info-btn')?.addEventListener('click', bmgOpenInfo);
+  document.getElementById('bmg-modal-close')?.addEventListener('click', bmgCloseModal);
+
+  // Click on overlay (outside the inner modal box) closes
+  document.getElementById('bmg-modal-overlay')?.addEventListener('click', (e) => {
+    if (e.target.id === 'bmg-modal-overlay') bmgCloseModal();
+  });
+
+  // ESC key closes
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && !document.getElementById('bmg-modal-overlay')?.classList.contains('hidden')) {
+      bmgCloseModal();
+    }
+  });
+
+  // First-visit auto-show: tiny delay so the map renders behind it first
+  const seen = (() => { try { return localStorage.getItem('bmg_welcome_seen'); } catch { return null; } })();
+  if (seen !== WELCOME_VERSION) {
+    setTimeout(bmgOpenWelcome, 600);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
 
 init();
+bmgSetupModalHandlers();
 </script>
 </body>
 </html>
