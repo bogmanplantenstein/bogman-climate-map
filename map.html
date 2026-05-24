@@ -2221,7 +2221,7 @@ function buildMapControls() {
     onAdd() {
       const btn = L.DomUtil.create('button', 'map-btn');
       btn.title = 'Toggle satellite view';
-      btn.innerHTML = '🛰️';
+      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.image}</span>`;
       L.DomEvent.on(btn, 'click', L.DomEvent.stop);
       L.DomEvent.on(btn, 'click', () => {
         satelliteActive = !satelliteActive;
@@ -2244,7 +2244,7 @@ function buildMapControls() {
     onAdd() {
       const btn = L.DomUtil.create('button', 'map-btn active');
       btn.title = 'Toggle Köppen overlay';
-      btn.innerHTML = '🌡️';
+      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.globe}</span>`;
       L.DomEvent.on(btn, 'click', L.DomEvent.stop);
       L.DomEvent.on(btn, 'click', () => {
         koppenVisible = !koppenVisible;
@@ -2290,7 +2290,7 @@ function buildMapControls() {
       const wrap  = L.DomUtil.create('div', 'koppen-legend-wrap');
       const btn   = L.DomUtil.create('button', 'map-btn', wrap);
       btn.title   = 'Köppen colour key';
-      btn.innerHTML = '≡';
+      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.grid}</span>`;
       const panel = L.DomUtil.create('div', 'koppen-legend-panel', wrap);
 
       let html = '';
@@ -2319,7 +2319,7 @@ function buildMapControls() {
       const wrap  = L.DomUtil.create('div', 'soil-layer-wrap');
       const btn   = L.DomUtil.create('button', 'map-btn', wrap);
       btn.title   = 'Soil layers';
-      btn.innerHTML = '🌱';
+      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.layers}</span>`;
       const panel = L.DomUtil.create('div', 'soil-layer-panel', wrap);
 
       const options = [
@@ -2376,7 +2376,7 @@ function buildMapControls() {
     onAdd() {
       const btn = L.DomUtil.create('button', 'map-btn');
       btn.title     = 'iNaturalist sightings';
-      btn.innerHTML = '🌿';
+      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.leaf}</span>`;
       L.DomEvent.on(btn, 'click', L.DomEvent.stop);
       L.DomEvent.on(btn, 'click', () => {
         const panel = document.getElementById('inat-panel');
@@ -5400,6 +5400,8 @@ const BMG_ICONS = {
   thermometer: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4 4 0 1 0 5 0z"/></svg>`,
   layers:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
   list:        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
+  image:       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>`,
+  grid:        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>`,
 };
 
 function getWelcomeHtml() {
