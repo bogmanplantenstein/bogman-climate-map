@@ -1572,15 +1572,26 @@ html, body {
 }
 .bmg-modal-body ul { padding-left: 0; list-style: none; margin: 8px 0; }
 .bmg-modal-body li {
-  margin-bottom: 10px;
-  padding-left: 28px;
+  margin-bottom: 12px;
+  padding-left: 32px;
   position: relative;
 }
 .bmg-modal-body li .bmg-li-icon {
   position: absolute;
   left: 0;
-  top: 0;
-  font-size: 16px;
+  top: 1px;
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  opacity: 0.9;
+}
+.bmg-modal-body li .bmg-li-icon svg {
+  width: 18px;
+  height: 18px;
+  display: block;
 }
 .bmg-modal-body li strong {
   color: var(--text-primary);
@@ -5309,7 +5320,17 @@ function scheduleInatPrefetch() {
 
 // Bump this if the welcome content meaningfully changes — users who'd already
 // dismissed an older version will see the new one once.
-const WELCOME_VERSION = '1';
+const WELCOME_VERSION = '2';
+
+// Inline SVG icons — Feather/Lucide-style outline, 24×24 viewBox, currentColor
+// stroke so the CSS rule on .bmg-li-icon controls the colour.
+const BMG_ICONS = {
+  globe: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
+  leaf:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19.2 2.96a1 1 0 0 1 1.8.5c0 9.94-3.34 16.04-11 16.5z"/><path d="M2 21c0-3 1.85-5.36 5.08-6"/></svg>`,
+  pin:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
+  sliders: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>`,
+  info:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+};
 
 function getWelcomeHtml() {
   return `
@@ -5321,29 +5342,29 @@ function getWelcomeHtml() {
 
     <ul>
       <li>
-        <span class="bmg-li-icon">🌍</span>
+        <span class="bmg-li-icon">${BMG_ICONS.globe}</span>
         <strong>Browse observations</strong> — Toggle pins on in the iNaturalist panel
         and click any marker to see the observer, photos, and that exact location's
         climate and soil.
       </li>
       <li>
-        <span class="bmg-li-icon">🌿</span>
+        <span class="bmg-li-icon">${BMG_ICONS.leaf}</span>
         <strong>Explore by species</strong> — Click a species in the iNat list to see
         its climate envelope, dominant soil types, and where it lives.
       </li>
       <li>
-        <span class="bmg-li-icon">📍</span>
+        <span class="bmg-li-icon">${BMG_ICONS.pin}</span>
         <strong>Check any location</strong> — Search a place or click any point on the
         map to see local climate normals and soil — handy for planning a bog garden
         or matching native conditions.
       </li>
       <li>
-        <span class="bmg-li-icon">🎛️</span>
+        <span class="bmg-li-icon">${BMG_ICONS.sliders}</span>
         <strong>Filter and narrow</strong> — Right panel lets you filter by genus,
         Köppen zone, observation quality, and more.
       </li>
       <li>
-        <span class="bmg-li-icon">ⓘ</span>
+        <span class="bmg-li-icon">${BMG_ICONS.info}</span>
         <strong>Data sources</strong> — Click the small <em>i</em> button in the
         bottom-right to see where the data comes from and how it's computed.
       </li>
@@ -5425,15 +5446,6 @@ function getInfoHtml() {
       <li><strong>Statistics</strong> — Annual values use p10/p25/p50/p75/p90 percentiles across all occupied cells. Monthly charts split Northern and Southern Hemisphere observations to show the correct seasonal cycle for each.</li>
       <li><strong>Median soil values</strong> — Per-species soil props (pH, carbon, N, sand) are medians across the cells that species occupies; WRB shows the distribution of soil groups it's been observed on.</li>
     </ul>
-
-    <h3>About the Map</h3>
-    <p>
-      Built and maintained by
-      <a href="https://www.burymeinthebog.com/" target="_blank" rel="noopener">Bury Me in the Bog</a>.
-      Source code on
-      <a href="https://github.com/bogmanplantenstein/bogman-climate-map" target="_blank" rel="noopener">GitHub</a>.
-      Carnivorous plant data refreshed monthly.
-    </p>
 
     <div class="bmg-modal-actions">
       <button class="bmg-modal-link" id="bmg-show-welcome-from-info">Show welcome guide</button>
