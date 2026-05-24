@@ -1306,6 +1306,9 @@ html, body {
 }
 .sp-hemi-btn:hover { border-color: var(--accent); color: var(--text-primary); }
 .sp-hemi-btn.active-sh { border-color: var(--accent); color: var(--accent); }
+/* Container holding hemisphere + NH-align buttons. Lets multiple controls sit
+   together on the right of the chart-header without breaking space-between. */
+.sp-chart-actions { display: flex; gap: 6px; }
 #sp-chart-container { height: 200px; position: relative; }
 .sp-chart-note {
   font-size: 10px;
@@ -3947,19 +3950,60 @@ function buildSpeciesSidebarContent(entry) {
   else if (!hasSH) speciesHemi = 'nh';   // NH-only → force NH
   // (when both exist, preserve the user's previous selection)
 
-  const initialTitle = speciesHemi === 'sh' ? 'Monthly climate (Southern hemisphere)' : 'Monthly climate';
-  const toggleHtml   = hasBoth
-    ? `<button class="sp-hemi-btn${speciesHemi === 'sh' ? ' active-sh' : ''}" id="sp-hemi-toggle">${speciesHemi === 'sh' ? 'Northern ⇄' : 'Southern ⇄'}</button>`
-    : '';
+  // Helpers below close over `entry` and `hasBoth` from the surrounding render
+  // scope. State (speciesHemi, speciesShiftSH) is module-level so it persists
+  // across species navigations.
+  const shiftMonthsToNH = (monthly) => {
+    // Rotate each 12-element monthly array by +6 so SH-native months map onto
+    // their NH-calendar equivalents (SH Jul → NH Jan, SH Aug → NH Feb, ...).
+    if (!monthly) return monthly;
+    const out = {};
+    for (const k of Object.keys(monthly)) {
+      const arr = monthly[k];
+      out[k] = (Array.isArray(arr) && arr.length === 12)
+        ? arr.map((_, i) => arr[(i + 6) % 12])
+        : arr;
+    }
+    return out;
+  };
+  const getDisplayMonthly = () => {
+    if (speciesHemi === 'sh') {
+      return speciesShiftSH ? shiftMonthsToNH(entry.monthly_sh) : entry.monthly_sh;
+    }
+    return entry.monthly_nh;
+  };
+  const getChartTitle = () => {
+    if (speciesHemi === 'nh') return 'Monthly climate';
+    return speciesShiftSH
+      ? 'Monthly climate (Southern, NH-aligned)'
+      : 'Monthly climate (Southern hemisphere)';
+  };
+  const baseNote = 'Temperatures corrected for elevation (6.5°C/1000m lapse rate). Precipitation and humidity are uncorrected.';
+  const getChartNote = () => (speciesHemi === 'sh' && speciesShiftSH)
+    ? baseNote + ' Months shifted by +6 to align with the Northern Hemisphere calendar.'
+    : baseNote;
+
+  const buildActionsHtml = () => {
+    // Shift toggle only meaningful when viewing SH data — when on NH there's
+    // nothing to shift.
+    const shiftBtn = (speciesHemi === 'sh')
+      ? `<button class="sp-hemi-btn${speciesShiftSH ? ' active-sh' : ''}" id="sp-shift-toggle" title="Shift Southern hemisphere months by +6 to align with the Northern hemisphere calendar (useful for NH-based cultivators planning a growing cycle).">${speciesShiftSH ? 'Native ⇄' : 'NH-aligned ⇄'}</button>`
+      : '';
+    // Hemisphere toggle only present when both hemispheres have data.
+    const hemiBtn = hasBoth
+      ? `<button class="sp-hemi-btn${speciesHemi === 'sh' ? ' active-sh' : ''}" id="sp-hemi-toggle">${speciesHemi === 'sh' ? 'Northern ⇄' : 'Southern ⇄'}</button>`
+      : '';
+    return shiftBtn + hemiBtn;
+  };
 
   const chartHtml = `
     <div class="sp-chart-section">
       <div class="sp-chart-header">
-        <span class="sp-chart-title" id="sp-chart-title-text">${initialTitle}</span>
-        ${toggleHtml}
+        <span class="sp-chart-title" id="sp-chart-title-text">${getChartTitle()}</span>
+        <div class="sp-chart-actions" id="sp-chart-actions">${buildActionsHtml()}</div>
       </div>
       <div id="sp-chart-container"><canvas id="sp-climate-chart"></canvas></div>
-      <div class="sp-chart-note">Temperatures corrected for elevation (6.5°C/1000m lapse rate). Precipitation and humidity are uncorrected.</div>
+      <div class="sp-chart-note" id="sp-chart-note">${getChartNote()}</div>
     </div>`;
 
   // Köppen zone distribution
@@ -4035,20 +4079,37 @@ function buildSpeciesSidebarContent(entry) {
   // Load soil data — tries precomputed species-soil.json first, centroid fallback
   loadSpeciesSoilSection(entry.taxon_id, entry.scientific_name);
 
-  // Build chart — speciesHemi was already forced to a valid hemisphere above,
-  // so the selected monthly_* is guaranteed to exist.
-  buildSpeciesClimateChart(speciesHemi === 'sh' ? entry.monthly_sh : entry.monthly_nh);
+  // Single re-render path used by both the hemisphere toggle and the SH-shift
+  // toggle. Rebuilds the actions buttons (the shift toggle appears/disappears
+  // with hemisphere changes), refreshes title + note text, and redraws the
+  // chart with the appropriate monthly data.
+  const rerenderChartUI = () => {
+    const titleEl   = document.getElementById('sp-chart-title-text');
+    const noteEl    = document.getElementById('sp-chart-note');
+    const actionsEl = document.getElementById('sp-chart-actions');
+    if (titleEl)   titleEl.textContent  = getChartTitle();
+    if (noteEl)    noteEl.textContent   = getChartNote();
+    if (actionsEl) actionsEl.innerHTML  = buildActionsHtml();
+    bindChartActionHandlers();
+    buildSpeciesClimateChart(getDisplayMonthly());
+  };
 
-  // Hemisphere toggle (only present when both hemispheres have data, so the
-  // monthly_* lookup after toggling is always safe).
-  document.getElementById('sp-hemi-toggle')?.addEventListener('click', () => {
-    speciesHemi = speciesHemi === 'nh' ? 'sh' : 'nh';
-    const titleEl = document.getElementById('sp-chart-title-text');
-    const btn     = document.getElementById('sp-hemi-toggle');
-    if (titleEl) titleEl.textContent = speciesHemi === 'sh' ? 'Monthly climate (Southern hemisphere)' : 'Monthly climate';
-    if (btn)     { btn.textContent = speciesHemi === 'sh' ? 'Northern ⇄' : 'Southern ⇄'; btn.classList.toggle('active-sh', speciesHemi === 'sh'); }
-    buildSpeciesClimateChart(speciesHemi === 'sh' ? entry.monthly_sh : entry.monthly_nh);
-  });
+  function bindChartActionHandlers() {
+    document.getElementById('sp-hemi-toggle')?.addEventListener('click', () => {
+      speciesHemi = speciesHemi === 'nh' ? 'sh' : 'nh';
+      rerenderChartUI();
+    });
+    document.getElementById('sp-shift-toggle')?.addEventListener('click', () => {
+      speciesShiftSH = !speciesShiftSH;
+      try { localStorage.setItem('bmg_sh_shift', speciesShiftSH ? '1' : '0'); } catch {}
+      rerenderChartUI();
+    });
+  }
+
+  // Initial render — actions are already in the DOM from chartHtml above; just
+  // wire the handlers and draw the chart.
+  bindChartActionHandlers();
+  buildSpeciesClimateChart(getDisplayMonthly());
 
   // Köppen expand/collapse
   let koppenExpanded = false;
@@ -4596,6 +4657,11 @@ let inatSpeciesDataPromise = null;   // singleton fetch promise for species-data
 let inatSpeciesData        = null;   // species data keyed by taxon_id (number)
 let inatSpeciesSidebarId   = null;   // taxon_id currently shown in species sidebar
 let speciesHemi            = 'nh';   // 'nh' | 'sh' for the species monthly chart
+// When true, SH monthly data is rotated by +6 months so its seasonal cycle
+// aligns with the Northern Hemisphere calendar — useful for NH-based growers
+// reading SH species (e.g. Australian Drosera summer-dormancy lines up under
+// their Jun-Aug instead of Dec-Feb). Persisted across sessions.
+let speciesShiftSH         = (() => { try { return localStorage.getItem('bmg_sh_shift') === '1'; } catch { return false; } })();
 let speciesClimateChart    = null;   // Chart.js instance for species sidebar chart
 let inatClusterGroup  = null;       // L.layerGroup
 let inatRectGroup     = null;       // L.layerGroup for obscured rectangles
