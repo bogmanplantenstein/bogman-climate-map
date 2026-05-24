@@ -38,15 +38,23 @@ const USER_AGENT = 'BogmanClimateMap/1.0 (+https://github.com/bogmanplantenstein
 // ── Species climate precompute config ─────────────────────────────────────────
 const GRID_DEG        = 0.5;          // 0.5° cell ≈ 55 km north-south
 const DENSE_RADIUS_KM = 8;            // neighbour radius for dense-cluster pick
-const OM_RATE_MS      = 700;          // ~85 req/min — matches iNat pacing
+const OM_RATE_MS      = 300;          // ~3 req/s — NASA POWER has no documented daily limit;
+                                       // we pace conservatively as a good-citizen default
 const OM_MIN_CELLS    = 3;            // skip species with fewer occupied cells
 const LAPSE_RATE      = 6.5 / 1000;  // °C per metre (standard environmental lapse)
-const OM_ARCHIVE      = 'https://archive-api.open-meteo.com/v1/archive';
+// Climate source: NASA POWER (MERRA-2 reanalysis). Free, no auth, no per-IP
+// daily cap. Returns daily T2M_MAX, T2M_MIN, PRECTOTCORR, and RH2M (daily mean)
+// in one request. Switched from Open-Meteo's archive-api on 2026-05 after the
+// 10k/day per-IP cap caused repeated bootstrap failures from both Azure (GH
+// runners) and residential IPs.
+const POWER_API       = 'https://power.larc.nasa.gov/api/temporal/daily/point';
 const ELEV_API        = 'https://api.opentopodata.org/v1/aster30m';  // ASTER 30m — covers 83°N–83°S (SRTM misses >60°N, losing Nordic/sub-arctic species)
 const ELEV_RATE_MS    = 1_000;  // 1 s between batches — OpenTopoData allows 1 req/s
 const ELEV_BACKOFF    = [5_000, 15_000, 30_000];  // retry delays on 429 / errors
 const ELEV_CACHE_PATH = join(ROOT, 'inat', 'elev-cache.json');   // persisted across runs
 const CLIM_CACHE_PATH = join(ROOT, 'inat', 'climate-cache.json'); // persisted across runs — avoids re-fetching 10k+ cells
+const CLIM_CACHE_VER  = 2;   // bump when climate API source or cache shape changes to force re-fetch
+                              // v1 = Open-Meteo ERA5 (deprecated); v2 = NASA POWER MERRA-2
 
 // ── Soil constants ────────────────────────────────────────────────────────────
 // NOTE: WRB (soil type) is a *classification* property — it has its own endpoint.
@@ -543,16 +551,21 @@ async function fetchElevations(cellReps) {
 // ── Climate fetch per cell ────────────────────────────────────────────────────
 
 /**
- * Fetches 5-year (2019-2023) climate normals from Open-Meteo archive API.
- * Returns parsed monthly averages + model elevation, or null on failure.
- * Combined daily temp/precip + hourly RH in one request.
+ * Fetches 5-year (2019-2023) climate normals from NASA POWER (MERRA-2 reanalysis).
+ * One request returns daily T_max, T_min, precip, and mean RH for the whole window.
+ * Model elevation comes back in geometry.coordinates[2] (used for lapse-rate correction).
+ *
+ * Note: NASA POWER's /daily endpoint provides only daily-mean RH (RH2M), not
+ * diurnal max/min. The old Open-Meteo path computed rhHigh/rhLow from hourly data,
+ * but computeSpeciesData only reads rhMean, so the high/low values were unused.
+ * We set rhHigh/rhLow to all-null in the cache to preserve schema shape.
  */
 async function fetchCellClimate(lat, lng) {
-  const url = `${OM_ARCHIVE}?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}` +
-    `&start_date=2019-01-01&end_date=2023-12-31` +
-    `&daily=temperature_2m_max,temperature_2m_min,precipitation_sum` +
-    `&hourly=relative_humidity_2m` +
-    `&timezone=UTC`;
+  const url = `${POWER_API}?parameters=T2M_MAX,T2M_MIN,PRECTOTCORR,RH2M` +
+    `&community=AG` +
+    `&latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}` +
+    `&start=20190101&end=20231231` +
+    `&format=JSON`;
 
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
@@ -570,63 +583,56 @@ async function fetchCellClimate(lat, lng) {
 }
 
 function parseClimateResponse(d) {
-  const daily  = d.daily;
-  const hourly = d.hourly;
-  if (!daily?.time) return null;
+  const params = d?.properties?.parameter;
+  if (!params || !params.T2M_MAX) return null;
 
-  const modelElev = d.elevation ?? null;
+  // NASA POWER returns [longitude, latitude, elevation_m] in geometry.coordinates.
+  // Elevation is the MERRA-2 grid cell elevation — used for lapse-rate correction
+  // against the actual ASTER 30m elevation at the observation site.
+  const modelElev = d.geometry?.coordinates?.[2] ?? null;
 
-  // Accumulate daily temp and precip → monthly averages
+  // POWER uses -999 as a sentinel for missing data (declared in header.fill_value).
+  // We treat anything matching this (or any non-finite value) as missing.
+  const FILL = -999;
+  const isValid = v => v != null && v !== FILL && isFinite(v);
+
+  // Per-month accumulators for daily values.
   const tmaxSum = new Array(12).fill(0), tmaxCnt = new Array(12).fill(0);
   const tminSum = new Array(12).fill(0), tminCnt = new Array(12).fill(0);
   const precSum = new Array(12).fill(0);
   const precYrs = Array.from({ length: 12 }, () => new Set());
+  const rhSum   = new Array(12).fill(0), rhCnt   = new Array(12).fill(0);
 
-  daily.time.forEach((date, i) => {
-    const m = parseInt(date.substring(5, 7)) - 1;
-    const y = date.substring(0, 4);
-    const tmax = daily.temperature_2m_max?.[i];
-    if (tmax != null) { tmaxSum[m] += tmax; tmaxCnt[m]++; }
-    const tmin = daily.temperature_2m_min?.[i];
-    if (tmin != null) { tminSum[m] += tmin; tminCnt[m]++; }
-    const p = daily.precipitation_sum?.[i];
-    if (p != null) { precSum[m] += p; precYrs[m].add(y); }
-  });
+  // POWER returns each parameter as an object keyed by date string "YYYYMMDD".
+  // All four parameters share the same date keys, so we iterate T2M_MAX's keys
+  // and look up the other three by the same key.
+  for (const dateKey of Object.keys(params.T2M_MAX)) {
+    const m = parseInt(dateKey.substring(4, 6), 10) - 1;  // "YYYYMMDD" → month (0-11)
+    const y = dateKey.substring(0, 4);
 
-  // Accumulate hourly RH → daily stats → monthly averages
-  const dailyRH = {};
-  if (hourly?.time) {
-    hourly.time.forEach((dt, i) => {
-      const date = dt.substring(0, 10);
-      const v = hourly.relative_humidity_2m?.[i];
-      if (v == null) return;
-      if (!dailyRH[date]) dailyRH[date] = { max: -Infinity, min: Infinity, sum: 0, cnt: 0 };
-      const s = dailyRH[date];
-      if (v > s.max) s.max = v;
-      if (v < s.min) s.min = v;
-      s.sum += v; s.cnt++;
-    });
-  }
+    const tmax = params.T2M_MAX[dateKey];
+    if (isValid(tmax)) { tmaxSum[m] += tmax; tmaxCnt[m]++; }
 
-  const hiSum  = new Array(12).fill(0), hiCnt  = new Array(12).fill(0);
-  const loSum  = new Array(12).fill(0), loCnt  = new Array(12).fill(0);
-  const avgSum = new Array(12).fill(0), avgCnt = new Array(12).fill(0);
+    const tmin = params.T2M_MIN[dateKey];
+    if (isValid(tmin)) { tminSum[m] += tmin; tminCnt[m]++; }
 
-  for (const [date, s] of Object.entries(dailyRH)) {
-    const m = parseInt(date.substring(5, 7)) - 1;
-    if (s.max > -Infinity) { hiSum[m]  += s.max;         hiCnt[m]++; }
-    if (s.min <  Infinity) { loSum[m]  += s.min;         loCnt[m]++; }
-    if (s.cnt > 0)         { avgSum[m] += s.sum / s.cnt; avgCnt[m]++; }
+    const p = params.PRECTOTCORR?.[dateKey];
+    if (isValid(p)) { precSum[m] += p; precYrs[m].add(y); }
+
+    const rh = params.RH2M?.[dateKey];
+    if (isValid(rh)) { rhSum[m] += rh; rhCnt[m]++; }
   }
 
   return {
     modelElev,
-    tempMax:  tmaxSum.map((s, m) => tmaxCnt[m]  ? s / tmaxCnt[m]  : null),
-    tempMin:  tminSum.map((s, m) => tminCnt[m]  ? s / tminCnt[m]  : null),
+    tempMax:  tmaxSum.map((s, m) => tmaxCnt[m]      ? s / tmaxCnt[m]      : null),
+    tempMin:  tminSum.map((s, m) => tminCnt[m]      ? s / tminCnt[m]      : null),
     precipMm: precSum.map((s, m) => precYrs[m].size ? s / precYrs[m].size : null),
-    rhHigh:   hiSum.map((s, m)  => hiCnt[m]    ? s / hiCnt[m]    : null),
-    rhLow:    loSum.map((s, m)  => loCnt[m]    ? s / loCnt[m]    : null),
-    rhMean:   avgSum.map((s, m) => avgCnt[m]   ? s / avgCnt[m]   : null),
+    // rhHigh/rhLow not available from POWER /daily endpoint. Kept as null arrays
+    // for schema parity with v1 cache entries — computeSpeciesData only reads rhMean.
+    rhHigh:   new Array(12).fill(null),
+    rhLow:    new Array(12).fill(null),
+    rhMean:   rhSum.map((s, m)   => rhCnt[m]        ? s / rhCnt[m]        : null),
   };
 }
 
@@ -705,21 +711,29 @@ async function computeSpeciesData(allTaxa, allObs) {
   const cellKeys = [...cellReps.keys()];
 
   // Load persisted climate cache (fixed 5-year period 2019-2023 — stable across runs).
-  // Caching avoids re-fetching all 10k+ cells every run and keeps us under Open-Meteo's
-  // 10,000 req/day free-tier limit. Stores raw parseClimateResponse output (pre-lapse-rate)
-  // so the elevation correction is applied fresh each time from the elev cache.
+  // Caching avoids re-fetching all 10k+ cells every run. Stores raw parseClimateResponse
+  // output (pre-lapse-rate) so the elevation correction is applied fresh from elev cache.
+  // The `_v` field is the cache schema version: bump CLIM_CACHE_VER when switching API
+  // sources (e.g. Open-Meteo ERA5 → NASA POWER MERRA-2) to force a clean re-fetch.
   let climCache = {};
   if (existsSync(CLIM_CACHE_PATH)) {
     try {
-      climCache = JSON.parse(readFileSync(CLIM_CACHE_PATH, 'utf8'));
-      console.log(`  Loaded ${Object.keys(climCache).length.toLocaleString()} cached cell climates`);
+      const raw = JSON.parse(readFileSync(CLIM_CACHE_PATH, 'utf8'));
+      if (raw._v === CLIM_CACHE_VER) {
+        climCache = raw;
+        const cellCount = Object.keys(climCache).filter(k => k !== '_v').length;
+        console.log(`  Loaded ${cellCount.toLocaleString()} cached cell climates (v${CLIM_CACHE_VER})`);
+      } else {
+        console.log(`  Old climate cache version (${raw._v ?? 'none'} → ${CLIM_CACHE_VER}) — clearing for re-fetch`);
+      }
     } catch (err) {
       console.warn(`  ⚠ Could not read climate cache: ${err.message}`);
     }
   }
 
   const missingClim = cellKeys.filter(k => !(k in climCache));
-  const estMin = Math.round(missingClim.length * 1400 / 60_000);
+  // ~1s/request from NASA POWER + 300ms rate-limit gap ≈ 1.3s per cell
+  const estMin = Math.round(missingClim.length * 1300 / 60_000);
   console.log(`\n▶ Fetching climate data for ${cellKeys.length.toLocaleString()} cells (${missingClim.length.toLocaleString()} uncached, ~${estMin} min)...`);
 
   let omFetched = 0, omFailed = 0;
@@ -740,13 +754,16 @@ async function computeSpeciesData(allTaxa, allObs) {
     }
     // Flush every 100 cells so partial progress survives a timeout or cancellation
     if (done % 100 === 0) {
+      climCache._v = CLIM_CACHE_VER;
       writeFileSync(CLIM_CACHE_PATH, JSON.stringify(climCache));
     }
   }
   if (missingClim.length > 0) {
+    climCache._v = CLIM_CACHE_VER;
     writeFileSync(CLIM_CACHE_PATH, JSON.stringify(climCache)); // final flush
   }
-  console.log(`  ✓ ${omFetched.toLocaleString()} new climates fetched, ${omFailed} failed; cache total: ${Object.keys(climCache).length.toLocaleString()}\n`);
+  const cacheTotal = Object.keys(climCache).filter(k => k !== '_v').length;
+  console.log(`  ✓ ${omFetched.toLocaleString()} new climates fetched, ${omFailed} failed; cache total: ${cacheTotal.toLocaleString()}\n`);
 
   // Build cellClimates map with lapse-rate correction applied from cached raw data
   const cellClimates = new Map(); // cellKey → lapse-rate-corrected climate object
