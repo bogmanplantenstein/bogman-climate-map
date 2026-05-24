@@ -1593,6 +1593,25 @@ html, body {
   height: 18px;
   display: block;
 }
+
+/* Inline icon used in collapsible section <summary> tags throughout the app
+   (obs popup sections, species sidebar Köppen/soil sections). Sits as its own
+   flex item alongside the text, sized to balance the 12px section-header font. */
+.bmg-section-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  color: var(--accent);
+  opacity: 0.85;
+}
+.bmg-section-icon svg {
+  width: 15px;
+  height: 15px;
+  display: block;
+}
 .bmg-modal-body li strong {
   color: var(--text-primary);
   font-weight: 600;
@@ -2704,7 +2723,7 @@ async function loadSpeciesSoilSection(taxonId, taxonName) {
 
 function buildSoilSectionHtml(autoOpen = false) {
   return `<details class="inat-section" style="margin-top:8px"${autoOpen ? ' open' : ''}>
-    <summary>🌱 Soil Data</summary>
+    <summary><span class="bmg-section-icon">${BMG_ICONS.layers}</span>Soil Data</summary>
     <div class="inat-section-body" id="soil-section-body">
       <div class="soil-loading">Loading soil data…</div>
     </div>
@@ -3919,7 +3938,7 @@ function buildSpeciesSidebarContent(entry) {
 
   const koppenHtml = `
     <details class="inat-section" open>
-      <summary>🌍 Climate zones (${koppenEntries.length})</summary>
+      <summary><span class="bmg-section-icon">${BMG_ICONS.globe}</span>Climate zones (${koppenEntries.length})</summary>
       <div class="inat-section-body">
         <div id="sp-koppen-body">${koppenRowsHtml(koppenEntries.slice(0, MAX_KP))}</div>
         ${koppenEntries.length > MAX_KP
@@ -4960,7 +4979,7 @@ function openInatObsPanel(feature) {
 
     ${hasPhoto ? `
     <details class="inat-section" open id="inat-sec-photos">
-      <summary>📷 Photos</summary>
+      <summary><span class="bmg-section-icon">${BMG_ICONS.camera}</span>Photos</summary>
       <div class="inat-section-body">
         <div id="inat-photo-gallery" class="inat-detail-photo-gallery">
           <div class="inat-detail-photo-loading"></div>
@@ -4969,7 +4988,7 @@ function openInatObsPanel(feature) {
     </details>` : ''}
 
     <details class="inat-section" open id="inat-sec-details">
-      <summary>🌿 Sighting Details</summary>
+      <summary><span class="bmg-section-icon">${BMG_ICONS.eye}</span>Sighting Details</summary>
       <div class="inat-section-body">
         <div id="inat-detail-body">
           <div class="inat-detail-photo-loading" style="height:40px;border-radius:4px;margin:4px 0 8px"></div>
@@ -4978,7 +4997,7 @@ function openInatObsPanel(feature) {
     </details>
 
     <details class="inat-section" id="inat-sec-climate">
-      <summary>🌡️ Climate Data${obscured ? ' (approx. location)' : ''}</summary>
+      <summary><span class="bmg-section-icon">${BMG_ICONS.thermometer}</span>Climate Data${obscured ? ' (approx. location)' : ''}</summary>
       <div class="inat-section-body">
         <div id="inat-climate-body">
           <div class="climate-pending" style="padding:8px 0 4px">Expand to load climate data for this location</div>
@@ -4987,7 +5006,7 @@ function openInatObsPanel(feature) {
     </details>
 
     <details class="inat-section" id="inat-sec-soil">
-      <summary>🌱 Soil Data${obscured ? ' (approx. location)' : ''}</summary>
+      <summary><span class="bmg-section-icon">${BMG_ICONS.layers}</span>Soil Data${obscured ? ' (approx. location)' : ''}</summary>
       <div class="inat-section-body">
         <div id="inat-soil-body">
           <div class="soil-loading" style="padding:8px 0 4px">Expand to load soil data for this location</div>
@@ -5323,13 +5342,22 @@ function scheduleInatPrefetch() {
 const WELCOME_VERSION = '2';
 
 // Inline SVG icons — Feather/Lucide-style outline, 24×24 viewBox, currentColor
-// stroke so the CSS rule on .bmg-li-icon controls the colour.
+// stroke so the CSS rule controls the colour. Used in two places:
+//   - Welcome modal bullets (.bmg-li-icon, 18px, accent green)
+//   - Section <summary> headers (.bmg-section-icon, 15px, accent green @ 85%)
+// To revert any icon to a plain emoji, just change the inline JSX-style
+// ${BMG_ICONS.xxx} reference back to a literal character — no other changes
+// required.
 const BMG_ICONS = {
-  globe: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
-  leaf:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19.2 2.96a1 1 0 0 1 1.8.5c0 9.94-3.34 16.04-11 16.5z"/><path d="M2 21c0-3 1.85-5.36 5.08-6"/></svg>`,
-  pin:   `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
-  sliders: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>`,
-  info:  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+  globe:       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>`,
+  leaf:        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M11 20A7 7 0 0 1 9.8 6.1C15.5 5 17 4.48 19.2 2.96a1 1 0 0 1 1.8.5c0 9.94-3.34 16.04-11 16.5z"/><path d="M2 21c0-3 1.85-5.36 5.08-6"/></svg>`,
+  pin:         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>`,
+  sliders:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>`,
+  info:        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`,
+  camera:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>`,
+  eye:         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
+  thermometer: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4 4 0 1 0 5 0z"/></svg>`,
+  layers:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
 };
 
 function getWelcomeHtml() {
