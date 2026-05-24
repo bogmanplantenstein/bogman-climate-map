@@ -342,14 +342,17 @@ html, body {
   background: var(--bg-panel);
   border: 1px solid var(--border);
   border-radius: 6px;
-  color: var(--text-primary);
+  /* Muted grey at rest so on-map iconography reads as quiet UI chrome rather
+     than highlighted action. Brightens on hover for affordance. Matches the
+     unmapped-toggle button's color treatment. */
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 15px;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
   user-select: none;
   box-shadow: 0 2px 8px rgba(0,0,0,0.4);
 }
-.map-btn:hover { background: var(--bg-elevated); }
+.map-btn:hover { background: var(--bg-elevated); color: var(--text-primary); }
 .map-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 
 /* ── Filter toggle + panel ───────────────────────────────── */
@@ -1582,11 +1585,13 @@ html, body {
   top: 1px;
   width: 20px;
   height: 20px;
-  color: var(--accent);
+  /* Muted grey to match the map's dark UI palette — accent green felt too loud
+     against the bullet text. Section-header icons (.bmg-section-icon) follow
+     the same convention. */
+  color: var(--text-muted);
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  opacity: 0.9;
 }
 .bmg-modal-body li .bmg-li-icon svg {
   width: 18px;
@@ -1604,12 +1609,32 @@ html, body {
   width: 15px;
   height: 15px;
   flex-shrink: 0;
-  color: var(--accent);
-  opacity: 0.85;
+  /* Muted grey for unified iconography across welcome bullets, section
+     headers, and on-map buttons. */
+  color: var(--text-muted);
 }
 .bmg-section-icon svg {
   width: 15px;
   height: 15px;
+  display: block;
+}
+
+/* Icon slot for on-map buttons (filter toggle, unmapped toggle, etc.).
+   Inherits color via currentColor from the button it sits inside, so
+   filter-toggle gets the .map-btn light colour and unmapped-toggle gets
+   its muted-grey colour. Sized in em so a single class works for buttons
+   of different font sizes. */
+.map-btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.2em;
+  height: 1.2em;
+  flex-shrink: 0;
+}
+.map-btn-icon svg {
+  width: 100%;
+  height: 100%;
   display: block;
 }
 .bmg-modal-body li strong {
@@ -1774,7 +1799,9 @@ html, body {
     </div>
 
     <!-- Positioned inside map-container so they sit over the map only -->
-    <button id="filter-toggle" class="map-btn" title="Filters">☰</button>
+    <button id="filter-toggle" class="map-btn" title="Filters">
+      <span class="map-btn-icon" id="filter-toggle-icon"></span>
+    </button>
     <div id="filter-panel">
       <div id="filter-panel-inner">
         <div class="filter-group-title">Genus</div>
@@ -1787,7 +1814,7 @@ html, body {
       </div>
     </div>
 
-    <button id="unmapped-toggle">📋 Unmapped (<span id="unmapped-count">…</span>)</button>
+    <button id="unmapped-toggle"><span class="map-btn-icon" id="unmapped-toggle-icon"></span>Unmapped (<span id="unmapped-count">…</span>)</button>
     <div id="unmapped-panel">
       <div id="unmapped-header">
         <span>Unmapped Taxa</span>
@@ -5372,6 +5399,7 @@ const BMG_ICONS = {
   eye:         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`,
   thermometer: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14.76V3.5a2.5 2.5 0 0 0-5 0v11.26a4 4 0 1 0 5 0z"/></svg>`,
   layers:      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 2 7 12 12 22 7 12 2"/><polyline points="2 17 12 22 22 17"/><polyline points="2 12 12 17 22 12"/></svg>`,
+  list:        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>`,
 };
 
 function getWelcomeHtml() {
@@ -5523,6 +5551,14 @@ function bmgCloseModal() {
 }
 
 function bmgSetupModalHandlers() {
+  // Populate icon slots on the on-map buttons. Done in JS rather than inline
+  // HTML so all icons stay centralized in BMG_ICONS — to swap any one, edit
+  // a single line above.
+  const filterIcon   = document.getElementById('filter-toggle-icon');
+  const unmappedIcon = document.getElementById('unmapped-toggle-icon');
+  if (filterIcon)   filterIcon.innerHTML   = BMG_ICONS.sliders;
+  if (unmappedIcon) unmappedIcon.innerHTML = BMG_ICONS.list;
+
   document.getElementById('bmg-info-btn')?.addEventListener('click', bmgOpenInfo);
   document.getElementById('bmg-modal-close')?.addEventListener('click', bmgCloseModal);
 
