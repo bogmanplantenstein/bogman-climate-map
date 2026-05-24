@@ -3126,62 +3126,108 @@ async function fetchNominatim(query) {
   } catch { return []; }
 }
 
+// Astronomical monthly average daylight hours from latitude (no API call needed).
+// Computed for the 15th of each month using standard solar declination formula.
+// Returns 12 monthly values. Handles polar day (24) and polar night (0).
+function computeMonthlyDaylightHours(lat) {
+  const monthMidDoys = [15, 46, 75, 106, 136, 167, 197, 228, 259, 289, 320, 350];
+  const latRad = lat * Math.PI / 180;
+  return monthMidDoys.map(doy => {
+    const decl  = 23.45 * Math.sin(2 * Math.PI * (284 + doy) / 365) * Math.PI / 180;
+    const arg   = -Math.tan(latRad) * Math.tan(decl);
+    if (arg >=  1) return 0;     // polar night
+    if (arg <= -1) return 24;    // polar day
+    return 24 / Math.PI * Math.acos(arg);
+  });
+}
+
 async function fetchSearchClimateNormals(lat, lng) {
-  // 10-year window: smaller payload than 30yr, still statistically solid for normals
-  const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&start_date=2014-01-01&end_date=2023-12-31&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,daylight_duration,shortwave_radiation_sum&timezone=UTC`;
+  // 10-year window: smaller payload than 30yr, still statistically solid for normals.
+  // Switched from Open-Meteo to NASA POWER (MERRA-2) in 2026-05 after Open-Meteo's
+  // 10k/day per-IP cap caused live queries to fail from throttled residential IPs.
+  // POWER has no documented per-IP cap and returns temp + precip + RH + radiation
+  // in a single request.
+  const url = `https://power.larc.nasa.gov/api/temporal/daily/point` +
+    `?parameters=T2M_MAX,T2M_MIN,PRECTOTCORR,RH2M,ALLSKY_SFC_SW_DWN` +
+    `&community=AG&latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}` +
+    `&start=20140101&end=20231231&format=JSON`;
   try {
     const r = await fetch(url);
     if (!r.ok) return null;
     const d = await r.json();
-    const raw = d.daily;
-    if (!raw || !raw.time) return null;
+    const params = d?.properties?.parameter;
+    if (!params || !params.T2M_MAX) return null;
 
-    const tmaxSum  = new Array(12).fill(0), tmaxCnt  = new Array(12).fill(0);
-    const tminSum  = new Array(12).fill(0), tminCnt  = new Array(12).fill(0);
-    const precSum  = new Array(12).fill(0);
-    const precYrs  = Array.from({length: 12}, () => new Set());
-    const dlSum    = new Array(12).fill(0), dlCnt    = new Array(12).fill(0);
-    const radSum   = new Array(12).fill(0), radCnt   = new Array(12).fill(0);
+    const FILL    = -999;
+    const isValid = v => v != null && v !== FILL && isFinite(v);
 
-    raw.time.forEach((date, i) => {
-      const m = parseInt(date.substring(5, 7)) - 1;
-      const y = date.substring(0, 4);
-      const tmax = raw.temperature_2m_max[i];
-      if (tmax != null) { tmaxSum[m] += tmax; tmaxCnt[m]++; }
-      const tmin = raw.temperature_2m_min[i];
-      if (tmin != null) { tminSum[m] += tmin; tminCnt[m]++; }
-      const p = raw.precipitation_sum[i];
-      if (p != null) { precSum[m] += p; precYrs[m].add(y); }
-      const dl = raw.daylight_duration[i];
-      if (dl != null) { dlSum[m] += dl; dlCnt[m]++; }
-      const rad = raw.shortwave_radiation_sum[i];
-      if (rad != null) { radSum[m] += rad; radCnt[m]++; }
-    });
+    const tmaxSum = new Array(12).fill(0), tmaxCnt = new Array(12).fill(0);
+    const tminSum = new Array(12).fill(0), tminCnt = new Array(12).fill(0);
+    const precSum = new Array(12).fill(0);
+    const precYrs = Array.from({ length: 12 }, () => new Set());
+    const rhSum   = new Array(12).fill(0), rhCnt   = new Array(12).fill(0);
+    const radSum  = new Array(12).fill(0), radCnt  = new Array(12).fill(0);
 
-    // Monthly avg daylight in hours
-    const daylightHrs = dlSum.map((s, m) => dlCnt[m] ? s / dlCnt[m] / 3600 : null);
-    // Monthly avg shortwave radiation MJ/m²/day
+    for (const dateKey of Object.keys(params.T2M_MAX)) {
+      const m = parseInt(dateKey.substring(4, 6), 10) - 1;   // YYYYMMDD → month
+      const y = dateKey.substring(0, 4);
+
+      const tmax = params.T2M_MAX[dateKey];
+      if (isValid(tmax)) { tmaxSum[m] += tmax; tmaxCnt[m]++; }
+      const tmin = params.T2M_MIN[dateKey];
+      if (isValid(tmin)) { tminSum[m] += tmin; tminCnt[m]++; }
+      const p = params.PRECTOTCORR?.[dateKey];
+      if (isValid(p))    { precSum[m] += p;    precYrs[m].add(y); }
+      const rh = params.RH2M?.[dateKey];
+      if (isValid(rh))   { rhSum[m]   += rh;   rhCnt[m]++; }
+      const rad = params.ALLSKY_SFC_SW_DWN?.[dateKey];
+      if (isValid(rad))  { radSum[m]  += rad;  radCnt[m]++; }
+    }
+
+    // Astronomical daylight hours per month (no API needed — POWER doesn't return this).
+    const daylightHrs = computeMonthlyDaylightHours(lat);
+    // Monthly avg shortwave radiation MJ/m²/day (same units as Open-Meteo's
+    // shortwave_radiation_sum, so DLI/PPFD conversion factors carry over unchanged).
     const radiation = radSum.map((s, m) => radCnt[m] ? s / radCnt[m] : null);
     // DLI mol/m²/day = radiation × 2.02 (PAR fraction × photon conversion)
     const dli = radiation.map(r => r != null ? r * 2.02 : null);
     // Avg PPFD μmol/m²/s = (radiation MJ/m² × 1e6 J) / daylight_seconds × 2.02
     const ppfd = radiation.map((r, m) => {
-      const dlSec = dlCnt[m] ? dlSum[m] / dlCnt[m] : null;
+      const dlSec = daylightHrs[m] != null ? daylightHrs[m] * 3600 : null;
       return (r != null && dlSec) ? (r * 1e6 / dlSec) * 2.02 : null;
     });
 
     return {
-      modelElev:  d.elevation ?? null,   // ERA5 model grid elevation (m) — used for lapse-rate correction
-      tempMax:    tmaxSum.map((s, m) => tmaxCnt[m] ? s / tmaxCnt[m] : null),
-      tempMin:    tminSum.map((s, m) => tminCnt[m] ? s / tminCnt[m] : null),
+      // POWER returns [lng, lat, elev_m] — modelElev is the MERRA-2 grid elevation,
+      // used for lapse-rate correction against terrain elevation.
+      modelElev:  d.geometry?.coordinates?.[2] ?? null,
+      tempMax:    tmaxSum.map((s, m) => tmaxCnt[m]      ? s / tmaxCnt[m]      : null),
+      tempMin:    tminSum.map((s, m) => tminCnt[m]      ? s / tminCnt[m]      : null),
       precipMm:   precSum.map((s, m) => precYrs[m].size ? s / precYrs[m].size : null),
-      daylightHrs, dli, ppfd
+      daylightHrs, dli, ppfd,
+      // POWER /daily returns only daily-mean RH (no diurnal max/min). Surface
+      // rhMean here so callers don't need a second request; rhHigh/rhLow stay
+      // null and the UI conditionally renders them as "—".
+      rhHigh:     new Array(12).fill(null),
+      rhLow:      new Array(12).fill(null),
+      rhMean:     rhSum.map((s, m)   => rhCnt[m]        ? s / rhCnt[m]        : null),
     };
   } catch { return null; }
 }
 
-async function fetchRHNormals(lat, lng) {
-  // 5-year hourly RH → daily high/low/mean → monthly averages
+// Kept as a no-op for backward compatibility with existing Promise.all() callers.
+// RH is now bundled into fetchSearchClimateNormals above (single POWER request).
+// Returning null is safe: the post-Promise merge only writes rh* fields if non-null,
+// so the rhMean already on `normals` from the main fetch is preserved.
+async function fetchRHNormals(_lat, _lng) {
+  return null;
+}
+
+async function _retired_fetchRHNormals_oldOpenMeteo(lat, lng) {
+  // Retained as reference. The old hourly Open-Meteo path computed rhHigh / rhLow
+  // from per-day max/min of hourly relative_humidity_2m values. Replaced because
+  // (a) Open-Meteo throttles aggressively at 10k/day per IP and (b) downstream
+  // species rendering only ever read rhMean.
   const url = `https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}&start_date=2019-01-01&end_date=2023-12-31&hourly=relative_humidity_2m&timezone=UTC`;
   try {
     const r = await fetch(url);
