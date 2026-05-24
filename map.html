@@ -4787,6 +4787,15 @@ function openInatObsPanel(feature) {
         </div>
       </div>
     </details>
+
+    <details class="inat-section" id="inat-sec-soil">
+      <summary>🌱 Soil Data${obscured ? ' (approx. location)' : ''}</summary>
+      <div class="inat-section-body">
+        <div id="inat-soil-body">
+          <div class="soil-loading" style="padding:8px 0 4px">Expand to load soil data for this location</div>
+        </div>
+      </div>
+    </details>
   `;
 
   document.getElementById('inat-back-obs')?.addEventListener('click', () => {
@@ -4805,6 +4814,17 @@ function openInatObsPanel(feature) {
     if (this.open && !climateLoaded) {
       climateLoaded = true;
       loadInatClimateSection(p.lat, p.lng);
+    }
+  });
+
+  // Lazy-load soil data the first time that section is opened.
+  // Most cells hit the precomputed cache and resolve instantly; rare off-grid
+  // points fall through to a live SoilGrids fetch (see getSoilForLocation).
+  let soilLoaded = false;
+  document.getElementById('inat-sec-soil')?.addEventListener('toggle', function () {
+    if (this.open && !soilLoaded) {
+      soilLoaded = true;
+      loadInatSoilSection(p.lat, p.lng);
     }
   });
 
@@ -4935,6 +4955,19 @@ async function loadInatClimateSection(lat, lng) {
 
   buildClimateChart(normals);
   if (normals.daylightHrs) buildLightChart(normals);
+}
+
+// ── Inline soil section for obs detail ────────────────────
+
+async function loadInatSoilSection(lat, lng) {
+  const body = document.getElementById('inat-soil-body');
+  if (!body) return;
+  body.innerHTML = '<div class="soil-loading">Loading soil data…</div>';
+
+  const data = await getSoilForLocation(lat, lng);
+  const b = document.getElementById('inat-soil-body');
+  if (!b) return;  // navigated away while waiting
+  b.innerHTML = renderSoilBody(data);
 }
 
 // ── Filter panel UI ───────────────────────────────────────
