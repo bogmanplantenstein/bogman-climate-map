@@ -33,17 +33,22 @@ jobs:
           INAT_API_TOKEN: ${{ secrets.INAT_API_TOKEN }}
         run: node scripts/fetch-inat-data.js obs
 
+      # NOTE: pull/push both use an explicit token-in-URL. The auth header that
+      # actions/checkout configures via `extraheader` can expire before the
+      # job's 6h ceiling on long-running jobs (observed at ~5h09m). fetch-obs
+      # is short (~45 min) so this is defensive, but uniform across all jobs.
       - name: Commit observation data
         run: |
           git config user.name  bogmanplantenstein
           git config user.email bogman@bogmanplantenstein.com
+          REPO_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git add inat/
           if git diff --staged --quiet; then
             echo "No changes to commit — obs data is already up to date"
           else
             git commit -m "chore: monthly iNat obs refresh $(date -u +%Y-%m-%d)"
-            git pull --rebase origin main
-            git push
+            git pull --rebase "$REPO_URL" main
+            git push "$REPO_URL" HEAD:main
             echo "✓ Obs data committed and pushed"
           fi
 
@@ -80,18 +85,20 @@ jobs:
 
       # SUCCESS: one combined commit — elev-cache + species-data + report together.
       # Only one push happens, so there is no fast-forward conflict.
+      # See fetch-obs above for token-in-URL rationale.
       - name: Commit species data
         if: success()
         run: |
           git config user.name  bogmanplantenstein
           git config user.email bogman@bogmanplantenstein.com
+          REPO_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git add inat/
           if git diff --staged --quiet; then
             echo "No changes to commit — species data is already up to date"
           else
             git commit -m "chore: monthly iNat species-climate refresh $(date -u +%Y-%m-%d)"
-            git pull --rebase origin main
-            git push
+            git pull --rebase "$REPO_URL" main
+            git push "$REPO_URL" HEAD:main
             echo "✓ Species data committed and pushed"
           fi
 
@@ -99,22 +106,19 @@ jobs:
       # Both caches flush every 100–1,000 cells, so even a mid-run timeout
       # preserves partial data for the next attempt.
       # (Job timeout = cancelled(), script error = failure(); both are caught here.)
-      # NOTE: push uses an explicit token-in-URL because GitHub revokes the auth
-      # configured by actions/checkout the moment a job is cancelled. A plain
-      # `git push` falls back to interactive credential prompting and dies on
-      # the runner (no TTY). Embedding the token directly bypasses this.
       - name: Commit caches on failure
         if: failure() || cancelled()
         run: |
           git config user.name  bogmanplantenstein
           git config user.email bogman@bogmanplantenstein.com
+          REPO_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git add inat/elev-cache.json inat/climate-cache.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No cache changes to commit"
           else
             git commit -m "chore: update elev/climate cache $(date -u +%Y-%m-%d)"
-            git pull --rebase origin main
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
+            git pull --rebase "$REPO_URL" main
+            git push "$REPO_URL" HEAD:main
             echo "✓ Cache data committed and pushed"
           fi
 

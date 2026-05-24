@@ -34,18 +34,25 @@ jobs:
         run: node scripts/fetch-inat-data.js wrb
 
       # SUCCESS: commit both soil-cache.json (with wrb fields) and species-soil.json
+      # NOTE: pull/push both use an explicit token-in-URL. The auth header that
+      # actions/checkout configures via `extraheader` becomes invalid before the
+      # job's 6h ceiling on long-running jobs — observed empirically in a 5h09m
+      # WRB run where the success-commit step failed with "could not read
+      # Username" after the script had already done all the work, losing 5h of
+      # fetched data. Bypassing extraheader avoids this entirely.
       - name: Commit WRB data
         if: success()
         run: |
           git config user.name  bogmanplantenstein
           git config user.email bogman@bogmanplantenstein.com
+          REPO_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git add inat/soil-cache.json inat/species-soil.json
           if git diff --staged --quiet; then
             echo "No changes to commit — WRB data is already up to date"
           else
             git commit -m "chore: precompute WRB classification $(date -u +%Y-%m-%d)"
-            git pull --rebase origin main
-            git push
+            git pull --rebase "$REPO_URL" main
+            git push "$REPO_URL" HEAD:main
             echo "✓ WRB data committed and pushed"
           fi
 
@@ -53,22 +60,21 @@ jobs:
       # The script flushes soil-cache.json every 100 cells, so even a mid-run
       # timeout preserves partial WRB data for the next attempt.
       # Also commits species-soil.json if it exists (written at end of each run).
-      # NOTE: push uses an explicit token-in-URL because the auth header set up
-      # by actions/checkout stops working the moment a job is cancelled, and a
-      # plain `git push` then dies trying to prompt for credentials.
+      # See note above re: token-in-URL pattern.
       - name: Commit partial WRB cache
         if: failure() || cancelled()
         run: |
           git config user.name  bogmanplantenstein
           git config user.email bogman@bogmanplantenstein.com
+          REPO_URL="https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git add inat/soil-cache.json 2>/dev/null || true
           git add inat/species-soil.json 2>/dev/null || true
           if git diff --staged --quiet; then
             echo "No changes to commit"
           else
             git commit -m "chore: update partial WRB cache $(date -u +%Y-%m-%d)"
-            git pull --rebase origin main
-            git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
+            git pull --rebase "$REPO_URL" main
+            git push "$REPO_URL" HEAD:main
             echo "✓ Partial WRB cache committed and pushed"
           fi
 
