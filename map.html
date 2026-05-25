@@ -2751,6 +2751,31 @@ async function loadSpeciesSoilSection(taxonId, taxonName) {
   await loadAndRenderSoilSection(lat, lng);
 }
 
+// Decide if a species lives "in the tropics" — used to hide the seasonal-shift
+// toggle, since equatorial species have weak seasons and shifting by 6 months
+// produces a near-identical chart. Definition: median |latitude| < 23.5°
+// (Tropic of Cancer / Capricorn). Result is cached per taxon name for the
+// session. Falls back to FALSE (show the toggle) if obs data isn't loaded yet.
+function isSpeciesTropical(taxonName) {
+  if (speciesTropicalCache.has(taxonName)) return speciesTropicalCache.get(taxonName);
+  if (!inatObs.length || !inatTaxa.length) return false;
+  const absLats = [];
+  for (const o of inatObs) {
+    if (inatTaxa[o[OBS_TI]]?.[1] === taxonName) {
+      absLats.push(Math.abs(o[OBS_LAT]));
+    }
+  }
+  if (!absLats.length) {
+    // No obs found — don't cache, so a later load can re-evaluate
+    return false;
+  }
+  absLats.sort((a, b) => a - b);
+  const median = absLats[Math.floor(absLats.length / 2)];
+  const tropical = median < 23.5;
+  speciesTropicalCache.set(taxonName, tropical);
+  return tropical;
+}
+
 function buildSoilSectionHtml(autoOpen = false) {
   return `<details class="inat-section" style="margin-top:8px"${autoOpen ? ' open' : ''}>
     <summary><span class="bmg-section-icon">${BMG_ICONS.layers}</span>Soil Data</summary>
@@ -3950,12 +3975,17 @@ function buildSpeciesSidebarContent(entry) {
   else if (!hasSH) speciesHemi = 'nh';   // NH-only → force NH
   // (when both exist, preserve the user's previous selection)
 
-  // Helpers below close over `entry` and `hasBoth` from the surrounding render
-  // scope. State (speciesHemi, speciesShiftSH) is module-level so it persists
-  // across species navigations.
-  const shiftMonthsToNH = (monthly) => {
-    // Rotate each 12-element monthly array by +6 so SH-native months map onto
-    // their NH-calendar equivalents (SH Jul → NH Jan, SH Aug → NH Feb, ...).
+  // Helpers below close over `entry`, `hasBoth`, and `isTropical` from the
+  // surrounding render scope. State (speciesHemi, speciesShiftSH) is module-
+  // level so it persists across species navigations.
+  const isTropical = isSpeciesTropical(entry.scientific_name);
+
+  const rotateMonthsBy6 = (monthly) => {
+    // Rotate each 12-element monthly array by +6 positions. Symmetric: for SH
+    // source data this puts SH-July (winter) at the Jan slot (NH-aligned view);
+    // for NH source data it puts NH-July (summer) at the Jan slot (SH calendar
+    // view). The button below is offered for both because users may want either
+    // direction depending on their own location.
     if (!monthly) return monthly;
     const out = {};
     for (const k of Object.keys(monthly)) {
@@ -3967,27 +3997,36 @@ function buildSpeciesSidebarContent(entry) {
     return out;
   };
   const getDisplayMonthly = () => {
-    if (speciesHemi === 'sh') {
-      return speciesShiftSH ? shiftMonthsToNH(entry.monthly_sh) : entry.monthly_sh;
-    }
-    return entry.monthly_nh;
+    const base = speciesHemi === 'sh' ? entry.monthly_sh : entry.monthly_nh;
+    return speciesShiftSH ? rotateMonthsBy6(base) : base;
   };
   const getChartTitle = () => {
-    if (speciesHemi === 'nh') return 'Monthly climate';
-    return speciesShiftSH
-      ? 'Monthly climate (Southern, NH-aligned)'
-      : 'Monthly climate (Southern hemisphere)';
+    const hemiLabel = speciesHemi === 'sh' ? 'Southern hemisphere' : null;
+    const shiftLabel = speciesShiftSH
+      ? (speciesHemi === 'sh' ? 'NH-aligned' : 'SH-aligned')
+      : null;
+    const parts = [hemiLabel, shiftLabel].filter(Boolean);
+    return parts.length ? `Monthly climate (${parts.join(', ')})` : 'Monthly climate';
   };
   const baseNote = 'Temperatures corrected for elevation (6.5°C/1000m lapse rate). Precipitation and humidity are uncorrected.';
-  const getChartNote = () => (speciesHemi === 'sh' && speciesShiftSH)
-    ? baseNote + ' Months shifted by +6 to align with the Northern Hemisphere calendar.'
+  const getChartNote = () => speciesShiftSH
+    ? baseNote + ` Months shifted by +6 to view in the ${speciesHemi === 'sh' ? 'Northern' : 'Southern'} Hemisphere calendar.`
     : baseNote;
 
   const buildActionsHtml = () => {
-    // Shift toggle only meaningful when viewing SH data — when on NH there's
-    // nothing to shift.
-    const shiftBtn = (speciesHemi === 'sh')
-      ? `<button class="sp-hemi-btn${speciesShiftSH ? ' active-sh' : ''}" id="sp-shift-toggle" title="Shift Southern hemisphere months by +6 to align with the Northern hemisphere calendar (useful for NH-based cultivators planning a growing cycle).">${speciesShiftSH ? 'Native ⇄' : 'NH-aligned ⇄'}</button>`
+    // Seasonal-shift toggle: shown for any non-tropical species (median
+    // |lat| > 23.5°), regardless of which hemisphere is displayed. The button
+    // simply rotates the chart by +6 months; what that means depends on the
+    // hemisphere being viewed:
+    //   - SH data shifted → NH-aligned (cultivator's calendar)
+    //   - NH data shifted → SH-aligned (opposite-hemisphere view)
+    // Hidden for tropical species since the seasonal cycle is weak and
+    // shifting produces a near-identical chart.
+    const shiftTitle = speciesHemi === 'sh'
+      ? 'Shift Southern hemisphere months by +6 to align with the Northern hemisphere calendar (useful for NH-based cultivators planning a growing cycle).'
+      : 'Shift Northern hemisphere months by +6 to view in the Southern hemisphere calendar.';
+    const shiftBtn = !isTropical
+      ? `<button class="sp-hemi-btn${speciesShiftSH ? ' active-sh' : ''}" id="sp-shift-toggle" title="${shiftTitle}">Swap seasons ⇄</button>`
       : '';
     // Hemisphere toggle only present when both hemispheres have data.
     const hemiBtn = hasBoth
@@ -4657,11 +4696,16 @@ let inatSpeciesDataPromise = null;   // singleton fetch promise for species-data
 let inatSpeciesData        = null;   // species data keyed by taxon_id (number)
 let inatSpeciesSidebarId   = null;   // taxon_id currently shown in species sidebar
 let speciesHemi            = 'nh';   // 'nh' | 'sh' for the species monthly chart
-// When true, SH monthly data is rotated by +6 months so its seasonal cycle
-// aligns with the Northern Hemisphere calendar — useful for NH-based growers
-// reading SH species (e.g. Australian Drosera summer-dormancy lines up under
-// their Jun-Aug instead of Dec-Feb). Persisted across sessions.
+// When true, the displayed monthly data is rotated by +6 months. For SH-species
+// data this aligns the seasonal cycle with the Northern Hemisphere calendar
+// (the primary cultivator use case). For NH-species data it does the reverse
+// (NH → SH calendar view). Symmetric: just a 6-month phase shift. Persisted
+// across sessions; defaults to off so first-time users see native data.
 let speciesShiftSH         = (() => { try { return localStorage.getItem('bmg_sh_shift') === '1'; } catch { return false; } })();
+// Cache of per-species tropical classification (median |lat| < 23.5°). Computed
+// lazily from inatObs on first lookup; ~344k obs is one linear scan per species
+// (~10ms) and the result is stable for the session.
+const speciesTropicalCache = new Map();
 let speciesClimateChart    = null;   // Chart.js instance for species sidebar chart
 let inatClusterGroup  = null;       // L.layerGroup
 let inatRectGroup     = null;       // L.layerGroup for obscured rectangles
