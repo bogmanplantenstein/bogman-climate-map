@@ -3314,21 +3314,21 @@ function buildLightTable(cn) {
   const hasRH   = cn.rhMean && cn.rhMean.some(v => v != null);
   const hasPPFD = cn.ppfd   && cn.ppfd.some(v => v != null);
 
+  // NASA POWER's /daily endpoint only provides daily-mean RH (RH2M), so we
+  // only show a single RH Avg column. The old Open-Meteo hourly path used to
+  // surface RH High / RH Low (diurnal max/min) as well — those columns were
+  // removed when the source switched.
   const rows = MONTHS.map((mon, i) => {
-    const dl   = cn.daylightHrs?.[i];
-    const dli  = cn.dli?.[i];
-    const ppfd = cn.ppfd?.[i];
-    const rhHi  = cn.rhHigh?.[i];
+    const dl    = cn.daylightHrs?.[i];
+    const dli   = cn.dli?.[i];
+    const ppfd  = cn.ppfd?.[i];
     const rhAvg = cn.rhMean?.[i];
-    const rhLo  = cn.rhLow?.[i];
     return `<tr>
       <td>${mon}</td>
       <td>${dl  != null ? dl.toFixed(1) + 'h' : '—'}</td>
       <td>${dli != null ? dli.toFixed(1)       : '—'}</td>
       ${hasPPFD ? `<td>${ppfd != null ? Math.round(ppfd) : '—'}</td>` : ''}
-      ${hasRH   ? `<td>${rhHi  != null ? Math.round(rhHi)  + '%' : '—'}</td>
-                   <td>${rhAvg != null ? Math.round(rhAvg) + '%' : '—'}</td>
-                   <td>${rhLo  != null ? Math.round(rhLo)  + '%' : '—'}</td>` : ''}
+      ${hasRH   ? `<td>${rhAvg != null ? Math.round(rhAvg) + '%' : '—'}</td>` : ''}
     </tr>`;
   }).join('');
 
@@ -3339,7 +3339,7 @@ function buildLightTable(cn) {
         <th>Daylight</th>
         <th title="Daily Light Integral (mol photons/m²/day)">DLI</th>
         ${hasPPFD ? '<th title="Avg PPFD during daylight (μmol/m²/s)">PPFD</th>' : ''}
-        ${hasRH   ? '<th title="RH high — overnight/dawn">RH High</th><th title="Mean relative humidity">RH Avg</th><th title="RH low — peak afternoon">RH Low</th>' : ''}
+        ${hasRH   ? '<th title="Mean relative humidity">RH Avg</th>' : ''}
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -3477,12 +3477,10 @@ async function fetchSearchClimateNormals(lat, lng) {
       tempMin:    tminSum.map((s, m) => tminCnt[m]      ? s / tminCnt[m]      : null),
       precipMm:   precSum.map((s, m) => precYrs[m].size ? s / precYrs[m].size : null),
       daylightHrs, dli, ppfd,
-      // POWER /daily returns only daily-mean RH (no diurnal max/min). Surface
-      // rhMean here so callers don't need a second request; rhHigh/rhLow stay
-      // null and the UI conditionally renders them as "—".
-      rhHigh:     new Array(12).fill(null),
-      rhLow:      new Array(12).fill(null),
-      rhMean:     rhSum.map((s, m)   => rhCnt[m]        ? s / rhCnt[m]        : null),
+      // POWER /daily returns only daily-mean RH (no diurnal max/min). The old
+      // Open-Meteo hourly path used to compute rhHigh/rhLow; those fields have
+      // been removed since no UI surfaces them anymore.
+      rhMean:     rhSum.map((s, m) => rhCnt[m] ? s / rhCnt[m] : null),
     };
   } catch { return null; }
 }
@@ -5285,7 +5283,10 @@ async function loadInatClimateSection(lat, lng) {
     b.innerHTML = '<div class="climate-pending">Climate data unavailable for this location</div>';
     return;
   }
-  if (rh) { normals.rhHigh = rh.rhHigh; normals.rhLow = rh.rhLow; normals.rhMean = rh.rhMean; }
+  // fetchRHNormals now returns null (RH bundled into the main POWER fetch),
+  // so this merge is a no-op in practice — kept for legacy callers in case
+  // RH ever gets split out again.
+  if (rh) { normals.rhMean = rh.rhMean; }
 
   const validMax = normals.tempMax.filter(x => x != null);
   const validMin = normals.tempMin.filter(x => x != null);
