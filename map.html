@@ -1446,13 +1446,98 @@ html, body {
   flex-shrink: 0;
 }
 .soil-legend-name { font-size: 10px; color: var(--text-muted); }
-/* Official ISRIC legend graphic — colors always match the WMS overlay */
-.soil-legend-img {
-  display: block;
-  max-width: 130px;
-  margin: 2px 0 4px;
-  image-rendering: crisp-edges;
+
+/* ── WRB categorical legend (collapsible, 2-column grid of swatches) ── */
+/* Used by the "Soil Type" layer. Replaces the embedded ISRIC GetLegendGraphic
+   image so the legend matches the rest of the app's WRB palette (same colors
+   used in the species sidebar and on-click popup). Wider than gradient
+   legends to accommodate the 2-column grid of 30 reference soil groups. */
+#soil-legend.wrb-mode { max-width: 240px; }
+.wrb-legend-details { margin: 0; }
+.wrb-legend-details > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0;
+  user-select: none;
 }
+.wrb-legend-details > summary::-webkit-details-marker { display: none; }
+.wrb-legend-details > summary .wrb-legend-title {
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+.wrb-legend-details > summary .wrb-legend-chevron {
+  color: var(--text-muted);
+  font-size: 10px;
+  transition: transform 0.18s;
+}
+.wrb-legend-details[open] > summary .wrb-legend-chevron { transform: rotate(180deg); }
+.wrb-legend-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 10px;
+  margin-top: 7px;
+}
+.wrb-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: default;
+}
+.wrb-legend-item .wrb-swatch {
+  width: 10px; height: 10px;
+  border-radius: 2px;
+  border: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+.wrb-legend-item .wrb-name {
+  font-size: 10px;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wrb-legend-item[title]:hover .wrb-name { color: var(--accent); }
+
+/* ── On-click soil popup (loading + populated states) ─────────────────── */
+.soil-popup { padding: 10px 12px; min-width: 200px; max-width: 280px; }
+.soil-popup.loading { color: var(--text-muted); font-size: 12px; padding: 14px 12px; text-align: center; }
+.soil-popup-props {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-top: 8px;
+}
+.soil-popup-prop {
+  background: rgba(255,255,255,0.04);
+  border-radius: 4px;
+  padding: 5px 7px;
+}
+.soil-popup-prop-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+.soil-popup-prop-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: 1px;
+}
+.soil-popup-prop-unit { font-size: 9.5px; color: var(--text-muted); margin-left: 2px; font-weight: 400; }
+.soil-popup-src {
+  display: block;
+  font-size: 9px;
+  color: var(--text-muted);
+  margin-top: 8px;
+  font-style: italic;
+}
+
 .soil-legend-src {
   font-size: 9px;
   color: var(--text-muted);
@@ -2209,7 +2294,11 @@ function initMap() {
   map.on('click', e => {
     if (selectedId) { closePanel(); return; }
     if (searchPanelOpen) { closeLocationPanel(); return; }
-    if (koppenVisible && koppenGeoRaster) showKoppenPopup(e.latlng);
+    // Priority order: soil popup takes precedence when its layer is active so
+    // clicks on the soil overlay surface point-specific values; otherwise fall
+    // back to the Köppen popup if that overlay is visible.
+    if (activeSoilLayer)                showSoilPopup(e.latlng);
+    else if (koppenVisible && koppenGeoRaster) showKoppenPopup(e.latlng);
   });
 }
 
@@ -2467,24 +2556,60 @@ function setSoilLayer(key) {
 function updateSoilLegend(key) {
   const el = document.getElementById('soil-legend');
   if (!el) return;
-  if (!key || !SOIL_LAYERS[key]) { el.classList.remove('visible'); el.innerHTML = ''; return; }
+  if (!key || !SOIL_LAYERS[key]) {
+    el.classList.remove('visible', 'wrb-mode');
+    el.innerHTML = '';
+    return;
+  }
 
   const def = SOIL_LAYERS[key];
-  let html  = `<div class="soil-legend-title">${def.label}</div>`;
 
   if (def.legend === 'gradient') {
-    html += `<div class="soil-legend-gradient" style="background:${def.gradCss}"></div>
-             <div class="soil-legend-labels"><span>${def.gradMin}</span><span>${def.gradMax}</span></div>`;
-  } else {
-    // WRB categorical — embed ISRIC's official GetLegendGraphic so the swatch
-    // colors exactly match the WMS tile layer rendered on the map.
-    html += `<img class="soil-legend-img"
-               src="https://maps.isric.org/mapserv?map=/map/wrb.map&SERVICE=WMS&REQUEST=GetLegendGraphic&VERSION=1.1.1&LAYER=MostProbable&FORMAT=image/png"
-               alt="WRB Soil Groups" loading="lazy">`;
+    // Gradient legends (pH, SOC, nitrogen, sand) — same compact strip as before
+    el.classList.remove('wrb-mode');
+    el.innerHTML =
+      `<div class="soil-legend-title">${def.label}</div>` +
+      `<div class="soil-legend-gradient" style="background:${def.gradCss}"></div>` +
+      `<div class="soil-legend-labels"><span>${def.gradMin}</span><span>${def.gradMax}</span></div>` +
+      `<span class="soil-legend-src">SoilGrids 250m · ISRIC</span>`;
+    el.classList.add('visible');
+    return;
   }
-  html += `<span class="soil-legend-src">SoilGrids 250m · ISRIC</span>`;
-  el.innerHTML = html;
+
+  // WRB categorical — collapsible 2-column grid of swatches using the same
+  // WRB_GROUPS palette used in the species sidebar and on-click popup. Note:
+  // colors are our own (chosen for app-wide consistency) rather than ISRIC's
+  // exact WMS palette, so they may not pixel-match the overlay tiles. Trade-off
+  // chosen for a unified, readable design.
+  const wrbExpanded = (() => {
+    try { return localStorage.getItem('bmg_wrb_legend_collapsed') !== '1'; }
+    catch { return true; }
+  })();
+
+  const items = Object.entries(WRB_GROUPS)
+    .sort(([, a], [, b]) => a.name.localeCompare(b.name))
+    .map(([code, g]) => `
+      <div class="wrb-legend-item" title="${g.desc.replace(/"/g, '&quot;')}">
+        <span class="wrb-swatch" style="background:${g.color}"></span>
+        <span class="wrb-name">${g.name}</span>
+      </div>`).join('');
+
+  el.classList.add('wrb-mode');
+  el.innerHTML =
+    `<details class="wrb-legend-details"${wrbExpanded ? ' open' : ''}>
+       <summary>
+         <span class="wrb-legend-title">${def.label}</span>
+         <span class="wrb-legend-chevron">▾</span>
+       </summary>
+       <div class="wrb-legend-grid">${items}</div>
+       <span class="soil-legend-src">SoilGrids 250m · ISRIC · 30 reference soil groups</span>
+     </details>`;
   el.classList.add('visible');
+
+  // Persist collapse state across sessions
+  el.querySelector('.wrb-legend-details')?.addEventListener('toggle', (e) => {
+    try { localStorage.setItem('bmg_wrb_legend_collapsed', e.target.open ? '0' : '1'); } catch {}
+  });
 }
 
 // ── SoilGrids REST API (point query) ─────────────────────
@@ -2810,6 +2935,62 @@ function showKoppenPopup(latlng) {
       `</div>`
     )
     .openOn(map);
+}
+
+// On-click soil popup. Resolves point soil data via the existing lookup chain:
+//   1. In-memory precomputed grid cache (instant for any cell that has obs)
+//   2. localStorage cache (cells previously fetched live)
+//   3. Live SoilGrids REST API (single ~1s call for fresh points)
+// Includes the WRB classification + all four continuous properties (pH, SOC,
+// nitrogen, sand) in one popup. The live-API fallback means a click anywhere
+// on land returns data in ~1s; clicks on cached cells are instant.
+async function showSoilPopup(latlng) {
+  const popup = L.popup({ maxWidth: 300 })
+    .setLatLng(latlng)
+    .setContent('<div class="soil-popup loading">Loading soil data…</div>')
+    .openOn(map);
+
+  const data = await getSoilForLocation(latlng.lat, latlng.lng);
+  // Bail if user closed the popup mid-fetch (Leaflet replaces popup on each open)
+  if (!popup.isOpen()) return;
+
+  if (!data) {
+    popup.setContent('<div class="soil-popup">No soil data for this location (ocean, glacier, or outside SoilGrids coverage).</div>');
+    return;
+  }
+
+  const wrb = data.wrb != null && data.wrb > 0 ? WRB_GROUPS[data.wrb] : null;
+  const headHtml = wrb
+    ? `<div class="kp-popup-head">
+         <span class="kp-swatch" style="background:${wrb.color}"></span>
+         <span class="kp-code" style="font-size:14px">${wrb.name}</span>
+       </div>
+       <div class="kp-desc">${wrb.desc}</div>`
+    : `<div class="kp-group" style="margin-bottom:6px">Continuous properties only</div>`;
+
+  // Continuous properties — show only those present. Sand is stored as g/kg
+  // (0-1000) per SoilGrids convention; divide by 10 to display as percent.
+  const props = [];
+  if (data.ph       != null) props.push({ label: 'pH',       value: data.ph.toFixed(1),                unit: '' });
+  if (data.soc      != null) props.push({ label: 'Org. C',   value: Math.round(data.soc),              unit: 'g/kg' });
+  if (data.nitrogen != null) props.push({ label: 'Nitrogen', value: data.nitrogen.toFixed(1),          unit: 'g/kg' });
+  if (data.sand     != null) props.push({ label: 'Sand',     value: Math.round(data.sand / 10),        unit: '%' });
+
+  const propsHtml = props.length
+    ? `<div class="soil-popup-props">${props.map(p => `
+        <div class="soil-popup-prop">
+          <div class="soil-popup-prop-label">${p.label}</div>
+          <div class="soil-popup-prop-value">${p.value}${p.unit ? `<span class="soil-popup-prop-unit">${p.unit}</span>` : ''}</div>
+        </div>`).join('')}</div>`
+    : '';
+
+  popup.setContent(
+    `<div class="soil-popup">
+       ${headHtml}
+       ${propsHtml}
+       <span class="soil-popup-src">SoilGrids 250m · ISRIC · surface 0–5 cm</span>
+     </div>`
+  );
 }
 
 // ═══════════════════════════════════════════════════════════
