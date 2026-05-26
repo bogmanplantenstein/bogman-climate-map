@@ -734,31 +734,51 @@ async function computeSpeciesData(allTaxa, allObs) {
   // ── 3. Climate per cell ───────────────────────────────────────────────────
   const cellKeys = [...cellReps.keys()];
 
-  // Load persisted climate cache (fixed 5-year period 2019-2023 — stable across runs).
-  // Caching avoids re-fetching all 10k+ cells every run. Stores raw parseClimateResponse
-  // output (pre-lapse-rate) so the elevation correction is applied fresh from elev cache.
-  // The `_v` field is the cache schema version: bump CLIM_CACHE_VER when switching API
-  // sources (e.g. Open-Meteo ERA5 → NASA POWER MERRA-2) to force a clean re-fetch.
+  // Load persisted climate cache. Cache versioning is now PER-CELL FIELD-AWARE
+  // rather than file-version-gated: v2 entries (NASA POWER, monthly averages
+  // only) are kept and incrementally upgraded by re-fetching them to add the
+  // v3 daily-extreme fields (tempMaxHi, tempMinLo). Failed fetches don't
+  // overwrite existing entries, so partial upgrades are safe — you can re-run
+  // any number of times to make progress without losing existing data.
+  //
+  // Only v1 (Open-Meteo ERA5, deprecated source) is fully discarded — its
+  // schema is incompatible with the current NASA POWER pipeline.
   let climCache = {};
   if (existsSync(CLIM_CACHE_PATH)) {
     try {
       const raw = JSON.parse(readFileSync(CLIM_CACHE_PATH, 'utf8'));
-      if (raw._v === CLIM_CACHE_VER) {
+      if (raw._v === CLIM_CACHE_VER || raw._v === 2) {
         climCache = raw;
         const cellCount = Object.keys(climCache).filter(k => k !== '_v').length;
-        console.log(`  Loaded ${cellCount.toLocaleString()} cached cell climates (v${CLIM_CACHE_VER})`);
+        const note = raw._v < CLIM_CACHE_VER
+          ? ` — will upgrade per-cell to v${CLIM_CACHE_VER} as fetches complete`
+          : '';
+        console.log(`  Loaded ${cellCount.toLocaleString()} cached cell climates (v${raw._v})${note}`);
       } else {
-        console.log(`  Old climate cache version (${raw._v ?? 'none'} → ${CLIM_CACHE_VER}) — clearing for re-fetch`);
+        console.log(`  Old climate cache version (${raw._v ?? 'none'} → ${CLIM_CACHE_VER}) — incompatible schema, clearing for re-fetch`);
       }
     } catch (err) {
       console.warn(`  ⚠ Could not read climate cache: ${err.message}`);
     }
   }
 
-  const missingClim = cellKeys.filter(k => !(k in climCache));
+  // A cell needs fetching if it's MISSING from the cache OR it's present but
+  // missing v3 daily-extreme fields. The latter means it's a v2 entry that
+  // hasn't been upgraded yet. The fetch produces a complete v3 entry that
+  // replaces the v2 entry in-memory (existing fields are recomputed identically
+  // from the same daily POWER data, so no information is lost).
+  const missingClim = cellKeys.filter(k => {
+    const cell = climCache[k];
+    if (!cell) return true;                              // never fetched
+    if (!Array.isArray(cell.tempMaxHi)) return true;     // v2 entry, needs upgrade
+    if (!Array.isArray(cell.tempMinLo)) return true;
+    return false;
+  });
   // ~1s/request from NASA POWER + 300ms rate-limit gap ≈ 1.3s per cell
   const estMin = Math.round(missingClim.length * 1300 / 60_000);
-  console.log(`\n▶ Fetching climate data for ${cellKeys.length.toLocaleString()} cells (${missingClim.length.toLocaleString()} uncached, ~${estMin} min)...`);
+  const cacheTotal = Object.keys(climCache).filter(k => k !== '_v').length;
+  const v3Already = cacheTotal - missingClim.length;
+  console.log(`\n▶ Fetching climate data for ${cellKeys.length.toLocaleString()} cells (${missingClim.length.toLocaleString()} need fetch, ${v3Already.toLocaleString()} already v3, ~${estMin} min)...`);
 
   let omFetched = 0, omFailed = 0;
 
