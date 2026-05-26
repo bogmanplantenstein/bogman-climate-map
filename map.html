@@ -382,6 +382,36 @@ html, body {
 /* Visual gap between functional groups of top-right Leaflet controls.
    Inserted as a no-op Leaflet control between groups. */
 .leaflet-control-spacer { height: 8px; pointer-events: none; }
+
+/* Small uppercase label that introduces a group of controls in the top-right
+   stack (e.g. "LAYER", "KEYS", "SPECIES"). Inserted as a Leaflet control so
+   it nests naturally in the same vertical flow as the buttons it labels.
+   Right-aligned to match the button stack's right edge. */
+.leaflet-control-group-label {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-muted);
+  background: rgba(22, 27, 34, 0.7);
+  padding: 2px 6px;
+  border-radius: 3px;
+  text-align: right;
+  user-select: none;
+  pointer-events: none;
+  backdrop-filter: blur(2px);
+}
+/* Bump the .leaflet-control wrapper's top margin when it contains a group
+   label, so the label sits with clear breathing room above the previous
+   group. Within-group items use Leaflet's default 10px margin-top. */
+.leaflet-top .leaflet-control:has(> .leaflet-control-group-label) {
+  margin-top: 18px;
+}
+/* First control in the stack (which is the "Layer" label) should sit at
+   the normal top position — don't double up on the extra group margin. */
+.leaflet-top > .leaflet-control:first-child {
+  margin-top: 10px !important;
+}
 .map-btn.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
 
 /* ── Filter panel ──────────────────────────────────────────
@@ -2592,29 +2622,38 @@ function buildMapControls() {
     }
   });
 
-  // No-op control whose only purpose is to add an 8px vertical gap between
-  // functional groups of controls in the top-right stack (Layers / Keys /
-  // Sightings). Implemented as a Leaflet control rather than CSS because
-  // each Leaflet control gets its own .leaflet-control wrapper div, so
-  // injecting a sibling spacer is the cleanest way to split groups.
-  const SpacerCtrl = L.Control.extend({
-    options: { position: 'topright' },
-    onAdd() { return L.DomUtil.create('div', 'leaflet-control-spacer'); }
-  });
+  // Small uppercase label control used to introduce each functional group of
+  // buttons in the top-right stack ("LAYER" / "KEYS" / "SPECIES"). Replaces
+  // the previous invisible SpacerCtrl with explicit labels so users can see
+  // what each group is for. Inserted as Leaflet controls so they nest into
+  // the same .leaflet-top.leaflet-right flow as the buttons.
+  function makeLabelCtrl(text) {
+    return L.Control.extend({
+      options: { position: 'topright' },
+      onAdd() {
+        const el = L.DomUtil.create('div', 'leaflet-control-group-label');
+        el.textContent = text;
+        return el;
+      }
+    });
+  }
 
-  // Top-right control stack, grouped: [Map layers] / [Color keys] / [Sightings]
-  // Each group is separated by a thin SpacerCtrl. Within each group,
-  // controls are ordered by frequency of use.
-  new TileCtrl().addTo(map);          // [LAYERS]
+  // Top-right control stack, grouped + labelled:
+  //   [LAYER]   basemap, Köppen overlay, Soil layer
+  //   [KEYS]    Köppen colour key, Soil colour key
+  //   [SPECIES] iNat panel, CP filters, Unmapped taxa
+  // Within each group, controls are ordered by frequency of use.
+  new (makeLabelCtrl('Layer'))().addTo(map);
+  new TileCtrl().addTo(map);
   new KoppenCtrl().addTo(map);
   new SoilCtrl().addTo(map);
-  new SpacerCtrl().addTo(map);
 
-  new LegendCtrl().addTo(map);        // [KEYS]
+  new (makeLabelCtrl('Keys'))().addTo(map);
+  new LegendCtrl().addTo(map);
   new SoilLegendCtrl().addTo(map);
-  new SpacerCtrl().addTo(map);
 
-  new InatCtrl().addTo(map);          // [SIGHTINGS]
+  new (makeLabelCtrl('Species'))().addTo(map);
+  new InatCtrl().addTo(map);
   new FilterCtrl().addTo(map);
   new UnmappedCtrl().addTo(map);
 }
@@ -3075,20 +3114,34 @@ function showKoppenPopup(latlng) {
     .openOn(map);
 }
 
-// On-click soil popup. Resolves point soil data via the existing lookup chain:
-//   1. In-memory precomputed grid cache (instant for any cell that has obs)
-//   2. localStorage cache (cells previously fetched live)
-//   3. Live SoilGrids REST API (single ~1s call for fresh points)
+// In-session cache for exact-point soil queries used by the on-click popup.
+// Keyed by lat/lng rounded to ~100m so repeat clicks on the same area are
+// instant. NOT persisted (clears on reload) — different from the 0.5° grid
+// cache in soilCacheData / lsSoilGet which is for broad-area lookups.
+const popupSoilCache = new Map();
+async function fetchExactPointSoil(lat, lng) {
+  const k = `${lat.toFixed(3)}:${lng.toFixed(3)}`;
+  if (popupSoilCache.has(k)) return popupSoilCache.get(k);
+  const data = await fetchSoilData(lat, lng);
+  popupSoilCache.set(k, data);
+  return data;
+}
+
+// On-click soil popup. Calls SoilGrids LIVE for the exact click coordinates
+// rather than using getSoilForLocation (which would return data for the
+// representative point of the surrounding 0.5° grid cell — that point can be
+// tens of km away from the click and in a different soil region). Costs ~1s
+// per fresh click (cached in popupSoilCache for repeat clicks).
+//
 // Includes the WRB classification + all four continuous properties (pH, SOC,
-// nitrogen, sand) in one popup. The live-API fallback means a click anywhere
-// on land returns data in ~1s; clicks on cached cells are instant.
+// nitrogen, sand) in one popup.
 async function showSoilPopup(latlng) {
   const popup = L.popup({ maxWidth: 300 })
     .setLatLng(latlng)
     .setContent('<div class="soil-popup loading">Loading soil data…</div>')
     .openOn(map);
 
-  const data = await getSoilForLocation(latlng.lat, latlng.lng);
+  const data = await fetchExactPointSoil(latlng.lat, latlng.lng);
   // Bail if user closed the popup mid-fetch (Leaflet replaces popup on each open)
   if (!popup.isOpen()) return;
 
