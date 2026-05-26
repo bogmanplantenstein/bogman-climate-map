@@ -2486,20 +2486,76 @@ function applyLegendFilters() {
     if (typeof koppenLayer.redraw === 'function') koppenLayer.redraw();
   }
   // Soil WMS — server-rendered, so we can't dim per-class. When a WRB
-  // filter is active we hide the overlay entirely (opacity 0). The
-  // observation pins + the legend's highlighted swatches carry the filter
-  // signal; trying to also dim the WMS just makes the colours clash with
-  // the basemap. When filter cleared, restore the normal 0.65 opacity.
+  // filter is active we hide the overlay entirely (opacity 0) and rely on
+  // the wrbHighlightLayer below to surface the selected types as coloured
+  // 0.5° cells. When filter cleared, restore the normal 0.65 opacity.
   if (activeSoilLayer && soilWmsCache[activeSoilLayer]) {
     soilWmsCache[activeSoilLayer].setOpacity(selectedWrbCodes.size > 0 ? 0 : 0.65);
   }
+  // Build/refresh the per-cell highlight layer (the only way to show
+  // selected soil types on the map since WMS can't be masked per-class).
+  updateWrbHighlight();
   // Re-render legends (they read selection state to show .selected + clear btn)
   updateSoilLegend(activeSoilLayer);
   window._bmgKoppenLegendRender?.();
   // Re-filter observations
   if (typeof rebuildInatIndex === 'function') rebuildInatIndex();
 }
+
+// Render coloured 0.5° rectangles for every cached cell whose WRB matches
+// the active filter. Removes the previous layer first so toggling the
+// filter doesn't accumulate rectangles. Skips silently if soil-cache.json
+// hasn't loaded yet or there's no filter active.
+function updateWrbHighlight() {
+  if (wrbHighlightLayer) {
+    map.removeLayer(wrbHighlightLayer);
+    wrbHighlightLayer = null;
+  }
+  if (selectedWrbCodes.size === 0 || !soilCacheData) return;
+
+  // Group rectangles by WRB code so we can use Leaflet's faster batch creation
+  // and produce a single layerGroup per call. ~10k cells max; with typical
+  // selections of 1-3 types we usually render a few hundred to a few
+  // thousand rects — well within Leaflet's comfortable range.
+  const group = L.layerGroup();
+  for (const key of Object.keys(soilCacheData)) {
+    const cell = soilCacheData[key];
+    if (!cell || typeof cell !== 'object' || !cell.wrb) continue;
+    if (!selectedWrbCodes.has(cell.wrb)) continue;
+    // Cache keys are "row:col" where row = floor(lat/0.5), col = floor(lng/0.5).
+    // Cell spans [row*0.5, (row+1)*0.5] × [col*0.5, (col+1)*0.5].
+    const sep = key.indexOf(':');
+    if (sep < 0) continue;
+    const row = parseInt(key.slice(0, sep), 10);
+    const col = parseInt(key.slice(sep + 1), 10);
+    if (!isFinite(row) || !isFinite(col)) continue;
+    const color = WRB_GROUPS[cell.wrb]?.color || '#ffffff';
+    const lat0 = row * 0.5, lng0 = col * 0.5;
+    L.rectangle(
+      [[lat0, lng0], [lat0 + 0.5, lng0 + 0.5]],
+      {
+        color:       '#000',     // thin dark border for cell separation
+        weight:      0.4,
+        opacity:     0.5,
+        fillColor:   color,
+        fillOpacity: 0.78,
+        interactive: false,      // pass map clicks through to the basemap
+        pane:        'overlayPane',
+      }
+    ).addTo(group);
+  }
+  group.addTo(map);
+  wrbHighlightLayer = group;
+}
 const soilWmsCache  = {};         // lazily-built L.tileLayer.wms instances
+// Layer holding the per-cell WRB-filter highlight rectangles. Built on demand
+// when a WRB filter is active so the user can SEE where the selected soil
+// type(s) occur on the map. Each cell in our precomputed soil-cache.json
+// (~10,372 cells, where CP observations exist) renders as a 0.5°×0.5°
+// coloured rectangle in the WRB type's colour. WMS tiles are server-rendered
+// and can't be masked per-class, so this is the cleanest way to surface the
+// selection visually without colour clash from a dimmed WMS underneath.
+let wrbHighlightLayer = null;
 let soilFetchToken  = 0;          // incremented on each panel open; stale fetches bail
 let soilCachePromise   = null;    // singleton fetch for inat/soil-cache.json
 let soilCacheData      = null;    // flat { cellKey: data|null } from soil-cache.json
