@@ -5413,25 +5413,46 @@ function buildSpeciesClimateChart(monthly) {
     if (speciesHemi === 'sh') data = [...data.slice(6), ...data.slice(0, 6)];
     return data;
   };
+  // Scalar per-month picker (for the new daily-extreme arrays, which are
+  // single-value per month, not [p25,p50,p75] triples).
+  const pickScalar = (arr) => {
+    if (!arr) return new Array(12).fill(null);
+    let data = arr.slice();
+    if (speciesHemi === 'sh') data = [...data.slice(6), ...data.slice(0, 6)];
+    return data;
+  };
 
   const SH_MONTHS = ['Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar','Apr','May','Jun'];
   const labels = speciesHemi === 'sh' ? SH_MONTHS : MONTHS;
+
+  // Prefer the daily-extreme band (median across cells of each cell's p90
+  // daily-high and p10 daily-low) when available — that's a more meaningful
+  // "what extremes does this plant deal with" signal than the cross-cell
+  // p25/p75 spread. Falls back to the older p25/p75 envelope for species
+  // generated before climate-cache.json v3.
+  const hasDailyExtremes = !!(monthly.tempMaxHi && monthly.tempMinLo);
+  const bandTopData = hasDailyExtremes ? pickScalar(monthly.tempMaxHi) : pick(monthly.tempMax, 2);
+  const bandBotData = hasDailyExtremes ? pickScalar(monthly.tempMinLo) : pick(monthly.tempMin, 0);
 
   speciesClimateChart = new Chart(ctx, {
     data: {
       labels,
       datasets: [
         { // band top — invisible border, fills downward to dataset[1]
-          type: 'line', label: '_top',
-          data: pick(monthly.tempMax, 2),  // p75 of tempMax
-          borderWidth: 0, borderColor: 'transparent',
-          backgroundColor: 'rgba(150,160,200,0.13)',
+          type: 'line', label: hasDailyExtremes ? 'Typical hot extreme' : '_top',
+          data: bandTopData,
+          borderWidth: hasDailyExtremes ? 1 : 0,
+          borderColor: hasDailyExtremes ? 'rgba(255,140,60,0.30)' : 'transparent',
+          borderDash:  hasDailyExtremes ? [4, 3] : [],
+          backgroundColor: hasDailyExtremes ? 'rgba(255,140,60,0.10)' : 'rgba(150,160,200,0.13)',
           fill: '+1', tension: 0.4, pointRadius: 0, yAxisID: 'yTemp',
         },
         { // band bottom — base of fill
-          type: 'line', label: '_bot',
-          data: pick(monthly.tempMin, 0),  // p25 of tempMin
-          borderWidth: 0, borderColor: 'transparent',
+          type: 'line', label: hasDailyExtremes ? 'Typical cold extreme' : '_bot',
+          data: bandBotData,
+          borderWidth: hasDailyExtremes ? 1 : 0,
+          borderColor: hasDailyExtremes ? 'rgba(100,180,255,0.30)' : 'transparent',
+          borderDash:  hasDailyExtremes ? [4, 3] : [],
           backgroundColor: 'transparent',
           fill: false, tension: 0.4, pointRadius: 0, yAxisID: 'yTemp',
         },

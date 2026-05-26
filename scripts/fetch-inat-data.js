@@ -53,8 +53,11 @@ const ELEV_RATE_MS    = 1_000;  // 1 s between batches — OpenTopoData allows 1
 const ELEV_BACKOFF    = [5_000, 15_000, 30_000];  // retry delays on 429 / errors
 const ELEV_CACHE_PATH = join(ROOT, 'inat', 'elev-cache.json');   // persisted across runs
 const CLIM_CACHE_PATH = join(ROOT, 'inat', 'climate-cache.json'); // persisted across runs — avoids re-fetching 10k+ cells
-const CLIM_CACHE_VER  = 2;   // bump when climate API source or cache shape changes to force re-fetch
-                              // v1 = Open-Meteo ERA5 (deprecated); v2 = NASA POWER MERRA-2
+const CLIM_CACHE_VER  = 3;   // bump when climate API source or cache shape changes to force re-fetch
+                              // v1 = Open-Meteo ERA5 (deprecated)
+                              // v2 = NASA POWER MERRA-2, monthly averages only
+                              // v3 = NASA POWER MERRA-2 + per-cell monthly daily-extreme percentiles
+                              //      (tempMaxHi p90 / tempMinLo p10) for species sidebar chart band
 
 // ── Soil constants ────────────────────────────────────────────────────────────
 // NOTE: WRB (soil type) is a *classification* property — it has its own endpoint.
@@ -596,9 +599,13 @@ function parseClimateResponse(d) {
   const FILL = -999;
   const isValid = v => v != null && v !== FILL && isFinite(v);
 
-  // Per-month accumulators for daily values.
-  const tmaxSum = new Array(12).fill(0), tmaxCnt = new Array(12).fill(0);
-  const tminSum = new Array(12).fill(0), tminCnt = new Array(12).fill(0);
+  // Per-month buckets of DAILY values (not just sums). We keep the full
+  // distribution so we can compute extreme percentiles (p10 of daily mins,
+  // p90 of daily maxes) for the species sidebar's chart band. Means come
+  // from these buckets at the end. Precip/RH still use sum/count since we
+  // only need monthly averages for those.
+  const tmaxByMonth = Array.from({ length: 12 }, () => []);
+  const tminByMonth = Array.from({ length: 12 }, () => []);
   const precSum = new Array(12).fill(0);
   const precYrs = Array.from({ length: 12 }, () => new Set());
   const rhSum   = new Array(12).fill(0), rhCnt   = new Array(12).fill(0);
@@ -611,10 +618,10 @@ function parseClimateResponse(d) {
     const y = dateKey.substring(0, 4);
 
     const tmax = params.T2M_MAX[dateKey];
-    if (isValid(tmax)) { tmaxSum[m] += tmax; tmaxCnt[m]++; }
+    if (isValid(tmax)) tmaxByMonth[m].push(tmax);
 
     const tmin = params.T2M_MIN[dateKey];
-    if (isValid(tmin)) { tminSum[m] += tmin; tminCnt[m]++; }
+    if (isValid(tmin)) tminByMonth[m].push(tmin);
 
     const p = params.PRECTOTCORR?.[dateKey];
     if (isValid(p)) { precSum[m] += p; precYrs[m].add(y); }
@@ -623,16 +630,28 @@ function parseClimateResponse(d) {
     if (isValid(rh)) { rhSum[m] += rh; rhCnt[m]++; }
   }
 
+  // Inline percentile helper — linear-interpolated.
+  const percentileOf = (arr, p) => {
+    if (!arr.length) return null;
+    const s = [...arr].sort((a, b) => a - b);
+    const i = (p / 100) * (s.length - 1);
+    const lo = Math.floor(i), hi = Math.ceil(i);
+    return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (i - lo);
+  };
+  const meanOf = arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null;
+
   return {
     modelElev,
-    tempMax:  tmaxSum.map((s, m) => tmaxCnt[m]      ? s / tmaxCnt[m]      : null),
-    tempMin:  tminSum.map((s, m) => tminCnt[m]      ? s / tminCnt[m]      : null),
-    precipMm: precSum.map((s, m) => precYrs[m].size ? s / precYrs[m].size : null),
+    tempMax:   tmaxByMonth.map(meanOf),                       // monthly avg of daily max
+    tempMin:   tminByMonth.map(meanOf),                       // monthly avg of daily min
+    tempMaxHi: tmaxByMonth.map(a => percentileOf(a, 90)),     // NEW: p90 of daily max — typical hot extreme
+    tempMinLo: tminByMonth.map(a => percentileOf(a, 10)),     // NEW: p10 of daily min — typical cold extreme
+    precipMm:  precSum.map((s, m) => precYrs[m].size ? s / precYrs[m].size : null),
     // rhHigh/rhLow not available from POWER /daily endpoint. Kept as null arrays
     // for schema parity with v1 cache entries — computeSpeciesData only reads rhMean.
-    rhHigh:   new Array(12).fill(null),
-    rhLow:    new Array(12).fill(null),
-    rhMean:   rhSum.map((s, m)   => rhCnt[m]        ? s / rhCnt[m]        : null),
+    rhHigh:    new Array(12).fill(null),
+    rhLow:     new Array(12).fill(null),
+    rhMean:    rhSum.map((s, m) => rhCnt[m] ? s / rhCnt[m] : null),
   };
 }
 
@@ -650,8 +669,13 @@ function applyLapseRate(climate, elev) {
   const delta = LAPSE_RATE * (elev - climate.modelElev);
   return {
     ...climate,
-    tempMax: climate.tempMax.map(v => v != null ? round1(v - delta) : null),
-    tempMin: climate.tempMin.map(v => v != null ? round1(v - delta) : null),
+    tempMax:   climate.tempMax  .map(v => v != null ? round1(v - delta) : null),
+    tempMin:   climate.tempMin  .map(v => v != null ? round1(v - delta) : null),
+    // Apply same lapse correction to the extreme percentiles — they're also
+    // temperatures, so the same elevation offset applies. Guarded against
+    // older v2 cache entries that don't have these fields.
+    tempMaxHi: climate.tempMaxHi?.map(v => v != null ? round1(v - delta) : null) ?? null,
+    tempMinLo: climate.tempMinLo?.map(v => v != null ? round1(v - delta) : null) ?? null,
   };
 }
 
@@ -847,11 +871,32 @@ async function computeSpeciesData(allTaxa, allObs) {
       });
     };
 
+    // Per-month median (across cells) of a per-cell array field. Used for the
+    // extreme-temperature band on the species sidebar chart — represents
+    // "the typical hot/cold extreme experienced by cells where this species
+    // occurs". Returns 12 scalar values (not [p25,p50,p75]) — the band only
+    // needs one high and one low line per month.
+    const monthlyMedian = (arr, field) => {
+      if (!arr.length) return null;
+      return Array.from({ length: 12 }, (_, m) => {
+        const vals = arr.map(c => c[field]?.[m]).filter(v => v != null);
+        if (!vals.length) return null;
+        const s = [...vals].sort((a, b) => a - b);
+        return round1(pctile(s, 50));
+      });
+    };
+
     const makeMonthly = arr => arr.length ? {
-      tempMax: monthlyPct(arr, 'tempMax'),
-      tempMin: monthlyPct(arr, 'tempMin'),
-      precip:  monthlyPct(arr, 'precipMm'),
-      rh:      monthlyPct(arr, 'rhMean'),
+      tempMax:   monthlyPct(arr, 'tempMax'),
+      tempMin:   monthlyPct(arr, 'tempMin'),
+      // NEW: median (across cells) of each cell's per-month p90 daily-high
+      // and p10 daily-low. These drive the extreme-range band on the chart —
+      // shows "what extremes the species actually deals with in its native
+      // range" beyond the within-cell-month-average envelope above.
+      tempMaxHi: monthlyMedian(arr, 'tempMaxHi'),
+      tempMinLo: monthlyMedian(arr, 'tempMinLo'),
+      precip:    monthlyPct(arr, 'precipMm'),
+      rh:        monthlyPct(arr, 'rhMean'),
     } : null;
 
     // Köppen zone distribution sorted by count
