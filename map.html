@@ -665,6 +665,146 @@ html, body {
 .kp-code { font-family: 'JetBrains Mono', monospace; font-size: 16px; font-weight: 500; color: var(--text-primary); }
 .kp-desc { font-size: 12px; color: var(--text-primary); margin-bottom: 3px; }
 .kp-group { font-size: 10px; text-transform: uppercase; letter-spacing: 0.07em; color: var(--text-muted); }
+/* ─── "Find species for this location" feature ───────────────────── */
+.find-species-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  width: 100%;
+  margin: 14px 0 6px;
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  border-radius: 5px;
+  padding: 9px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.06s;
+}
+.find-species-btn:hover  { background: rgba(63,185,80,0.18); }
+.find-species-btn:active { transform: translateY(1px); }
+.find-species-btn .find-species-icon {
+  width: 14px; height: 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+}
+
+.match-panel-header { margin-bottom: 8px; }
+.match-panel-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 14px;
+  line-height: 1.4;
+}
+.match-back-btn {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 4px 0 8px;
+}
+.match-back-btn:hover { color: var(--accent); }
+
+.match-tier-group { margin-top: 10px; }
+.match-tier-group > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+  user-select: none;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-primary);
+}
+.match-tier-group > summary::-webkit-details-marker { display: none; }
+.match-tier-group > summary::after {
+  content: '▾';
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 12px;
+  transition: transform 0.18s;
+}
+.match-tier-group[open] > summary::after { transform: rotate(180deg); }
+.match-tier-group > summary .match-tier-count {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.match-tier-group[open] > summary .match-tier-count { margin-left: 0; }
+
+.match-tier-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.match-tier-excellent  .match-tier-dot { background: #3fb950; }
+.match-tier-possible   .match-tier-dot { background: #d29922; }
+.match-tier-marginal   .match-tier-dot { background: #d97706; }
+.match-tier-unsuitable .match-tier-dot { background: #f85149; }
+
+.match-card-list { padding: 6px 0 4px; display: flex; flex-direction: column; gap: 4px; }
+.match-card {
+  display: flex;
+  gap: 9px;
+  padding: 7px 8px;
+  border-radius: 5px;
+  cursor: pointer;
+  transition: background 0.12s;
+  align-items: center;
+}
+.match-card:hover { background: rgba(255,255,255,0.04); }
+.match-card-photo {
+  width: 38px; height: 38px;
+  border-radius: 4px;
+  background: var(--bg-elevated);
+  object-fit: cover;
+  flex-shrink: 0;
+}
+.match-card-body { flex: 1; min-width: 0; }
+.match-card-name {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--text-primary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.match-card-common {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.match-card-reason {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.35;
+}
+.match-dormancy-note {
+  background: rgba(210, 153, 34, 0.08);
+  border-left: 2px solid #d29922;
+  border-radius: 0 4px 4px 0;
+  padding: 7px 10px;
+  font-size: 10.5px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin: 10px 0 4px;
+}
+.match-dormancy-note strong { color: var(--text-primary); }
+
 .kp-climate-btn {
   display: block; width: 100%;
   margin-top: 9px;
@@ -4096,6 +4236,200 @@ function applyLapseRateCorrection(normals, terrainElev) {
   return { ...normals, tempMax: normals.tempMax.map(adj), tempMin: normals.tempMin.map(adj) };
 }
 
+// ─── Climate-match feature ─────────────────────────────────────────────
+// "Find species that grow in a similar native climate to this location."
+// Given the user's location normals and Köppen zone, score every species in
+// inatSpeciesData against the user's climate using:
+//   - Cold survival (critical): user's coldest-month mean min vs species'
+//     annual-min p10 (the cold extreme of the species' observed range).
+//     Strict mode: PASS if user >= p10; MARGINAL within 2°C; FAIL otherwise.
+//   - Heat tolerance (important): user's hottest-month mean max vs species'
+//     annual-max p90 (high tail). PASS if user <= p90 + 5°C; MARGINAL otherwise.
+//   - Köppen overlap (bonus): if user's Köppen zone is ≥5% of the species'
+//     occupied cells, treat as a strong "this just grows here" signal.
+//   - Envelope distance (ranking): |user_cold - species_p50| + |user_hot -
+//     species_p50|, normalized by 10°C.
+//
+// Tier assignment:
+//   excellent  — passes cold AND heat AND (Köppen match OR low distance)
+//   possible   — passes cold AND heat
+//   marginal   — marginal on cold OR heat
+//   unsuitable — fails cold (won't survive winter)
+//
+// Hemisphere is irrelevant for annual stats (coldest/hottest seasonal extreme
+// is the same idea regardless of which calendar months they fall in).
+function matchSpeciesToLocation(userNormals, userKoppen) {
+  if (!inatSpeciesData) return [];
+  const userTmin = userNormals.tempMin?.filter(v => v != null) || [];
+  const userTmax = userNormals.tempMax?.filter(v => v != null) || [];
+  if (!userTmin.length || !userTmax.length) return [];
+  const userColdMonth = Math.min(...userTmin);
+  const userHotMonth  = Math.max(...userTmax);
+
+  const results = [];
+  for (const [taxonIdStr, species] of Object.entries(inatSpeciesData)) {
+    const stats = species.stats;
+    if (!stats?.tempMin || !stats?.tempMax) continue;
+    const spColdP10 = stats.tempMin.p10;
+    const spColdP50 = stats.tempMin.p50;
+    const spHotP90  = stats.tempMax.p90;
+    const spHotP50  = stats.tempMax.p50;
+    if (spColdP10 == null || spHotP90 == null) continue;
+
+    // Cold survival check (strict: p10 of cold extreme + 2°C tolerance band)
+    let coldTier;
+    if      (userColdMonth >= spColdP10)        coldTier = 'pass';
+    else if (userColdMonth >= spColdP10 - 2)    coldTier = 'marginal';
+    else                                         coldTier = 'fail';
+
+    // Heat tolerance check (5°C buffer above p90)
+    const heatTier = userHotMonth <= spHotP90 + 5 ? 'pass' : 'marginal';
+
+    // Köppen overlap
+    const koppenList  = species.koppen || [];
+    const koppenTotal = koppenList.reduce((s, [, c]) => s + c, 0);
+    const found       = userKoppen ? koppenList.find(([z]) => z === userKoppen) : null;
+    const userKoppenPct = (found && koppenTotal) ? found[1] / koppenTotal : 0;
+    const koppenMatch   = userKoppenPct >= 0.05;
+
+    // Envelope distance (lower = better — used to rank within tiers)
+    const score = Math.abs(userColdMonth - spColdP50) / 10
+                + Math.abs(userHotMonth  - spHotP50)  / 10;
+
+    let tier;
+    if      (coldTier === 'fail')                                   tier = 'unsuitable';
+    else if (coldTier === 'marginal' || heatTier === 'marginal')    tier = 'marginal';
+    else if (koppenMatch || score < 1.0)                            tier = 'excellent';
+    else                                                             tier = 'possible';
+
+    // Concise reason (1-2 chips per card)
+    const reasonParts = [];
+    if (coldTier === 'fail') {
+      reasonParts.push(`Too cold for outdoors: native limit ${spColdP10.toFixed(0)}°C, you reach ${userColdMonth.toFixed(0)}°C`);
+    } else if (coldTier === 'marginal') {
+      reasonParts.push(`Cold-marginal: provide winter protection`);
+    }
+    if (heatTier === 'marginal') {
+      reasonParts.push(`Heat-marginal: summer ${userHotMonth.toFixed(0)}°C exceeds ${spHotP90.toFixed(0)}°C native`);
+    }
+    if (koppenMatch && coldTier !== 'fail') {
+      reasonParts.push(`Same climate zone (${Math.round(userKoppenPct * 100)}% of native range)`);
+    }
+    if (!reasonParts.length && tier === 'excellent') {
+      reasonParts.push(`Climate matches native range (${spColdP50.toFixed(0)}–${spHotP50.toFixed(0)}°C typical)`);
+    } else if (!reasonParts.length && tier === 'possible') {
+      reasonParts.push(`Within climate envelope; not the typical range`);
+    }
+
+    results.push({
+      taxonId: +taxonIdStr,
+      species,
+      tier,
+      score,
+      reasonParts,
+    });
+  }
+
+  const tierOrder = { excellent: 0, possible: 1, marginal: 2, unsuitable: 3 };
+  results.sort((a, b) => (tierOrder[a.tier] - tierOrder[b.tier]) || (a.score - b.score));
+  return results;
+}
+
+// Render the match results in the side panel. Replaces the location panel
+// content. Includes a back button to return to the location view, and each
+// species card opens its own sidebar on click.
+function renderSpeciesMatchPanel(state, matches) {
+  const { result, lat, lng } = state;
+  const locName = result._name || result.display_name.split(',')[0];
+
+  const groups = {
+    excellent:  { label: 'Excellent fit',         items: [] },
+    possible:   { label: 'Possible',              items: [] },
+    marginal:   { label: 'Marginal',              items: [] },
+    unsuitable: { label: "Won't survive outdoors", items: [] },
+  };
+  for (const m of matches) groups[m.tier].items.push(m);
+
+  const cardHtml = (m) => {
+    const s = m.species;
+    const photo = s.photo_url || '';
+    const common = s.common_name ? esc(s.common_name) : '';
+    const reason = m.reasonParts.length ? esc(m.reasonParts[0]) : '';
+    return `
+      <div class="match-card" data-taxon-id="${m.taxonId}" data-taxon-name="${esc(s.scientific_name)}">
+        ${photo ? `<img class="match-card-photo" src="${esc(photo)}" loading="lazy" onerror="this.style.background='var(--bg-elevated)';this.src='';">` : '<div class="match-card-photo"></div>'}
+        <div class="match-card-body">
+          <div class="match-card-name">${esc(s.scientific_name)}</div>
+          ${common ? `<div class="match-card-common">${common} · ${esc(s.genus)}</div>` : `<div class="match-card-common">${esc(s.genus)}</div>`}
+          ${reason ? `<div class="match-card-reason">${reason}</div>` : ''}
+        </div>
+      </div>`;
+  };
+
+  const groupHtml = (key, group, isOpen) => {
+    if (!group.items.length) return '';
+    return `
+      <details class="match-tier-group match-tier-${key}"${isOpen ? ' open' : ''}>
+        <summary>
+          <span class="match-tier-dot"></span>
+          <span>${group.label}</span>
+          <span class="match-tier-count">${group.items.length}</span>
+        </summary>
+        <div class="match-card-list">${group.items.slice(0, 50).map(cardHtml).join('')}</div>
+        ${group.items.length > 50 ? `<div class="match-card-reason" style="padding:4px 8px;font-style:italic">…${group.items.length - 50} more not shown</div>` : ''}
+      </details>`;
+  };
+
+  document.getElementById('panel-content').innerHTML = `
+    <button class="match-back-btn" id="match-back-btn">← Back to ${esc(locName)}</button>
+    <div class="match-panel-header">
+      <div class="p-species-name">Species matched to ${esc(locName)}</div>
+      <div class="match-panel-subtitle">
+        ${matches.length} species ranked by climate suitability for year-round outdoor cultivation.
+        Cold-tolerance is the critical filter — heat is secondary.
+      </div>
+    </div>
+    <div class="match-dormancy-note">
+      <strong>Note on dormancy:</strong> Many species from temperate climates need a cold winter
+      to thrive. If your location is warmer than the species' native winter, you may need to
+      provide artificial dormancy (refrigeration) even when the temperature match looks fine.
+      Check individual species pages for specifics.
+    </div>
+    ${groupHtml('excellent',  groups.excellent,  true)}
+    ${groupHtml('possible',   groups.possible,   true)}
+    ${groupHtml('marginal',   groups.marginal,   false)}
+    ${groupHtml('unsuitable', groups.unsuitable, false)}
+  `;
+
+  // Wire interactions
+  document.getElementById('match-back-btn')?.addEventListener('click', () => buildLocationPanel(state));
+  document.querySelectorAll('.match-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const tid  = +card.dataset.taxonId;
+      const name = card.dataset.taxonName;
+      if (tid && name) openSpeciesSidebar(tid, name);
+    });
+  });
+}
+
+// Button click handler. Loads species data if needed, runs matching, renders.
+async function runSpeciesMatch(state) {
+  const panel = document.getElementById('panel-content');
+  if (!panel) return;
+  // Loading state
+  panel.innerHTML = `
+    <div class="climate-pending" style="margin-top:18px">Loading species data and matching to your climate…</div>
+  `;
+  const data = await loadSpeciesData();
+  if (!data) {
+    panel.innerHTML = `<div class="climate-pending" style="margin-top:18px">Species climate data not available. Run the monthly data refresh workflow to generate it.</div>`;
+    return;
+  }
+  const userKoppen = getKoppenAt(state.lat, state.lng);
+  const matches    = matchSpeciesToLocation(state.normals, userKoppen);
+  renderSpeciesMatchPanel(state, matches);
+}
+
 function buildLocationPanel(state) {
   const { result, lat, lng, normals, loading, elevInfo } = state;
   const name = result._name || result.display_name.split(',')[0];
@@ -4172,6 +4506,16 @@ function buildLocationPanel(state) {
     climateHtml = `<div class="climate-pending">Climate data unavailable for this location</div>`;
   }
 
+  // "Find matching species" is only meaningful once climate is loaded — we
+  // need normals to run the algorithm. Hidden during loading; shown when
+  // both climate normals and a valid location are available.
+  const findSpeciesBtnHtml = (!loading && normals && normals.tempMax && normals.tempMin)
+    ? `<button class="find-species-btn" id="find-species-btn" title="Find carnivorous plant species that grow in a similar climate to this location">
+         <span class="find-species-icon">${BMG_ICONS.leaf}</span>
+         Find species suited to this climate
+       </button>`
+    : '';
+
   document.getElementById('panel-content').innerHTML = `
     <div class="p-species-name">${esc(name)}</div>
     ${subLabel ? `<div class="p-common-name">${esc(subLabel)}</div>` : ''}
@@ -4180,10 +4524,14 @@ function buildLocationPanel(state) {
     <div class="section-divider"></div>
     <div class="section-label">Climate (2014–2023 avg)</div>
     ${climateHtml}
+    ${findSpeciesBtnHtml}
     ${!loading ? buildSoilSectionHtml(true) : ''}
   `;
 
   document.getElementById('side-panel').classList.add('open');
+
+  // Wire the climate-match button (only present when climate has loaded)
+  document.getElementById('find-species-btn')?.addEventListener('click', () => runSpeciesMatch(state));
 
   // Fetch soil data asynchronously and populate the section once data arrives
   if (!loading) loadAndRenderSoilSection(lat, lng);
