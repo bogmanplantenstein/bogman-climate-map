@@ -1700,24 +1700,26 @@ html, body {
   background: rgba(255, 255, 255, 0.05);
 }
 .wrb-legend-item.selected, .legend-row.selected {
-  background: rgba(63, 185, 80, 0.13);
+  background: rgba(63, 185, 80, 0.22);
+  box-shadow: inset 0 0 0 1px var(--accent);
 }
 .wrb-legend-item.selected .wrb-swatch,
 .legend-row.selected .legend-swatch {
-  outline: 1.5px solid var(--accent);
-  outline-offset: -1px;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 .wrb-legend-item.selected .wrb-name,
 .legend-row.selected .legend-code,
 .legend-row.selected .legend-desc {
-  color: var(--accent);
-  font-weight: 600;
+  color: var(--text-primary);
+  font-weight: 700;
 }
-/* When a filter is active, dim non-selected items so the eye is drawn to
-   the selected ones */
+/* When a filter is active, dim non-selected items strongly so the eye is
+   drawn unambiguously to the selected ones. Selected items keep their
+   bold styling and stand out clearly. */
 .wrb-legend-grid.has-filter .wrb-legend-item:not(.selected),
 .koppen-legend-panel.has-filter .legend-row:not(.selected) {
-  opacity: 0.45;
+  opacity: 0.32;
 }
 
 /* "Clear filter (N)" button shown above each legend's items when any
@@ -2316,38 +2318,43 @@ const SOIL_LAYERS = {
 
 // WRB Reference Soil Group integer codes → display info
 // Codes 1–30, alphabetical, matching SoilGrids MostProbable raster values.
+// Colours updated 2026-05 to match ISRIC's official SoilGrids WMS palette
+// (extracted from https://maps.isric.org/mapserv?map=/map/wrb.map&SERVICE=WMS&
+// REQUEST=GetLegendGraphic&LAYER=MostProbable). This way the legend swatches,
+// species sidebar chips, on-click popup, and the rendered WMS tiles all use
+// the same colours so users can visually match between map and legend.
 const WRB_GROUPS = {
-  1:  { name: 'Acrisols',     desc: 'Highly weathered, acidic tropical soils',   color: '#FD9B5E' },
-  2:  { name: 'Albeluvisols', desc: 'Pale, eluviated soils',                     color: '#EDD5B0' },
-  3:  { name: 'Alisols',      desc: 'Acidic, clay-rich soils',                   color: '#F0B87A' },
-  4:  { name: 'Andosols',     desc: 'Volcanic ash soils',                        color: '#7B5726' },
-  5:  { name: 'Arenosols',    desc: 'Sandy, low-nutrient soils',                 color: '#F5DEB3' },
-  6:  { name: 'Calcisols',    desc: 'Calcium carbonate-rich soils',              color: '#F0EBA0' },
-  7:  { name: 'Cambisols',    desc: 'Moderately developed soils',                color: '#B8C6A3' },
-  8:  { name: 'Chernozems',   desc: 'Deep, fertile black grassland soils',       color: '#4A3220' },
-  9:  { name: 'Cryosols',     desc: 'Permafrost-affected frozen soils',          color: '#DDE3EA' },
-  10: { name: 'Durisols',     desc: 'Silica-cemented soils',                     color: '#F5C896' },
-  11: { name: 'Ferralsols',   desc: 'Deeply weathered red tropical soils',       color: '#C8581E' },
-  12: { name: 'Fluvisols',    desc: 'Young alluvial (floodplain) soils',         color: '#8DB4DA' },
-  13: { name: 'Gleysols',     desc: 'Waterlogged mineral soils (wetlands)',      color: '#7FBFBF' },
-  14: { name: 'Gypsisols',    desc: 'Gypsum-rich arid soils',                   color: '#E8D5A3' },
-  15: { name: 'Histosols',    desc: 'Peat soils — high organic content',         color: '#5B3C11' },
-  16: { name: 'Kastanozems',  desc: 'Brown, moderately fertile soils',           color: '#8A6845' },
-  17: { name: 'Leptosols',    desc: 'Thin soils over rock or gravel',            color: '#D3C9C1' },
-  18: { name: 'Lixisols',     desc: 'Tropical clay-accumulation soils',          color: '#E8A87C' },
-  19: { name: 'Luvisols',     desc: 'Clay-enriched subsoil soils',               color: '#9AB87A' },
-  20: { name: 'Nitisols',     desc: 'Friable, structured clay soils',            color: '#C17C55' },
-  21: { name: 'Phaeozems',    desc: 'Dark, humus-rich fertile soils',            color: '#6E5040' },
-  22: { name: 'Planosols',    desc: 'Seasonally waterlogged, eluviated soils',   color: '#B5C4C1' },
-  23: { name: 'Plinthosols',  desc: 'Iron-rich, hardening tropical soils',       color: '#C97E7E' },
-  24: { name: 'Podzols',      desc: 'Acidic sandy soils with bleached layer',    color: '#CCCCCC' },
-  25: { name: 'Regosols',     desc: 'Weakly developed soils on loose material',  color: '#E2CFBE' },
-  26: { name: 'Solonchaks',   desc: 'Salt-accumulating soils',                   color: '#E8E8A0' },
-  27: { name: 'Solonetz',     desc: 'Sodium-rich alkaline soils',                color: '#D6C870' },
-  28: { name: 'Stagnosols',   desc: 'Seasonally waterlogged stagnant soils',     color: '#7F9B8A' },
+  1:  { name: 'Acrisols',     desc: 'Highly weathered, acidic tropical soils',   color: '#F7991D' },
+  2:  { name: 'Albeluvisols', desc: 'Pale, eluviated soils',                     color: '#9B9D57' },
+  3:  { name: 'Alisols',      desc: 'Acidic, clay-rich soils',                   color: '#FAF7C0' },
+  4:  { name: 'Andosols',     desc: 'Volcanic ash soils',                        color: '#ED3A33' },
+  5:  { name: 'Arenosols',    desc: 'Sandy, low-nutrient soils',                 color: '#F7D8AC' },
+  6:  { name: 'Calcisols',    desc: 'Calcium carbonate-rich soils',              color: '#FFEE00' },
+  7:  { name: 'Cambisols',    desc: 'Moderately developed soils',                color: '#FECD67' },
+  8:  { name: 'Chernozems',   desc: 'Deep, fertile black grassland soils',       color: '#E2C837' },
+  9:  { name: 'Cryosols',     desc: 'Permafrost-affected frozen soils',          color: '#756A92' },
+  10: { name: 'Durisols',     desc: 'Silica-cemented soils',                     color: '#EFE6BF' },
+  11: { name: 'Ferralsols',   desc: 'Deeply weathered red tropical soils',       color: '#F6872D' },
+  12: { name: 'Fluvisols',    desc: 'Young alluvial (floodplain) soils',         color: '#01B0EF' },
+  13: { name: 'Gleysols',     desc: 'Waterlogged mineral soils (wetlands)',      color: '#9291B9' },
+  14: { name: 'Gypsisols',    desc: 'Gypsum-rich arid soils',                    color: '#FBF6A5' },
+  15: { name: 'Histosols',    desc: 'Peat soils — high organic content',         color: '#8B898A' },
+  16: { name: 'Kastanozems',  desc: 'Brown, moderately fertile soils',           color: '#C99580' },
+  17: { name: 'Leptosols',    desc: 'Thin soils over rock or gravel',            color: '#D5D6D8' },
+  18: { name: 'Lixisols',     desc: 'Tropical clay-accumulation soils',          color: '#F9BDBF' },
+  19: { name: 'Luvisols',     desc: 'Clay-enriched subsoil soils',               color: '#F48385' },
+  20: { name: 'Nitisols',     desc: 'Friable, structured clay soils',            color: '#F7A082' },
+  21: { name: 'Phaeozems',    desc: 'Dark, humus-rich fertile soils',            color: '#BA6850' },
+  22: { name: 'Planosols',    desc: 'Seasonally waterlogged, eluviated soils',   color: '#F59354' },
+  23: { name: 'Plinthosols',  desc: 'Iron-rich, hardening tropical soils',       color: '#6F0E41' },
+  24: { name: 'Podzols',      desc: 'Acidic sandy soils with bleached layer',    color: '#0DAF63' },
+  25: { name: 'Regosols',     desc: 'Weakly developed soils on loose material',  color: '#FFE2AE' },
+  26: { name: 'Solonchaks',   desc: 'Salt-accumulating soils',                   color: '#ED3994' },
+  27: { name: 'Solonetz',     desc: 'Sodium-rich alkaline soils',                color: '#F4CDE2' },
+  28: { name: 'Stagnosols',   desc: 'Seasonally waterlogged stagnant soils',     color: '#40C1EB' },
   // SoilGrids WRB uses 30 groups (alphabetical, codes 1–30). No Technosols.
-  29: { name: 'Umbrisols',    desc: 'Dark, acidic, humus-rich soils',            color: '#9B8070' },
-  30: { name: 'Vertisols',    desc: 'Shrink-swell clay soils',                   color: '#4A3728' },
+  29: { name: 'Umbrisols',    desc: 'Dark, acidic, humus-rich soils',            color: '#618F82' },
+  30: { name: 'Vertisols',    desc: 'Shrink-swell clay soils',                   color: '#9E567C' },
 };
 
 // Derived from WRB_GROUPS — maps soil group name strings returned by the
@@ -2415,15 +2422,21 @@ function clearKoppenFilter() { selectedKoppenCodes.clear(); persistKoppenFilter(
 //   3. Re-render both legends so the selected items + clear button show
 //   4. Rebuild the iNat marker index so observations re-filter
 function applyLegendFilters() {
-  // Köppen overlay re-render
+  // Köppen overlay re-render. updateColors() internally calls redraw() in
+  // newer georaster-layer versions, but on some versions cached tiles can
+  // persist with stale colours. Calling redraw() explicitly after ensures
+  // every tile is regenerated with the latest colour function.
   if (koppenLayer && typeof koppenLayer.updateColors === 'function') {
     koppenLayer.updateColors(koppenColorFn);
+    if (typeof koppenLayer.redraw === 'function') koppenLayer.redraw();
   }
-  // Soil WMS dimming (coarse — full layer; WMS doesn't support per-class).
-  // Only matters when a soil layer is active; when filter cleared, restore
-  // full opacity.
+  // Soil WMS — server-rendered, so we can't dim per-class. When a WRB
+  // filter is active we hide the overlay entirely (opacity 0). The
+  // observation pins + the legend's highlighted swatches carry the filter
+  // signal; trying to also dim the WMS just makes the colours clash with
+  // the basemap. When filter cleared, restore the normal 0.65 opacity.
   if (activeSoilLayer && soilWmsCache[activeSoilLayer]) {
-    soilWmsCache[activeSoilLayer].setOpacity(selectedWrbCodes.size > 0 ? 0.32 : 0.65);
+    soilWmsCache[activeSoilLayer].setOpacity(selectedWrbCodes.size > 0 ? 0 : 0.65);
   }
   // Re-render legends (they read selection state to show .selected + clear btn)
   updateSoilLegend(activeSoilLayer);
@@ -2938,18 +2951,24 @@ function koppenCodeFromProps(props) {
 // Hoisted so applyLegendFilters can pass it to koppenLayer.updateColors()
 // after the selectedKoppenCodes set changes. Closes over the live set so a
 // single function reference reflects current filter state on each evaluation.
+//
+// When a filter is active, non-selected zones return a UNIFORM dim grey
+// (not their own dimmed colour) — this avoids visible tile-edge artifacts
+// from per-pixel rgba blending and prevents the original Köppen colours
+// from clashing visually with the selected ones. Selected zones render in
+// full saturation so they stand out clearly against the dim background.
 function koppenColorFn(values) {
   const v = values[0];
   if (!v || v < 1 || v > 30) return null;
   const c = BECK_COLORS[v];
   if (!c) return null;
-  // When a Köppen filter is active, non-matching zones render at low opacity
-  // so the selected zones stand out. No filter (empty set) → normal full-
-  // saturation color for everything.
   if (selectedKoppenCodes.size === 0 || selectedKoppenCodes.has(v)) {
     return `rgb(${c[0]},${c[1]},${c[2]})`;
   }
-  return `rgba(${c[0]},${c[1]},${c[2]},0.15)`;
+  // Uniform dark grey for ALL non-selected zones. Matches the dark basemap
+  // tone so non-selected areas read as "muted background" without colour
+  // information that could distract from the selection.
+  return 'rgb(38,42,48)';
 }
 
 async function loadKoppen() {
@@ -3001,10 +3020,11 @@ function setSoilLayer(key) {
     );
   }
   soilWmsCache[key].addTo(map);
-  // Respect any active WRB legend filter: dim the layer overall so the
-  // observation filtering reads as the "primary signal" the user is
-  // interacting with.
-  soilWmsCache[key].setOpacity(selectedWrbCodes.size > 0 ? 0.32 : 0.65);
+  // Respect any active WRB legend filter. WMS tiles are server-rendered so
+  // we can't mask per-class — hide the whole layer (opacity 0) when a
+  // filter is active and rely on the observation pins + legend highlight
+  // for the filter signal. Restore normal 0.65 when no filter.
+  soilWmsCache[key].setOpacity(selectedWrbCodes.size > 0 ? 0 : 0.65);
   updateSoilLegend(key);
   // Refresh Soil-key button enabled/active state to reflect the new layer.
   window._bmgSoilLegendBtnSync?.();
@@ -3096,12 +3116,16 @@ function updateSoilLegend(key) {
 // Mixing &property=wrb into the properties request causes HTTP 500.
 
 async function fetchSoilData(lat, lng) {
+  // 15s timeout so a slow/stalled SoilGrids endpoint doesn't leave the popup
+  // showing "Loading…" indefinitely. AbortController aborts both requests.
+  const ctrl = new AbortController();
+  const timeoutId = setTimeout(() => ctrl.abort(), 15000);
   try {
     const coord = `lon=${lng.toFixed(4)}&lat=${lat.toFixed(4)}`;
     const [propsRes, classRes] = await Promise.all([
       fetch(`https://rest.isric.org/soilgrids/v2.0/properties/query?${coord}` +
-            `&property=phh2o&property=soc&property=nitrogen&property=sand&depth=0-5cm&value=mean`),
-      fetch(`https://rest.isric.org/soilgrids/v2.0/classification/query?${coord}&number_classes=1`),
+            `&property=phh2o&property=soc&property=nitrogen&property=sand&depth=0-5cm&value=mean`, { signal: ctrl.signal }),
+      fetch(`https://rest.isric.org/soilgrids/v2.0/classification/query?${coord}&number_classes=1`, { signal: ctrl.signal }),
     ]);
 
     // Parse continuous properties
@@ -3138,6 +3162,7 @@ async function fetchSoilData(lat, lng) {
     if (ph == null && soc == null && nitrogen == null && sand == null && wrb == null) return null;
     return { wrb, ph, soc, nitrogen, sand };
   } catch { return null; }
+  finally { clearTimeout(timeoutId); }
 }
 
 function renderSoilBody(data) {
@@ -3423,12 +3448,16 @@ function showKoppenPopup(latlng) {
 // Keyed by lat/lng rounded to ~100m so repeat clicks on the same area are
 // instant. NOT persisted (clears on reload) — different from the 0.5° grid
 // cache in soilCacheData / lsSoilGet which is for broad-area lookups.
+// IMPORTANT: only cache successful responses. Caching a null/failed fetch
+// would prevent the user from ever getting data for that spot in this
+// session (e.g. transient SoilGrids API hiccup → permanent "unavailable"
+// until reload). Failed fetches return null but don't poison the cache.
 const popupSoilCache = new Map();
 async function fetchExactPointSoil(lat, lng) {
   const k = `${lat.toFixed(3)}:${lng.toFixed(3)}`;
   if (popupSoilCache.has(k)) return popupSoilCache.get(k);
   const data = await fetchSoilData(lat, lng);
-  popupSoilCache.set(k, data);
+  if (data) popupSoilCache.set(k, data);
   return data;
 }
 
@@ -3451,7 +3480,10 @@ async function showSoilPopup(latlng) {
   if (!popup.isOpen()) return;
 
   if (!data) {
-    popup.setContent('<div class="soil-popup">No soil data for this location (ocean, glacier, or outside SoilGrids coverage).</div>');
+    // null can mean ocean/glacier (genuine no-data) OR a transient network
+    // failure. We don't cache nulls (so retries work) and the message
+    // acknowledges both possibilities without being alarming.
+    popup.setContent('<div class="soil-popup">No soil data returned for this point. If this is over land, click again to retry — the SoilGrids server may have been slow.</div>');
     return;
   }
 
