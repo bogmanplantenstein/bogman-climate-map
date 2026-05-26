@@ -752,7 +752,44 @@ html, body {
 .match-tier-marginal   .match-tier-dot { background: #d97706; }
 .match-tier-unsuitable .match-tier-dot { background: #f85149; }
 
-.match-card-list { padding: 6px 0 4px; display: flex; flex-direction: column; gap: 4px; }
+.match-genus-list { padding: 4px 0 2px; }
+.match-genus-group { margin: 4px 0 0 4px; }
+.match-genus-group > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 0 4px 2px;
+  user-select: none;
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+}
+.match-genus-group > summary::-webkit-details-marker { display: none; }
+.match-genus-group > summary::before {
+  content: '▸';
+  font-size: 10px;
+  color: var(--text-muted);
+  width: 10px;
+  transition: transform 0.16s;
+}
+.match-genus-group[open] > summary::before { transform: rotate(90deg); }
+.match-genus-group > summary .match-genus-name {
+  color: var(--text-primary);
+  font-weight: 500;
+  font-style: italic;
+}
+.match-genus-group > summary .match-genus-count {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--text-muted);
+  background: var(--bg-elevated);
+  padding: 1px 6px;
+  border-radius: 8px;
+}
+
+.match-card-list { padding: 4px 0 4px 18px; display: flex; flex-direction: column; gap: 4px; }
 .match-card {
   display: flex;
   gap: 9px;
@@ -2397,6 +2434,24 @@ let soilLegendVisible = (() => { try { return localStorage.getItem('bmg_soil_leg
 const selectedWrbCodes    = new Set((() => { try { return JSON.parse(localStorage.getItem('bmg_wrb_filter')    || '[]'); } catch { return []; } })());
 const selectedKoppenCodes = new Set((() => { try { return JSON.parse(localStorage.getItem('bmg_koppen_filter') || '[]'); } catch { return []; } })());
 
+// ── Side-panel navigation history ────────────────────────────────────
+// Each entry is the view to RETURN to from the current one, so the top of
+// the stack is "where back goes" (label shown on the back button + restore
+// function to re-render that view). Pushed by forward navigations, popped
+// by clicking back. Cleared when the panel is closed or a new root entry
+// (search, cluster pin click) starts a fresh navigation chain.
+const navStack = [];
+function navPush(entry)    { navStack.push(entry); }
+function navGoBack()       { const e = navStack.pop(); if (e?.restore) e.restore(); }
+function navClear()        { navStack.length = 0; }
+function navBackBtnHtml() {
+  if (!navStack.length) return '';
+  return `<button class="inat-panel-back" id="nav-back-btn" title="Go back to the previous view">← ${esc(navStack[navStack.length - 1].label)}</button>`;
+}
+function wireNavBackBtn()  {
+  document.getElementById('nav-back-btn')?.addEventListener('click', navGoBack);
+}
+
 function persistWrbFilter()    { try { localStorage.setItem('bmg_wrb_filter',    JSON.stringify([...selectedWrbCodes]));    } catch {} }
 function persistKoppenFilter() { try { localStorage.setItem('bmg_koppen_filter', JSON.stringify([...selectedKoppenCodes])); } catch {} }
 
@@ -3698,6 +3753,7 @@ function closePanel() {
   clearRegionHighlight();
   setUrlParam('taxon', null);
   if (climateChart) { climateChart.destroy(); climateChart = null; }
+  navClear();   // dropping the panel discards back-history
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4392,14 +4448,36 @@ function renderSpeciesMatchPanel(state, matches) {
         ${photo ? `<img class="match-card-photo" src="${esc(photo)}" loading="lazy" onerror="this.style.background='var(--bg-elevated)';this.src='';">` : '<div class="match-card-photo"></div>'}
         <div class="match-card-body">
           <div class="match-card-name">${esc(s.scientific_name)}</div>
-          ${common ? `<div class="match-card-common">${common} · ${esc(s.genus)}</div>` : `<div class="match-card-common">${esc(s.genus)}</div>`}
+          ${common ? `<div class="match-card-common">${common}</div>` : ''}
           ${reason ? `<div class="match-card-reason">${reason}</div>` : ''}
         </div>
       </div>`;
   };
 
+  // Group items by genus within each tier; render genus subgroups
+  // collapsible so long lists are easy to scan.
+  const genusSubgroupHtml = (genus, items) => `
+    <details class="match-genus-group" open>
+      <summary>
+        <span class="match-genus-name">${esc(genus)}</span>
+        <span class="match-genus-count">${items.length}</span>
+      </summary>
+      <div class="match-card-list">${items.map(cardHtml).join('')}</div>
+    </details>`;
+
   const groupHtml = (key, group, isOpen) => {
     if (!group.items.length) return '';
+    // Bucket by genus (preserve within-genus score ordering — items are
+    // already sorted by score from matchSpeciesToLocation)
+    const byGenus = new Map();
+    for (const it of group.items) {
+      const g = it.species.genus || 'Unknown';
+      if (!byGenus.has(g)) byGenus.set(g, []);
+      byGenus.get(g).push(it);
+    }
+    // Sort genera alphabetically
+    const sortedGenera = [...byGenus.keys()].sort();
+    const subgroups = sortedGenera.map(g => genusSubgroupHtml(g, byGenus.get(g))).join('');
     return `
       <details class="match-tier-group match-tier-${key}"${isOpen ? ' open' : ''}>
         <summary>
@@ -4407,13 +4485,12 @@ function renderSpeciesMatchPanel(state, matches) {
           <span>${group.label}</span>
           <span class="match-tier-count">${group.items.length}</span>
         </summary>
-        <div class="match-card-list">${group.items.slice(0, 50).map(cardHtml).join('')}</div>
-        ${group.items.length > 50 ? `<div class="match-card-reason" style="padding:4px 8px;font-style:italic">…${group.items.length - 50} more not shown</div>` : ''}
+        <div class="match-genus-list">${subgroups}</div>
       </details>`;
   };
 
   document.getElementById('panel-content').innerHTML = `
-    <button class="match-back-btn" id="match-back-btn">← Back to ${esc(locName)}</button>
+    ${navBackBtnHtml()}
     <div class="match-panel-header">
       <div class="p-species-name">Species matched to ${esc(locName)}</div>
       <div class="match-panel-subtitle">
@@ -4422,10 +4499,8 @@ function renderSpeciesMatchPanel(state, matches) {
       </div>
     </div>
     <div class="match-dormancy-note">
-      <strong>Note on dormancy:</strong> Many species from temperate climates need a cold winter
-      to thrive. If your location is warmer than the species' native winter, you may need to
-      provide artificial dormancy (refrigeration) even when the temperature match looks fine.
-      Check individual species pages for specifics.
+      Temperate species may require winter dormancy, which can be provided artificially
+      (e.g. refrigeration) without directly matching the native climate.
     </div>
     ${groupHtml('excellent',  groups.excellent,  true)}
     ${groupHtml('possible',   groups.possible,   true)}
@@ -4434,20 +4509,34 @@ function renderSpeciesMatchPanel(state, matches) {
   `;
 
   // Wire interactions
-  document.getElementById('match-back-btn')?.addEventListener('click', () => buildLocationPanel(state));
+  wireNavBackBtn();
   document.querySelectorAll('.match-card').forEach(card => {
     card.addEventListener('click', () => {
       const tid  = +card.dataset.taxonId;
       const name = card.dataset.taxonName;
-      if (tid && name) openSpeciesSidebar(tid, name);
+      if (!tid || !name) return;
+      // Push the match panel as the back target so the species sidebar
+      // gets a "← Climate matches" back button.
+      navPush({
+        label:   'Climate matches',
+        restore: () => renderSpeciesMatchPanel(state, matches),
+      });
+      openSpeciesSidebar(tid, name);
     });
   });
 }
 
 // Button click handler. Loads species data if needed, runs matching, renders.
+// Pushes the location panel onto the nav stack so the match results show a
+// "← {locName}" back button that returns to the climate display.
 async function runSpeciesMatch(state) {
   const panel = document.getElementById('panel-content');
   if (!panel) return;
+  const locLabel = state.result?._name || state.result?.display_name?.split(',')[0] || 'Location';
+  navPush({
+    label:   locLabel,
+    restore: () => buildLocationPanel(state),
+  });
   // Loading state
   panel.innerHTML = `
     <div class="climate-pending" style="margin-top:18px">Loading species data and matching to your climate…</div>
@@ -4587,6 +4676,7 @@ function closeLocationPanel() {
   document.getElementById('side-panel').classList.remove('open');
   if (climateChart) { climateChart.destroy(); climateChart = null; }
   if (lightChart)   { lightChart.destroy();   lightChart   = null; }
+  navClear();   // dropping the panel discards back-history
 }
 
 window.openClimateAt = async function(lat, lng) {
@@ -4619,6 +4709,7 @@ window.openClimateAt = async function(lat, lng) {
   const token = {};
   const fakeResult = { _name: coordName, display_name: coordName, lat: String(lat), lon: String(lng), place_rank: 30, address: {} };
 
+  navClear();   // fresh location — drop any back-history from a prior view
   searchState = { result: fakeResult, lat, lng, normals: null, loading: true, token };
   searchPanelOpen = true;
   buildLocationPanel(searchState);
@@ -4743,6 +4834,7 @@ function selectSearchResult(result) {
   }).addTo(map);
   searchMarker.on('click', e => { L.DomEvent.stopPropagation(e); });
 
+  navClear();   // fresh location search — drop any back-history from a prior view
   searchState = { result, lat, lng, normals: null, loading: true };
   searchPanelOpen = true;
   buildLocationPanel(searchState);
@@ -4814,25 +4906,31 @@ async function openSpeciesSidebar(taxonId, taxonName) {
 
   openSidePanelForInat();
   document.getElementById('panel-content').innerHTML = `
+    ${navBackBtnHtml()}
     <div class="p-species-name" style="font-style:italic">${esc(taxonName)}</div>
     <div class="climate-pending" style="margin-top:16px">Loading species data…</div>
   `;
+  wireNavBackBtn();
 
   const data = await loadSpeciesData();
   if (inatSpeciesSidebarId !== taxonId) return; // user navigated away
   if (!data) {
     document.getElementById('panel-content').innerHTML = `
+      ${navBackBtnHtml()}
       <div class="p-species-name" style="font-style:italic">${esc(taxonName)}</div>
       <div style="color:var(--text-muted);font-size:12px;margin-top:16px">Species climate data not yet available. Run the monthly data refresh workflow to generate it.</div>
     `;
+    wireNavBackBtn();
     return;
   }
   const entry = data[taxonId];
   if (!entry) {
     document.getElementById('panel-content').innerHTML = `
+      ${navBackBtnHtml()}
       <div class="p-species-name" style="font-style:italic">${esc(taxonName)}</div>
       <div style="color:var(--text-muted);font-size:12px;margin-top:16px">No precomputed climate data for this species (fewer than 3 occupied 0.5° grid cells).</div>
     `;
+    wireNavBackBtn();
     return;
   }
   if (inatSpeciesSidebarId !== taxonId) return;
@@ -5014,6 +5112,7 @@ function buildSpeciesSidebarContent(entry) {
   // Assemble and inject
   const inatUrl = entry.inat_url || '';
   document.getElementById('panel-content').innerHTML = `
+    ${navBackBtnHtml()}
     <div class="sp-header">
       ${photoHtml}
       <div class="sp-header-text">
@@ -5029,6 +5128,7 @@ function buildSpeciesSidebarContent(entry) {
     ${wikiHtml}
     ${sampleNote}
   `;
+  wireNavBackBtn();
 
   // Load soil data — tries precomputed species-soil.json first, centroid fallback
   loadSpeciesSoilSection(entry.taxon_id, entry.scientific_name);
@@ -5680,6 +5780,7 @@ function handleWorkerMessage(e) {
   }
   if (type === 'leaves') {
     const { leaves, clusterId } = e.data;
+    navClear();   // fresh cluster — drop any back-history from a prior view
     inatNav.clusterLeaves = leaves;
     openSidePanelForInat();
     renderInatSpeciesList(leaves);
@@ -5916,24 +6017,23 @@ function renderInatSpeciesList(leaves) {
     </div>`;
   }).join('');
 
-  const backToSpecies = inatNav.speciesTaxonId
-    ? `<button class="inat-panel-back" id="inat-back-species-sidebar">← Species Info</button>`
-    : '';
-
   document.getElementById('panel-content').innerHTML = `
-    ${backToSpecies}
+    ${navBackBtnHtml()}
     <div class="inat-cluster-title">${leaves.length.toLocaleString()} iNat sightings</div>
     <div class="inat-cluster-sub">${coord} · ${sorted.length} species</div>
     <div class="inat-species-list">${rows}</div>
   `;
-
-  document.getElementById('inat-back-species-sidebar')?.addEventListener('click', () => {
-    openSpeciesSidebar(inatNav.speciesTaxonId, inatNav.speciesTaxonName);
-  });
+  wireNavBackBtn();
 
   document.querySelectorAll('.inat-species-row').forEach(el => {
     el.addEventListener('click', () => {
       inatNav.speciesName = el.dataset.species;
+      // Push the species list as the back target so the obs list can come
+      // back here.
+      navPush({
+        label:   'Species at location',
+        restore: () => renderInatSpeciesList(inatNav.clusterLeaves),
+      });
       renderInatObsList(inatNav.clusterLeaves.filter(lf => lf.properties.taxon_name === el.dataset.species));
     });
   });
@@ -5950,12 +6050,10 @@ function renderInatObsList(leaves, offset = 0) {
   const page    = leaves.slice(offset, offset + INAT_OBS_PAGE);
   const hasMore = leaves.length > offset + INAT_OBS_PAGE;
 
-  const backBtn = `<button class="inat-panel-back" id="inat-back-species">← Species list</button>`;
-
   const cards = page.map(lf => obsCard(lf)).join('');
 
   const content = `
-    ${backBtn}
+    ${navBackBtnHtml()}
     <div class="inat-cluster-title" style="font-style:italic">${esc(inatNav.speciesName)}</div>
     <div class="inat-cluster-sub">${leaves.length} sightings in this area</div>
     <div class="inat-obs-list" id="inat-obs-list">${cards}</div>
@@ -5964,6 +6062,7 @@ function renderInatObsList(leaves, offset = 0) {
 
   if (offset === 0) {
     document.getElementById('panel-content').innerHTML = content;
+    wireNavBackBtn();
   } else {
     document.getElementById('inat-obs-list').insertAdjacentHTML('beforeend', cards);
     document.getElementById('inat-load-more')?.remove();
@@ -5974,13 +6073,16 @@ function renderInatObsList(leaves, offset = 0) {
   }
 
   // Wire events
-  document.getElementById('inat-back-species')?.addEventListener('click', () => {
-    renderInatSpeciesList(inatNav.clusterLeaves);
-  });
   document.querySelectorAll('.inat-obs-card').forEach(card => {
     card.addEventListener('click', () => {
       const idx = parseInt(card.dataset.idx);
       inatNav.obsFeature = leaves[idx];
+      // Push the obs list as the back target so the obs detail can come
+      // back here. Capture leaves + offset to preserve scroll context.
+      navPush({
+        label:   `Sightings of ${inatNav.speciesName}`,
+        restore: () => renderInatObsList(leaves, 0),
+      });
       openInatObsPanel(leaves[idx]);
     });
   });
@@ -6034,16 +6136,12 @@ function openInatObsPanel(feature) {
     koppenBadge = `<span class="badge badge-koppen" style="color:rgb(${r},${g},${b});border-color:rgba(${r},${g},${b},0.3);background:rgba(${r},${g},${b},0.1)">${zone.code}</span>`;
   }
 
-  const backBtn = inatNav.clusterLeaves
-    ? `<button class="inat-panel-back" id="inat-back-obs">← ${inatNav.speciesName ? 'Sightings' : 'Species list'}</button>`
-    : '';
-
   const coordStr = obscured
     ? `~${p.lat.toFixed(2)}, ${p.lng.toFixed(2)} (obscured)`
     : `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`;
 
   document.getElementById('panel-content').innerHTML = `
-    ${backBtn}
+    ${navBackBtnHtml()}
     <div class="p-species-name">${esc(p.taxon_name)}</div>
     ${p.common_name ? `<div class="p-common-name">${esc(p.common_name)}</div>` : ''}
     <div class="p-location">${coordStr}</div>
@@ -6088,15 +6186,7 @@ function openInatObsPanel(feature) {
     </details>
   `;
 
-  document.getElementById('inat-back-obs')?.addEventListener('click', () => {
-    if (climateChart) { climateChart.destroy(); climateChart = null; }
-    if (lightChart)   { lightChart.destroy();   lightChart   = null; }
-    if (inatNav.speciesName && inatNav.clusterLeaves) {
-      renderInatObsList(inatNav.clusterLeaves.filter(lf => lf.properties.taxon_name === inatNav.speciesName));
-    } else if (inatNav.clusterLeaves) {
-      renderInatSpeciesList(inatNav.clusterLeaves);
-    }
-  });
+  wireNavBackBtn();
 
   // Lazy-load climate data the first time that section is opened
   let climateLoaded = false;
