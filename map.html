@@ -4033,7 +4033,9 @@ function buildClimateChart(cn) {
             label(ctx) {
               if (ctx.dataset.label.includes('Temp'))
                 return `${ctx.dataset.label}: ${toDisplay(ctx.raw, tempUnit)}`;
-              return `${ctx.dataset.label}: ${ctx.raw}mm`;
+              // Precipitation: nearest integer mm is plenty for cultivation
+              // planning; decimals add noise without information.
+              return `${ctx.dataset.label}: ${ctx.raw != null ? Math.round(ctx.raw) : '—'}mm`;
             }
           }
         }
@@ -4047,7 +4049,7 @@ function buildClimateChart(cn) {
         yPrecip: {
           type: 'linear', position: 'right',
           grid: { drawOnChartArea: false },
-          ticks: { color: 'rgba(80,160,240,0.65)', font: { size: 10 }, callback: v => v+'mm' }
+          ticks: { color: 'rgba(80,160,240,0.65)', font: { size: 10 }, callback: v => Math.round(v)+'mm' }
         },
         x: {
           grid: { color: 'rgba(255,255,255,0.05)' },
@@ -5324,7 +5326,9 @@ function buildSpeciesClimateChart(monthly) {
           filter: item => !item.dataset.label.startsWith('_'),
           callbacks: {
             label(ctx) {
-              if (ctx.dataset.label === 'Precip') return `Precip: ${ctx.raw != null ? ctx.raw + 'mm' : '—'}`;
+              // Nearest mm is plenty for cultivation guidance; decimals add
+              // noise without information.
+              if (ctx.dataset.label === 'Precip') return `Precip: ${ctx.raw != null ? Math.round(ctx.raw) + 'mm' : '—'}`;
               return `${ctx.dataset.label}: ${toDisplay(ctx.raw, tempUnit)}`;
             }
           }
@@ -5339,7 +5343,7 @@ function buildSpeciesClimateChart(monthly) {
         yPrecip: {
           type: 'linear', position: 'right',
           grid: { drawOnChartArea: false },
-          ticks: { color: 'rgba(80,160,240,0.65)', font: { size: 10 }, callback: v => v + 'mm' }
+          ticks: { color: 'rgba(80,160,240,0.65)', font: { size: 10 }, callback: v => Math.round(v) + 'mm' }
         },
         x: {
           grid: { color: 'rgba(255,255,255,0.05)' },
