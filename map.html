@@ -1547,6 +1547,58 @@ html, body {
 }
 .wrb-legend-item[title]:hover .wrb-name { color: var(--accent); }
 
+/* ── Interactive legend (click-to-filter) ────────────────────────── */
+/* Both WRB items and Köppen rows are clickable filters. Hover + selected
+   states provide affordance. */
+.wrb-legend-item, .legend-row {
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: background 0.12s;
+}
+.wrb-legend-item:hover, .legend-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.wrb-legend-item.selected, .legend-row.selected {
+  background: rgba(63, 185, 80, 0.13);
+}
+.wrb-legend-item.selected .wrb-swatch,
+.legend-row.selected .legend-swatch {
+  outline: 1.5px solid var(--accent);
+  outline-offset: -1px;
+}
+.wrb-legend-item.selected .wrb-name,
+.legend-row.selected .legend-code,
+.legend-row.selected .legend-desc {
+  color: var(--accent);
+  font-weight: 600;
+}
+/* When a filter is active, dim non-selected items so the eye is drawn to
+   the selected ones */
+.wrb-legend-grid.has-filter .wrb-legend-item:not(.selected),
+.koppen-legend-panel.has-filter .legend-row:not(.selected) {
+  opacity: 0.45;
+}
+
+/* "Clear filter (N)" button shown above each legend's items when any
+   selection is active. */
+.legend-clear-btn {
+  display: block;
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 600;
+  padding: 3px 6px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  border-radius: 3px;
+  text-align: center;
+  transition: background 0.12s;
+}
+.legend-clear-btn:hover { background: rgba(63, 185, 80, 0.12); }
+
 /* ── On-click soil popup (loading + populated states) ─────────────────── */
 .soil-popup { padding: 10px 12px; min-width: 200px; max-width: 280px; }
 .soil-popup.loading { color: var(--text-muted); font-size: 12px; padding: 14px 12px; text-align: center; }
@@ -2188,6 +2240,57 @@ let activeSoilLayer = null;       // SOIL_LAYERS key or null
 // but the user can toggle it off via the Soil-key button in the right-side
 // "Keys" group. Persisted across sessions.
 let soilLegendVisible = (() => { try { return localStorage.getItem('bmg_soil_legend_hidden') !== '1'; } catch { return true; } })();
+
+// ── Legend filter state ──────────────────────────────────
+// Click items in the WRB or Köppen legends to filter the map. Each set holds
+// the integer codes currently selected; empty set = no filter (show all).
+// When non-empty: matching map regions stay bright, non-matching dim; only
+// observations falling in selected regions remain visible.
+// Persisted in localStorage so selections survive reloads.
+const selectedWrbCodes    = new Set((() => { try { return JSON.parse(localStorage.getItem('bmg_wrb_filter')    || '[]'); } catch { return []; } })());
+const selectedKoppenCodes = new Set((() => { try { return JSON.parse(localStorage.getItem('bmg_koppen_filter') || '[]'); } catch { return []; } })());
+
+function persistWrbFilter()    { try { localStorage.setItem('bmg_wrb_filter',    JSON.stringify([...selectedWrbCodes]));    } catch {} }
+function persistKoppenFilter() { try { localStorage.setItem('bmg_koppen_filter', JSON.stringify([...selectedKoppenCodes])); } catch {} }
+
+function toggleWrbFilter(code) {
+  if (selectedWrbCodes.has(code)) selectedWrbCodes.delete(code);
+  else                            selectedWrbCodes.add(code);
+  persistWrbFilter();
+  applyLegendFilters();
+}
+function toggleKoppenFilter(code) {
+  if (selectedKoppenCodes.has(code)) selectedKoppenCodes.delete(code);
+  else                               selectedKoppenCodes.add(code);
+  persistKoppenFilter();
+  applyLegendFilters();
+}
+function clearWrbFilter()    { selectedWrbCodes.clear();    persistWrbFilter();    applyLegendFilters(); }
+function clearKoppenFilter() { selectedKoppenCodes.clear(); persistKoppenFilter(); applyLegendFilters(); }
+
+// Single re-render path triggered whenever either legend filter changes:
+//   1. Recolour the Köppen overlay (dim non-selected zones)
+//   2. Dim the soil WMS layer overall when a WRB filter is active (per-type
+//      masking isn't possible with server-rendered WMS tiles)
+//   3. Re-render both legends so the selected items + clear button show
+//   4. Rebuild the iNat marker index so observations re-filter
+function applyLegendFilters() {
+  // Köppen overlay re-render
+  if (koppenLayer && typeof koppenLayer.updateColors === 'function') {
+    koppenLayer.updateColors(koppenColorFn);
+  }
+  // Soil WMS dimming (coarse — full layer; WMS doesn't support per-class).
+  // Only matters when a soil layer is active; when filter cleared, restore
+  // full opacity.
+  if (activeSoilLayer && soilWmsCache[activeSoilLayer]) {
+    soilWmsCache[activeSoilLayer].setOpacity(selectedWrbCodes.size > 0 ? 0.32 : 0.65);
+  }
+  // Re-render legends (they read selection state to show .selected + clear btn)
+  updateSoilLegend(activeSoilLayer);
+  window._bmgKoppenLegendRender?.();
+  // Re-filter observations
+  if (typeof rebuildInatIndex === 'function') rebuildInatIndex();
+}
 const soilWmsCache  = {};         // lazily-built L.tileLayer.wms instances
 let soilFetchToken  = 0;          // incremented on each panel open; stale fetches bail
 let soilCachePromise   = null;    // singleton fetch for inat/soil-cache.json
@@ -2433,15 +2536,41 @@ function buildMapControls() {
       btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.grid}</span>`;
       const panel = L.DomUtil.create('div', 'koppen-legend-panel', wrap);
 
-      let html = '';
-      for (const group of LEGEND_GROUPS) {
-        html += `<div class="legend-group-label">${group.label}</div>`;
-        for (const [idx, code, desc] of group.zones) {
-          const [r,g,b] = BECK_COLORS[idx];
-          html += `<div class="legend-row"><span class="legend-swatch" style="background:rgb(${r},${g},${b})"></span><span class="legend-code">${code}</span><span class="legend-desc">${desc}</span></div>`;
+      // Re-renderable: the legend's contents depend on selectedKoppenCodes
+      // so applyLegendFilters needs to redraw rows + clear button when the
+      // filter set changes. Exposed via window._bmgKoppenLegendRender.
+      function render() {
+        const filterActive = selectedKoppenCodes.size > 0;
+        let html = filterActive
+          ? `<button class="legend-clear-btn" id="koppen-legend-clear">Clear filter (${selectedKoppenCodes.size}) ×</button>`
+          : '';
+        for (const group of LEGEND_GROUPS) {
+          html += `<div class="legend-group-label">${group.label}</div>`;
+          for (const [idx, code, desc] of group.zones) {
+            const [r,g,b] = BECK_COLORS[idx];
+            const sel = selectedKoppenCodes.has(idx);
+            html += `<div class="legend-row${sel ? ' selected' : ''}" data-koppen-code="${idx}" title="${desc.replace(/"/g, '&quot;')} — click to filter by this zone"><span class="legend-swatch" style="background:rgb(${r},${g},${b})"></span><span class="legend-code">${code}</span><span class="legend-desc">${desc}</span></div>`;
+          }
         }
+        panel.innerHTML = html;
+        panel.classList.toggle('has-filter', filterActive);
+        // Re-attach handlers (innerHTML wipes previous bindings)
+        panel.querySelector('#koppen-legend-clear')?.addEventListener('click', (e) => {
+          e.stopPropagation();
+          clearKoppenFilter();
+        });
       }
-      panel.innerHTML = html;
+      render();
+      window._bmgKoppenLegendRender = render;
+
+      // Single delegated click handler on the panel — handles row clicks
+      // regardless of how many times render() rewrites the innerHTML.
+      L.DomEvent.disableClickPropagation(panel);
+      panel.addEventListener('click', (e) => {
+        const row = e.target.closest('.legend-row');
+        if (!row) return;
+        toggleKoppenFilter(+row.dataset.koppenCode);
+      });
 
       L.DomEvent.on(btn, 'click', L.DomEvent.stop);
       L.DomEvent.on(btn, 'click', () => {
@@ -2666,16 +2795,25 @@ function koppenCodeFromProps(props) {
   return props.CODE || props.code || props.Cls || props.GRIDCODE || props.Koppen || null;
 }
 
+// Hoisted so applyLegendFilters can pass it to koppenLayer.updateColors()
+// after the selectedKoppenCodes set changes. Closes over the live set so a
+// single function reference reflects current filter state on each evaluation.
+function koppenColorFn(values) {
+  const v = values[0];
+  if (!v || v < 1 || v > 30) return null;
+  const c = BECK_COLORS[v];
+  if (!c) return null;
+  // When a Köppen filter is active, non-matching zones render at low opacity
+  // so the selected zones stand out. No filter (empty set) → normal full-
+  // saturation color for everything.
+  if (selectedKoppenCodes.size === 0 || selectedKoppenCodes.has(v)) {
+    return `rgb(${c[0]},${c[1]},${c[2]})`;
+  }
+  return `rgba(${c[0]},${c[1]},${c[2]},0.15)`;
+}
+
 async function loadKoppen() {
   const PATH_01 = './koppen_geiger_tif/1991_2020/koppen_geiger_0p1.tif';
-
-  const colorFn = values => {
-    const v = values[0];
-    if (!v || v < 1 || v > 30) return null;
-    const c = BECK_COLORS[v];
-    return c ? `rgb(${c[0]},${c[1]},${c[2]})` : null;
-  };
-
   try {
     const buf = await fetch(PATH_01).then(r => r.ok ? r.arrayBuffer() : null).catch(() => null);
     if (!buf) return;
@@ -2683,7 +2821,7 @@ async function loadKoppen() {
     koppenLayer = new GeoRasterLayer({
       georaster: koppenGeoRaster, pane: 'koppenPane',
       opacity: satelliteActive ? 0.35 : 0.55,
-      resolution: 64, pixelValuesToColorFn: colorFn
+      resolution: 64, pixelValuesToColorFn: koppenColorFn
     });
     if (koppenVisible) koppenLayer.addTo(map);
     updateKoppenBlur();
@@ -2723,6 +2861,10 @@ function setSoilLayer(key) {
     );
   }
   soilWmsCache[key].addTo(map);
+  // Respect any active WRB legend filter: dim the layer overall so the
+  // observation filtering reads as the "primary signal" the user is
+  // interacting with.
+  soilWmsCache[key].setOpacity(selectedWrbCodes.size > 0 ? 0.32 : 0.65);
   updateSoilLegend(key);
   // Refresh Soil-key button enabled/active state to reflect the new layer.
   window._bmgSoilLegendBtnSync?.();
@@ -2763,13 +2905,22 @@ function updateSoilLegend(key) {
     catch { return true; }
   })();
 
+  const filterActive = selectedWrbCodes.size > 0;
   const items = Object.entries(WRB_GROUPS)
     .sort(([, a], [, b]) => a.name.localeCompare(b.name))
-    .map(([code, g]) => `
-      <div class="wrb-legend-item" title="${g.desc.replace(/"/g, '&quot;')}">
-        <span class="wrb-swatch" style="background:${g.color}"></span>
-        <span class="wrb-name">${g.name}</span>
-      </div>`).join('');
+    .map(([code, g]) => {
+      const numericCode = +code;
+      const selected   = selectedWrbCodes.has(numericCode);
+      return `
+        <div class="wrb-legend-item${selected ? ' selected' : ''}" data-wrb-code="${numericCode}" title="${g.desc.replace(/"/g, '&quot;')} — click to filter by this soil type">
+          <span class="wrb-swatch" style="background:${g.color}"></span>
+          <span class="wrb-name">${g.name}</span>
+        </div>`;
+    }).join('');
+
+  const clearHtml = filterActive
+    ? `<button class="legend-clear-btn" id="wrb-legend-clear">Clear filter (${selectedWrbCodes.size}) ×</button>`
+    : '';
 
   el.classList.add('wrb-mode');
   el.innerHTML =
@@ -2778,7 +2929,8 @@ function updateSoilLegend(key) {
          <span class="wrb-legend-title">${def.label}</span>
          <span class="wrb-legend-chevron">▾</span>
        </summary>
-       <div class="wrb-legend-grid">${items}</div>
+       ${clearHtml}
+       <div class="wrb-legend-grid${filterActive ? ' has-filter' : ''}">${items}</div>
        <span class="soil-legend-src">SoilGrids 250m · ISRIC · 30 reference soil groups</span>
      </details>`;
   el.classList.add('visible');
@@ -2787,6 +2939,14 @@ function updateSoilLegend(key) {
   el.querySelector('.wrb-legend-details')?.addEventListener('toggle', (e) => {
     try { localStorage.setItem('bmg_wrb_legend_collapsed', e.target.open ? '0' : '1'); } catch {}
   });
+
+  // Click-to-filter on the grid (event delegation)
+  el.querySelector('.wrb-legend-grid')?.addEventListener('click', (e) => {
+    const item = e.target.closest('.wrb-legend-item');
+    if (!item) return;
+    toggleWrbFilter(+item.dataset.wrbCode);
+  });
+  el.querySelector('#wrb-legend-clear')?.addEventListener('click', clearWrbFilter);
 }
 
 // ── SoilGrids REST API (point query) ─────────────────────
@@ -2913,6 +3073,11 @@ function loadSoilCache() {
         // Strip internal metadata key before storing — cell keys are "row:col" format
         const { _v: _ignored, ...cells } = d;
         soilCacheData = cells;
+        // If the user landed with a persisted WRB filter, re-apply now that
+        // the cache is finally available (the filter is a no-op without it).
+        if (selectedWrbCodes.size > 0 && typeof applyLegendFilters === 'function') {
+          applyLegendFilters();
+        }
         return cells;
       })
       .catch(err => {
@@ -5204,6 +5369,18 @@ function buildInatFeatures() {
     if (inatSpeciesFilter ? taxon[1] !== inatSpeciesFilter : !inatFilters.genera.has(genus)) continue;
     if ((flags & F_NEEDSID) && !inatFilters.needsId) continue;
     if (!inatFilters.koppen.has(koppen) && koppen !== 0) continue;
+    // Legend filters (Köppen + WRB). Both are AND-ed with the iNat-panel
+    // filters above. Empty set = no filter for that dimension.
+    if (selectedKoppenCodes.size > 0 && !selectedKoppenCodes.has(koppen)) continue;
+    if (selectedWrbCodes.size > 0) {
+      // Look up this obs's WRB by mapping to its 0.5° grid cell. soilCacheData
+      // is loaded lazily; if not yet available, skip the WRB filter rather
+      // than hiding every obs (graceful degradation).
+      if (soilCacheData) {
+        const cell = soilCacheData[`${Math.floor(o[OBS_LAT] / 0.5)}:${Math.floor(o[OBS_LNG] / 0.5)}`];
+        if (!cell || cell.wrb == null || !selectedWrbCodes.has(cell.wrb)) continue;
+      }
+    }
     features.push({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [o[OBS_LNG], o[OBS_LAT]] },
