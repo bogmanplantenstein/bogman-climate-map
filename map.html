@@ -3976,32 +3976,70 @@ function buildClimateChart(cn) {
   const ctx = document.getElementById('climate-chart');
   if (!ctx) return;
 
+  // Extreme range datasets — drawn first so the avg lines render on top.
+  // The two extreme lines are styled as a translucent band: the cold-extreme
+  // line fills upward to the hot-extreme line, creating a shaded envelope
+  // that shows the "typical extreme range" each month. Legend hides the
+  // individual extreme entries (underscore-prefixed) to reduce clutter;
+  // tooltips still show all four numbers.
+  const hasExtremes = !!(cn.tempMaxHi && cn.tempMinLo);
+
   climateChart = new Chart(ctx, {
     data: {
       labels: MONTHS,
       datasets: [
+        ...(hasExtremes ? [
+          {
+            type: 'line',
+            label: 'Extreme high',
+            data: cn.tempMaxHi,
+            borderColor: 'rgba(255,140,60,0.32)',
+            backgroundColor: 'rgba(255,140,60,0.12)',
+            fill: '+1',                  // fills down to the next dataset (Extreme low)
+            tension: 0.4,
+            pointRadius: 0,
+            borderWidth: 1,
+            borderDash: [4, 3],
+            yAxisID: 'yTemp',
+          },
+          {
+            type: 'line',
+            label: 'Extreme low',
+            data: cn.tempMinLo,
+            borderColor: 'rgba(100,180,255,0.32)',
+            backgroundColor: 'transparent',
+            fill: false,
+            tension: 0.4,
+            pointRadius: 0,
+            borderWidth: 1,
+            borderDash: [4, 3],
+            yAxisID: 'yTemp',
+          },
+        ] : []),
         {
           type: 'line',
-          label: 'High Temp',
+          label: 'Avg high',
           data: cn.tempMax,
-          borderColor: 'rgba(255,140,60,0.85)',
-          backgroundColor: 'rgba(150,160,200,0.12)',
-          fill: '+1',
-          tension: 0.4,
-          pointRadius: 2,
-          pointHoverRadius: 5,
-          yAxisID: 'yTemp'
-        },
-        {
-          type: 'line',
-          label: 'Low Temp',
-          data: cn.tempMin,
-          borderColor: 'rgba(100,180,255,0.85)',
+          borderColor: 'rgba(255,140,60,0.95)',
           backgroundColor: 'transparent',
           fill: false,
           tension: 0.4,
           pointRadius: 2,
           pointHoverRadius: 5,
+          borderWidth: 2,
+          yAxisID: 'yTemp'
+        },
+        {
+          type: 'line',
+          label: 'Avg low',
+          data: cn.tempMin,
+          borderColor: 'rgba(100,180,255,0.95)',
+          backgroundColor: 'transparent',
+          fill: false,
+          tension: 0.4,
+          pointRadius: 2,
+          pointHoverRadius: 5,
+          borderWidth: 2,
           yAxisID: 'yTemp'
         },
         {
@@ -4031,11 +4069,10 @@ function buildClimateChart(cn) {
           bodyColor: '#8b949e',
           callbacks: {
             label(ctx) {
-              if (ctx.dataset.label.includes('Temp'))
-                return `${ctx.dataset.label}: ${toDisplay(ctx.raw, tempUnit)}`;
-              // Precipitation: nearest integer mm is plenty for cultivation
-              // planning; decimals add noise without information.
-              return `${ctx.dataset.label}: ${ctx.raw != null ? Math.round(ctx.raw) : '—'}mm`;
+              // Precip is the only non-temperature dataset on this chart
+              if (ctx.dataset.label === 'Precip')
+                return `Precip: ${ctx.raw != null ? Math.round(ctx.raw) : '—'}mm`;
+              return `${ctx.dataset.label}: ${toDisplay(ctx.raw, tempUnit)}`;
             }
           }
         }
@@ -4256,8 +4293,14 @@ async function fetchSearchClimateNormals(lat, lng) {
     const FILL    = -999;
     const isValid = v => v != null && v !== FILL && isFinite(v);
 
-    const tmaxSum = new Array(12).fill(0), tmaxCnt = new Array(12).fill(0);
-    const tminSum = new Array(12).fill(0), tminCnt = new Array(12).fill(0);
+    // Per-month buckets of DAILY values (not just sums). We need the full
+    // distribution to compute extreme percentiles (p10 of daily mins, p90 of
+    // daily maxes) for the "typical cold snap / heat wave" display. Means
+    // are computed from these buckets at the end so we don't double-iterate.
+    const tmaxByMonth = Array.from({ length: 12 }, () => []);
+    const tminByMonth = Array.from({ length: 12 }, () => []);
+    const yearlyMin   = {};   // year → minimum daily temp (for USDA zone)
+    // Precip/RH/radiation only need monthly sums + counts.
     const precSum = new Array(12).fill(0);
     const precYrs = Array.from({ length: 12 }, () => new Set());
     const rhSum   = new Array(12).fill(0), rhCnt   = new Array(12).fill(0);
@@ -4268,9 +4311,12 @@ async function fetchSearchClimateNormals(lat, lng) {
       const y = dateKey.substring(0, 4);
 
       const tmax = params.T2M_MAX[dateKey];
-      if (isValid(tmax)) { tmaxSum[m] += tmax; tmaxCnt[m]++; }
+      if (isValid(tmax)) tmaxByMonth[m].push(tmax);
       const tmin = params.T2M_MIN[dateKey];
-      if (isValid(tmin)) { tminSum[m] += tmin; tminCnt[m]++; }
+      if (isValid(tmin)) {
+        tminByMonth[m].push(tmin);
+        if (yearlyMin[y] == null || tmin < yearlyMin[y]) yearlyMin[y] = tmin;
+      }
       const p = params.PRECTOTCORR?.[dateKey];
       if (isValid(p))    { precSum[m] += p;    precYrs[m].add(y); }
       const rh = params.RH2M?.[dateKey];
@@ -4278,6 +4324,41 @@ async function fetchSearchClimateNormals(lat, lng) {
       const rad = params.ALLSKY_SFC_SW_DWN?.[dateKey];
       if (isValid(rad))  { radSum[m]  += rad;  radCnt[m]++; }
     }
+
+    // Inline percentile helper (used several times below). Linear-interpolated
+    // percentile on a sorted array. p in 0–100.
+    const percentile = (arr, p) => {
+      if (!arr.length) return null;
+      const s = [...arr].sort((a, b) => a - b);
+      const i = (p / 100) * (s.length - 1);
+      const lo = Math.floor(i), hi = Math.ceil(i);
+      return lo === hi ? s[lo] : s[lo] + (s[hi] - s[lo]) * (i - lo);
+    };
+
+    // Monthly averages of daily highs/lows (the existing visualisation lines)
+    const tempMax = tmaxByMonth.map(arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+    const tempMin = tminByMonth.map(arr => arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null);
+    // Monthly extreme bands: p90 of daily highs (typical hot extreme that
+    // month), p10 of daily lows (typical cold extreme that month). These
+    // shade the band on the chart.
+    const tempMaxHi = tmaxByMonth.map(arr => percentile(arr, 90));
+    const tempMinLo = tminByMonth.map(arr => percentile(arr,  10));
+
+    // Annual extreme stats (computed across ALL daily values in the window)
+    const allTmaxs = tmaxByMonth.flat();
+    const allTmins = tminByMonth.flat();
+    const typicalHottestDay = percentile(allTmaxs, 95);   // 95th percentile of daily highs
+    const typicalColdestDay = percentile(allTmins,  5);   // 5th percentile of daily lows
+    // Days below freezing per year (averaged over the years in the dataset)
+    const years = Object.keys(yearlyMin).length || 1;
+    const daysBelowFreezing = Math.round(allTmins.filter(v => v < 0).length / years);
+    // USDA hardiness zone computed from average annual min (mean of yearly
+    // coldest daily temps).
+    const yearlyMins = Object.values(yearlyMin);
+    const avgAnnualMin = yearlyMins.length
+      ? yearlyMins.reduce((a, b) => a + b, 0) / yearlyMins.length
+      : null;
+    const usdaZone = avgAnnualMin != null ? toUSDAZone(avgAnnualMin) : null;
 
     // Astronomical daylight hours per month (no API needed — POWER doesn't return this).
     const daylightHrs = computeMonthlyDaylightHours(lat);
@@ -4296,16 +4377,61 @@ async function fetchSearchClimateNormals(lat, lng) {
       // POWER returns [lng, lat, elev_m] — modelElev is the MERRA-2 grid elevation,
       // used for lapse-rate correction against terrain elevation.
       modelElev:  d.geometry?.coordinates?.[2] ?? null,
-      tempMax:    tmaxSum.map((s, m) => tmaxCnt[m]      ? s / tmaxCnt[m]      : null),
-      tempMin:    tminSum.map((s, m) => tminCnt[m]      ? s / tminCnt[m]      : null),
+      tempMax,
+      tempMin,
+      tempMaxHi,        // NEW: p90 of daily highs per month (typical heat-wave high)
+      tempMinLo,        // NEW: p10 of daily lows per month (typical cold-snap low)
       precipMm:   precSum.map((s, m) => precYrs[m].size ? s / precYrs[m].size : null),
       daylightHrs, dli, ppfd,
       // POWER /daily returns only daily-mean RH (no diurnal max/min). The old
       // Open-Meteo hourly path used to compute rhHigh/rhLow; those fields have
       // been removed since no UI surfaces them anymore.
       rhMean:     rhSum.map((s, m) => rhCnt[m] ? s / rhCnt[m] : null),
+      // Annual extreme summary stats (computed across all daily values in the 10-yr window)
+      typicalHottestDay,        // 95th percentile of all daily highs
+      typicalColdestDay,        // 5th  percentile of all daily lows
+      daysBelowFreezing,        // average # of frost days per year
+      avgAnnualMin,             // mean of yearly coldest temps (drives USDA zone)
+      usdaZone,                 // string like "7a" or null
     };
   } catch { return null; }
+}
+
+// ── USDA hardiness zone ──────────────────────────────────────────────
+// Map average annual minimum temperature (°C) to USDA zone code (e.g. "7a").
+// Each zone is 5°F wide, with 'a' and 'b' subzones 2.5°F apart. Table from
+// USDA Agricultural Research Service (2023 update).
+const USDA_ZONES = [
+  { min: -Infinity, max: -51.1, code: '1a' },
+  { min: -51.1,     max: -48.3, code: '1b' },
+  { min: -48.3,     max: -45.6, code: '2a' },
+  { min: -45.6,     max: -42.8, code: '2b' },
+  { min: -42.8,     max: -40.0, code: '3a' },
+  { min: -40.0,     max: -37.2, code: '3b' },
+  { min: -37.2,     max: -34.4, code: '4a' },
+  { min: -34.4,     max: -31.7, code: '4b' },
+  { min: -31.7,     max: -28.9, code: '5a' },
+  { min: -28.9,     max: -26.1, code: '5b' },
+  { min: -26.1,     max: -23.3, code: '6a' },
+  { min: -23.3,     max: -20.6, code: '6b' },
+  { min: -20.6,     max: -17.8, code: '7a' },
+  { min: -17.8,     max: -15.0, code: '7b' },
+  { min: -15.0,     max: -12.2, code: '8a' },
+  { min: -12.2,     max: -9.4,  code: '8b' },
+  { min:  -9.4,     max: -6.7,  code: '9a' },
+  { min:  -6.7,     max: -3.9,  code: '9b' },
+  { min:  -3.9,     max: -1.1,  code: '10a' },
+  { min:  -1.1,     max:  1.7,  code: '10b' },
+  { min:   1.7,     max:  4.4,  code: '11a' },
+  { min:   4.4,     max:  7.2,  code: '11b' },
+  { min:   7.2,     max: 10.0,  code: '12a' },
+  { min:  10.0,     max: 12.8,  code: '12b' },
+  { min:  12.8,     max: 15.6,  code: '13a' },
+  { min:  15.6,     max: Infinity, code: '13b' },
+];
+function toUSDAZone(avgAnnualMinC) {
+  const z = USDA_ZONES.find(z => avgAnnualMinC >= z.min && avgAnnualMinC < z.max);
+  return z?.code || null;
 }
 
 // Kept as a no-op for backward compatibility with existing Promise.all() callers.
@@ -4643,12 +4769,31 @@ function buildLocationPanel(state) {
     const validRH = normals.rhMean ? normals.rhMean.filter(v => v != null) : [];
     const annRHAvg = validRH.length ? validRH.reduce((a, b) => a + b, 0) / validRH.length : null;
 
+    // USDA hardiness zone only shown for US locations — outside the US the
+    // zoning system has different meaning / different names in use.
+    const inUS = (a.country_code || '').toLowerCase() === 'us';
+    const hotEx = normals.typicalHottestDay;
+    const coldEx = normals.typicalColdestDay;
+    const freezeDays = normals.daysBelowFreezing;
+
     climateHtml = `
       <div class="climate-grid">
         <div class="climate-stat"><div class="climate-stat-label">Avg Daily High</div>
           <div class="climate-stat-value" data-celsius="${peakHigh}">${toDisplay(peakHigh, tempUnit)}</div></div>
         <div class="climate-stat"><div class="climate-stat-label">Avg Daily Low</div>
           <div class="climate-stat-value" data-celsius="${peakLow}">${toDisplay(peakLow, tempUnit)}</div></div>
+        ${hotEx != null ? `<div class="climate-stat" title="95th percentile of daily highs — the hot extreme you can expect a few days per year">
+          <div class="climate-stat-label">Typical Hot Extreme</div>
+          <div class="climate-stat-value" data-celsius="${hotEx}">${toDisplay(hotEx, tempUnit)}</div></div>` : ''}
+        ${coldEx != null ? `<div class="climate-stat" title="5th percentile of daily lows — the cold extreme you can expect a few days per year">
+          <div class="climate-stat-label">Typical Cold Extreme</div>
+          <div class="climate-stat-value" data-celsius="${coldEx}">${toDisplay(coldEx, tempUnit)}</div></div>` : ''}
+        ${freezeDays != null ? `<div class="climate-stat" title="Average number of days per year with daily minimum below 0°C">
+          <div class="climate-stat-label">Freeze Days/yr</div>
+          <div class="climate-stat-value">${freezeDays}</div></div>` : ''}
+        ${inUS && normals.usdaZone ? `<div class="climate-stat" title="USDA Plant Hardiness Zone based on mean annual minimum (${toDisplay(normals.avgAnnualMin, tempUnit)})">
+          <div class="climate-stat-label">USDA Zone</div>
+          <div class="climate-stat-value">${normals.usdaZone}</div></div>` : ''}
         <div class="climate-stat"><div class="climate-stat-label">Annual Precip</div>
           <div class="climate-stat-value">${annPrec}<span class="climate-stat-unit">mm</span></div></div>
         ${avgDLI != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg DLI</div>
