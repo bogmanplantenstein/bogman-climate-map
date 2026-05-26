@@ -776,8 +776,10 @@ async function computeSpeciesData(allTaxa, allObs) {
   });
   // ~1s/request from NASA POWER + 300ms rate-limit gap ≈ 1.3s per cell
   const estMin = Math.round(missingClim.length * 1300 / 60_000);
-  const cacheTotal = Object.keys(climCache).filter(k => k !== '_v').length;
-  const v3Already = cacheTotal - missingClim.length;
+  // Renamed to avoid shadowing the cacheTotal declared after the fetch loop
+  // (which counts cells AFTER fetches complete, not before).
+  const cacheStart = Object.keys(climCache).filter(k => k !== '_v').length;
+  const v3Already = cacheStart - missingClim.length;
   console.log(`\n▶ Fetching climate data for ${cellKeys.length.toLocaleString()} cells (${missingClim.length.toLocaleString()} need fetch, ${v3Already.toLocaleString()} already v3, ~${estMin} min)...`);
 
   let omFetched = 0, omFailed = 0;
