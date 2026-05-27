@@ -1314,6 +1314,37 @@ html, body {
 }
 .inat-badge-rg  { background: rgba(63,185,80,0.15); color: var(--accent); border: 1px solid rgba(63,185,80,0.3); }
 .inat-badge-nid { background: rgba(210,153,34,0.15); color: var(--warning); border: 1px solid rgba(210,153,34,0.3); }
+
+/* ── Species sidebar: All Observations section ───────────────── */
+.sp-obs-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 10px;
+}
+.sp-obs-controls label { font-size: 10.5px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.sp-obs-controls select {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font-size: 11px;
+  cursor: pointer;
+  flex: 1;
+}
+.sp-obs-location {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  margin-top: 2px;
+}
+.sp-obs-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-style: italic;
+  padding: 8px 4px;
+}
 .inat-badge-obs { background: rgba(100,130,200,0.15); color: #7ba4f0; border: 1px solid rgba(100,130,200,0.3); }
 
 .inat-load-more {
@@ -5216,6 +5247,37 @@ function buildSpeciesSidebarContent(entry) {
     ${entry.obs_count.toLocaleString()} total sightings.
   </div>`;
 
+  // ── All Observations section (lazy-loaded list of iNat obs for this species) ──
+  // Filtered from the already-loaded inatObs array. Lazy-rendered on first
+  // expand of the <details>. Pagination via "Load more" — long-tail species
+  // like Drosera have 160k+ obs and we can't dump them all into the DOM.
+  const speciesObsAll = (inatObs?.length && inatTaxa?.length)
+    ? inatObs.filter(o => inatTaxa[o[OBS_TI]]?.[1] === entry.scientific_name)
+    : [];
+
+  const obsSectionHtml = `
+    <details class="inat-section" id="sp-obs-section" style="margin-top:8px">
+      <summary><span class="bmg-section-icon">${BMG_ICONS.eye}</span>All Observations (${speciesObsAll.length.toLocaleString()})</summary>
+      <div class="inat-section-body">
+        ${speciesObsAll.length === 0 ? `
+          <div class="sp-obs-empty">No observations loaded. Enable the iNaturalist layer (right-side panel) to load this data.</div>
+        ` : `
+          <div class="sp-obs-controls">
+            <label for="sp-obs-sort">Sort</label>
+            <select id="sp-obs-sort">
+              <option value="date-desc">Newest first</option>
+              <option value="date-asc">Oldest first</option>
+              <option value="photo">With photos first</option>
+              <option value="quality">Research grade first</option>
+              <option value="lat-n">Latitude (N → S)</option>
+              <option value="lat-s">Latitude (S → N)</option>
+            </select>
+          </div>
+          <div class="inat-obs-list" id="sp-obs-list"></div>
+        `}
+      </div>
+    </details>`;
+
   // Assemble and inject
   const inatUrl = entry.inat_url || '';
   document.getElementById('panel-content').innerHTML = `
@@ -5234,8 +5296,125 @@ function buildSpeciesSidebarContent(entry) {
     ${buildSoilSectionHtml()}
     ${wikiHtml}
     ${sampleNote}
+    ${obsSectionHtml}
   `;
   wireNavBackBtn();
+
+  // ── Wire All-Observations section ──
+  // Lazy-render: filter the per-species obs (already computed above) and
+  // sort+paginate on first expand. Sort changes re-render from offset 0.
+  if (speciesObsAll.length > 0) {
+    const SP_OBS_PAGE = 20;
+    let sortedSpeciesObs = speciesObsAll;   // re-assigned by sortBy()
+    let obsRendered = false;
+
+    function sortSpeciesObsBy(mode) {
+      const arr = [...speciesObsAll];
+      if (mode === 'date-desc')      arr.sort((a, b) => (b[OBS_DATE] || '').localeCompare(a[OBS_DATE] || ''));
+      else if (mode === 'date-asc')  arr.sort((a, b) => (a[OBS_DATE] || '').localeCompare(b[OBS_DATE] || ''));
+      else if (mode === 'photo')     arr.sort((a, b) => ((b[OBS_FLAGS] & F_PHOTO) - (a[OBS_FLAGS] & F_PHOTO)) || (b[OBS_DATE] || '').localeCompare(a[OBS_DATE] || ''));
+      else if (mode === 'quality')   arr.sort((a, b) => ((a[OBS_FLAGS] & F_NEEDSID) - (b[OBS_FLAGS] & F_NEEDSID)) || (b[OBS_DATE] || '').localeCompare(a[OBS_DATE] || ''));
+      else if (mode === 'lat-n')     arr.sort((a, b) => b[OBS_LAT] - a[OBS_LAT]);
+      else if (mode === 'lat-s')     arr.sort((a, b) => a[OBS_LAT] - b[OBS_LAT]);
+      return arr;
+    }
+
+    // Card variant for the species view — shows location coords + Köppen
+    // badge instead of taxon name (which is redundant on a single-species
+    // list). Uses raw obs array directly (not a feature wrapper).
+    function speciesObsCard(o, idx) {
+      const hasPhoto = !!(o[OBS_FLAGS] & F_PHOTO);
+      const photoEl  = hasPhoto && o[OBS_PHOTO]
+        ? `<img class="inat-obs-thumb" src="${INAT_PHOTO_BASE}${o[OBS_PHOTO]}/square.jpeg" loading="lazy" onerror="this.style.display='none'">`
+        : `<div class="inat-obs-thumb-placeholder">🌿</div>`;
+      const qBadge = (o[OBS_FLAGS] & F_NEEDSID)
+        ? `<span class="inat-badge inat-badge-nid">Needs ID</span>`
+        : `<span class="inat-badge inat-badge-rg">Research</span>`;
+      const obscBadge = (o[OBS_FLAGS] & F_OBSCURED) ? `<span class="inat-badge inat-badge-obs">Approx.</span>` : '';
+      const lat = o[OBS_LAT], lng = o[OBS_LNG];
+      const locStr = `${Math.abs(lat).toFixed(2)}°${lat >= 0 ? 'N' : 'S'}, ${Math.abs(lng).toFixed(2)}°${lng >= 0 ? 'E' : 'W'}`;
+      const kop = o[OBS_KOP];
+      let kopBadge = '';
+      if (kop >= 1 && kop <= 30) {
+        const zone = BECK_ZONES[kop];
+        const [r, g, b] = BECK_COLORS[kop] || [128, 128, 128];
+        kopBadge = `<span class="inat-badge" style="color:rgb(${r},${g},${b});border:1px solid rgba(${r},${g},${b},0.35);background:rgba(${r},${g},${b},0.1)">${zone?.code || ''}</span>`;
+      }
+      return `<div class="inat-obs-card" data-idx="${idx}">
+        ${photoEl}
+        <div class="inat-obs-meta">
+          <div class="inat-obs-date">${o[OBS_DATE] || '—'}</div>
+          <div class="sp-obs-location">${locStr}</div>
+          <div class="inat-obs-badges">${qBadge}${obscBadge}${kopBadge}</div>
+        </div>
+      </div>`;
+    }
+
+    function renderSpeciesObsCards(offset = 0) {
+      const listEl = document.getElementById('sp-obs-list');
+      if (!listEl) return;
+      const page    = sortedSpeciesObs.slice(offset, offset + SP_OBS_PAGE);
+      const hasMore = sortedSpeciesObs.length > offset + SP_OBS_PAGE;
+      const cardsHtml = page.map((o, i) => speciesObsCard(o, offset + i)).join('');
+
+      document.getElementById('sp-obs-load-more')?.remove();
+      if (offset === 0) listEl.innerHTML = cardsHtml;
+      else              listEl.insertAdjacentHTML('beforeend', cardsHtml);
+
+      if (hasMore) {
+        listEl.insertAdjacentHTML('afterend',
+          `<button class="inat-load-more" id="sp-obs-load-more" data-offset="${offset + SP_OBS_PAGE}">Load more (${(sortedSpeciesObs.length - offset - SP_OBS_PAGE).toLocaleString()} remaining)</button>`);
+        document.getElementById('sp-obs-load-more').addEventListener('click', e => {
+          renderSpeciesObsCards(parseInt(e.target.dataset.offset));
+        });
+      }
+    }
+
+    // First-expand renders; sort changes re-render from offset 0
+    document.getElementById('sp-obs-section')?.addEventListener('toggle', function () {
+      if (!this.open || obsRendered) return;
+      obsRendered = true;
+      sortedSpeciesObs = sortSpeciesObsBy('date-desc');
+      renderSpeciesObsCards(0);
+    });
+    document.getElementById('sp-obs-sort')?.addEventListener('change', e => {
+      sortedSpeciesObs = sortSpeciesObsBy(e.target.value);
+      renderSpeciesObsCards(0);
+    });
+
+    // Delegated click handler for opening the observation detail panel.
+    // Converts raw obs back to the feature shape openInatObsPanel expects.
+    // Pushes the species sidebar onto the nav stack so back returns here.
+    document.getElementById('sp-obs-list')?.addEventListener('click', e => {
+      const card = e.target.closest('.inat-obs-card');
+      if (!card) return;
+      const idx = parseInt(card.dataset.idx);
+      const o   = sortedSpeciesObs[idx];
+      if (!o) return;
+      const taxon = inatTaxa[o[OBS_TI]] || [];
+      const feature = {
+        geometry: { coordinates: [o[OBS_LNG], o[OBS_LAT]] },
+        properties: {
+          obs_id:      o[OBS_ID],
+          lat:         o[OBS_LAT],
+          lng:         o[OBS_LNG],
+          taxon_idx:   o[OBS_TI],
+          taxon_name:  taxon[1] || entry.scientific_name,
+          common_name: entry.common_name || null,
+          date:        o[OBS_DATE],
+          flags:       o[OBS_FLAGS],
+          photo_id:    o[OBS_PHOTO],
+          koppen:      o[OBS_KOP],
+          genus:       taxon[2] || entry.genus,
+        },
+      };
+      navPush({
+        label:   esc(entry.scientific_name),
+        restore: () => openSpeciesSidebar(entry.taxon_id, entry.scientific_name),
+      });
+      openInatObsPanel(feature);
+    });
+  }
 
   // Load soil data — tries precomputed species-soil.json first, centroid fallback
   loadSpeciesSoilSection(entry.taxon_id, entry.scientific_name);
