@@ -1927,10 +1927,11 @@ html, body {
   opacity: 0.9;
   filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.5));
 }
-/* Lift the real controls above the overlay so the dark blur sits behind them */
+/* Lift the real controls above the overlay so the dark blur sits behind them.
+   The info button (#info-toggle) lives inside .leaflet-top.leaflet-right, so it
+   is lifted by that selector too. */
 body.bmg-onboarding .leaflet-top.leaflet-right,
-body.bmg-onboarding #search-container,
-body.bmg-onboarding #bmg-info-btn { z-index: 9100; }
+body.bmg-onboarding #search-container { z-index: 9100; }
 
 .bmg-onboard-target {
   border-radius: 8px;
@@ -2121,34 +2122,6 @@ body.bmg-onboarding #bmg-info-btn { z-index: 9100; }
 }
 .bmg-source-row .bmg-source-value { color: var(--text-primary); }
 
-/* Floating info button (bottom-right of map) */
-.bmg-info-btn {
-  position: absolute;
-  bottom: 12px;
-  right: 12px;
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  background: var(--bg-panel);
-  border: 1px solid var(--border);
-  color: var(--text-muted);
-  font-size: 16px;
-  font-weight: 600;
-  font-family: Georgia, serif;
-  font-style: italic;
-  cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 500;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
-  transition: color 0.15s, border-color 0.15s;
-}
-.bmg-info-btn:hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
-
 @media (max-width: 600px) {
   .bmg-modal-body { padding: 22px 18px 18px; }
   .bmg-source-row { grid-template-columns: 1fr; gap: 2px; margin-bottom: 12px; }
@@ -2166,7 +2139,7 @@ body.bmg-onboarding #bmg-info-btn { z-index: 9100; }
 
     <div id="search-container">
       <div id="search-input-wrap">
-        <input id="search-input" type="text" placeholder="Search location…" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="none">
+        <input id="search-input" type="text" placeholder="Search location or species…" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="none">
         <button id="search-clear" title="Clear search">×</button>
       </div>
       <div id="search-suggestions"></div>
@@ -2253,9 +2226,6 @@ body.bmg-onboarding #bmg-info-btn { z-index: 9100; }
 
     <!-- Soil map legend — updated by updateSoilLegend() -->
     <div id="soil-legend"></div>
-
-    <!-- Info button: opens data-sources + methodology dialog -->
-    <button id="bmg-info-btn" class="bmg-info-btn" title="About this map · data sources">i</button>
   </div>
 
   <div id="side-panel">
@@ -7073,10 +7043,10 @@ function getWelcomeHtml() {
         <strong>Filter and narrow</strong> — Right panel lets you filter by genus,
         Köppen zone, observation quality, and more.
       </li>
-      <li data-arrow-target="bmg-info-btn">
+      <li data-arrow-target="info-toggle">
         <span class="bmg-li-icon">${BMG_ICONS.info}</span>
-        <strong>Data sources</strong> — Click the small <em>i</em> button in the
-        bottom-right to see where the data comes from and how it's computed.
+        <strong>Data sources</strong> — Click the <em>i</em> button in the top-right
+        toolbar to see where the data comes from and how it's computed.
       </li>
     </ul>
 
@@ -7285,10 +7255,9 @@ function drawOnboardingArrows() {
 }
 
 function bmgSetupModalHandlers() {
-  // Filter / Unmapped buttons are now Leaflet controls; their icons are set
-  // inline when the controls' onAdd() runs in buildMapControls(). The bottom-
-  // right info button (defined as static HTML) is still wired here.
-  document.getElementById('bmg-info-btn')?.addEventListener('click', bmgOpenInfo);
+  // The info dialog is opened from the top-right toolbar "About" button
+  // (InfoCtrl, wired in buildMapControls). The old bottom-right floating "i"
+  // button was removed — it got covered by the side panel and zoom controls.
   document.getElementById('bmg-modal-close')?.addEventListener('click', bmgCloseModal);
 
   // Click on overlay (outside the inner modal box) closes
