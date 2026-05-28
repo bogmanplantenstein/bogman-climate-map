@@ -6362,6 +6362,13 @@ function drawInatClusters(clusters, zoom) {
   inatClusterGroup.clearLayers();
   inatRectGroup.clearLayers();
 
+  // iNaturalist snaps obscured observations to a 0.2° grid, so several can land
+  // in the exact same cell. We bucket all declustered obscured points by cell
+  // and draw ONE rectangle per cell — clicking it lists every sighting in that
+  // cell (mirroring how a cluster expands) rather than opening only whichever
+  // overlapping rectangle happened to be on top.
+  const obscuredCells = new Map();   // "swLat,swLng" → { swLat, swLng, feats: [] }
+
   for (const f of clusters) {
     const props = f.properties;
 
@@ -6386,25 +6393,18 @@ function drawInatClusters(clusters, zoom) {
 
     } else {
       // ── Individual observation ───────────────────────
-      const { lat, lng, flags, photo_id, genus, obs_id, taxon_name, common_name, date } = props;
+      const { lat, lng, flags, genus } = props;
       const color    = INAT_GENUS_COLORS[genus] || '#aaa';
       const obscured = !!(flags & F_OBSCURED);
 
       if (obscured) {
-        // Draw the iNat 0.2° uncertainty box
+        // Bucket by 0.2° uncertainty cell; rectangles are drawn after the loop.
         const swLat = Math.floor(lat / 0.2) * 0.2;
         const swLng = Math.floor(lng / 0.2) * 0.2;
-        const rect  = L.rectangle([[swLat, swLng], [swLat + 0.2, swLng + 0.2]], {
-          className:   'inat-obscured-rect',
-          color,
-          fillColor:   color,
-          fillOpacity: 0.08,
-          weight:      1.5,
-          dashArray:   '5,4',
-          interactive: true,
-        });
-        rect.on('click', e => { L.DomEvent.stopPropagation(e); openInatObsPanel(f); });
-        inatRectGroup.addLayer(rect);
+        const key   = `${swLat.toFixed(4)},${swLng.toFixed(4)}`;
+        let cell = obscuredCells.get(key);
+        if (!cell) { cell = { swLat, swLng, feats: [] }; obscuredCells.set(key, cell); }
+        cell.feats.push(f);
       } else {
         const marker = L.circleMarker([lat, lng], {
           radius:      5,
@@ -6420,6 +6420,37 @@ function drawInatClusters(clusters, zoom) {
       }
     }
   }
+
+  // One rectangle per obscured 0.2° cell.
+  obscuredCells.forEach(({ swLat, swLng, feats }) => {
+    const color = INAT_GENUS_COLORS[feats[0].properties.genus] || '#aaa';
+    const rect  = L.rectangle([[swLat, swLng], [swLat + 0.2, swLng + 0.2]], {
+      className:   'inat-obscured-rect',
+      color,
+      fillColor:   color,
+      fillOpacity: 0.08,
+      weight:      1.5,
+      dashArray:   '5,4',
+      interactive: true,
+    });
+    if (feats.length > 1) {
+      rect.bindTooltip(`${feats.length} sightings · approx. location`, { direction: 'top', sticky: true });
+    }
+    rect.on('click', e => {
+      L.DomEvent.stopPropagation(e);
+      if (feats.length === 1) {
+        openInatObsPanel(feats[0]);
+      } else {
+        // Same flow as expanding a cluster: list the species in this cell.
+        navClear();
+        inatNav.clusterLatlng = L.latLng(swLat + 0.1, swLng + 0.1);
+        inatNav.clusterLeaves = feats;
+        openSidePanelForInat();
+        renderInatSpeciesList(feats);
+      }
+    });
+    inatRectGroup.addLayer(rect);
+  });
 }
 
 // ── Side panel — species list ─────────────────────────────
