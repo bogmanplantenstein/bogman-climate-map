@@ -3036,6 +3036,22 @@ function buildMapControls() {
     }
   });
 
+  // Info / about toggle — opens the data-sources & methodology dialog from the
+  // top-right toolbar. Mirrors the bottom-right floating "i" button, but stays
+  // accessible when the side panel is open (which can cover the corner one).
+  const InfoCtrl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const btn = L.DomUtil.create('button', 'map-btn');
+      btn.id        = 'info-toggle';
+      btn.title     = 'About this map · data sources';
+      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.info}</span>`;
+      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
+      L.DomEvent.on(btn, 'click', () => bmgOpenInfo());
+      return btn;
+    }
+  });
+
   // Small uppercase label control used to introduce each functional group of
   // buttons in the top-right stack ("LAYER" / "KEYS" / "SPECIES"). Replaces
   // the previous invisible SpacerCtrl with explicit labels so users can see
@@ -3055,8 +3071,14 @@ function buildMapControls() {
   // Top-right control stack, grouped + labelled:
   //   [LAYER]   basemap, Köppen overlay, Soil layer
   //   [KEYS]    Köppen colour key, Soil colour key
-  //   [SPECIES] iNat panel, CP filters, Unmapped taxa
+  //   [SPECIES] iNat panel
+  //   [ABOUT]   data sources / methodology dialog
   // Within each group, controls are ordered by frequency of use.
+  //
+  // The gallery-pin toggle (GalleryCtrl) and unmapped-taxa toggle (UnmappedCtrl)
+  // are intentionally NOT added: the curated gallery taxa data is unfinished, so
+  // those pins are hidden for now. The control classes are kept defined above so
+  // they can be re-added in one line once the gallery data is refreshed.
   new (makeLabelCtrl('Layer'))().addTo(map);
   new TileCtrl().addTo(map);
   new KoppenCtrl().addTo(map);
@@ -3068,9 +3090,9 @@ function buildMapControls() {
 
   new (makeLabelCtrl('Species'))().addTo(map);
   new InatCtrl().addTo(map);
-  new GalleryCtrl().addTo(map);
-  new FilterCtrl().addTo(map);
-  new UnmappedCtrl().addTo(map);
+
+  new (makeLabelCtrl('About'))().addTo(map);
+  new InfoCtrl().addTo(map);
 }
 
 // ═══════════════════════════════════════════════════════════
