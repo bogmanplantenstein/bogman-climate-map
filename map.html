@@ -1907,6 +1907,41 @@ html, body {
 .bmg-modal-overlay.hidden { display: none; }
 @keyframes bmg-modal-fade { from { opacity: 0; } to { opacity: 1; } }
 
+/* ── Welcome onboarding: arrows + button spotlight ───────────
+   When the welcome modal is open (desktop only), the three key controls are
+   lifted ABOVE the dark/blurred overlay so they stay crisp and obvious, each
+   wrapped in a pulsing accent ring. An SVG layer behind the modal box draws a
+   connector arrow from each annotated bullet to its control. */
+#bmg-arrow-svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;     /* never intercept clicks meant for the modal */
+}
+.bmg-arrow-path {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2.5;
+  stroke-linecap: round;
+  opacity: 0.9;
+  filter: drop-shadow(0 0 4px rgba(74, 222, 128, 0.5));
+}
+/* Lift the real controls above the overlay so the dark blur sits behind them */
+body.bmg-onboarding .leaflet-top.leaflet-right,
+body.bmg-onboarding #search-container,
+body.bmg-onboarding #bmg-info-btn { z-index: 9100; }
+
+.bmg-onboard-target {
+  border-radius: 8px;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 16px 4px rgba(74, 222, 128, 0.55);
+  animation: bmg-onboard-pulse 1.6s ease-in-out infinite;
+}
+@keyframes bmg-onboard-pulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent), 0 0 12px 3px rgba(74, 222, 128, 0.45); }
+  50%      { box-shadow: 0 0 0 3px var(--accent), 0 0 22px 7px rgba(74, 222, 128, 0.75); }
+}
+
 .bmg-modal {
   background: var(--bg-panel);
   border: 1px solid var(--border);
@@ -2525,6 +2560,12 @@ let speciesSoilData    = null;    // keyed by taxon_id (string) → { wrb, ph, s
 
 let allMapTaxa    = [];   // eligible taxa with coords
 let unmappedTaxa  = [];   // eligible taxa without coords
+// Gallery (curated) species pins are forced OFF for every visitor right now —
+// the Bogman gallery taxa data hasn't been refreshed yet, so we don't surface
+// it. The SPECIES > Gallery toggle still flips it on within a session, but the
+// preference is NOT restored from localStorage on load (intentional: always
+// start off until the gallery data is updated).
+let gallerySpeciesVisible = false;
 let habitatsMap   = {};   // id → name
 let availableGenera = []; // sorted genus names present on map
 
@@ -2954,23 +2995,42 @@ function buildMapControls() {
     }
   });
 
-  // Unmapped-taxa toggle (moved from bottom-left static <button>). Includes
-  // a numeric badge showing the count; the badge element retains the same
-  // #unmapped-count ID so buildUnmappedList can update it without changes.
+  // Unmapped-taxa toggle. The numeric count badge was removed — the map is
+  // primarily an iNat / climate / soil tool, so the gallery taxa count was
+  // visual noise. Users who want the count can still see it inside the panel.
   const UnmappedCtrl = L.Control.extend({
     options: { position: 'topright' },
     onAdd() {
       const btn = L.DomUtil.create('button', 'map-btn');
       btn.id        = 'unmapped-toggle';
       btn.title     = 'Unmapped taxa';
-      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.list}</span>` +
-                      `<span class="map-btn-badge" id="unmapped-count">…</span>`;
+      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.list}</span>`;
       L.DomEvent.on(btn, 'click', L.DomEvent.stop);
       L.DomEvent.on(btn, 'click', () => {
         const panel = document.getElementById('unmapped-panel');
         const open  = panel.classList.toggle('open');
         btn.classList.toggle('active', open);
         if (open) closeOtherSightingsPanels('unmapped-panel');
+      });
+      return btn;
+    }
+  });
+
+  // Gallery-species toggle. Flips the visibility of all curated gallery pins
+  // (the map.json taxa, distinct from iNat observations) on/off. Defaults to
+  // OFF so the map opens uncluttered for iNat / climate / soil exploration.
+  // Pressed state mirrors gallerySpeciesVisible.
+  const GalleryCtrl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const btn = L.DomUtil.create('button', 'map-btn');
+      btn.id        = 'gallery-toggle';
+      btn.title     = 'Show gallery species pins';
+      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.pin}</span>`;
+      btn.classList.toggle('active', gallerySpeciesVisible);
+      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
+      L.DomEvent.on(btn, 'click', () => {
+        setGallerySpeciesVisible(!gallerySpeciesVisible);
       });
       return btn;
     }
@@ -3008,6 +3068,7 @@ function buildMapControls() {
 
   new (makeLabelCtrl('Species'))().addTo(map);
   new InatCtrl().addTo(map);
+  new GalleryCtrl().addTo(map);
   new FilterCtrl().addTo(map);
   new UnmappedCtrl().addTo(map);
 }
@@ -3572,6 +3633,9 @@ async function showSoilPopup(latlng) {
 // ═══════════════════════════════════════════════════════════
 
 function renderPins(taxa) {
+  // Skip addTo when the gallery toggle is off — saves N add+remove Leaflet ops
+  // at startup (default is off). The toggle handler calls applyFilters() which
+  // will addTo on demand.
   taxa.forEach(taxon => {
     const { lat, lng, rangeRadiusKm, coordinatePrecision } = taxon.mapPin;
     const color = genusColor(taxon.genus);
@@ -3579,7 +3643,7 @@ function renderPins(taxa) {
     const marker = L.marker([lat, lng], { icon: makeIcon(taxon), zIndexOffset: 100 });
     marker.bindTooltip(taxon.displayName, { direction: 'top' });
     marker.on('click', e => { L.DomEvent.stopPropagation(e); handlePinClick(e, taxon); });
-    marker.addTo(map);
+    if (gallerySpeciesVisible) marker.addTo(map);
 
     let circle = null;
     if (rangeRadiusKm) {
@@ -3591,24 +3655,12 @@ function renderPins(taxa) {
         weight:      1,
         opacity:     0.28,
         interactive: false
-      }).addTo(map);
+      });
+      if (gallerySpeciesVisible) circle.addTo(map);
     }
 
     markerStore.set(taxon.id, { marker, circle, taxon });
   });
-
-  updatePinCount();
-}
-
-function updatePinCount() {
-  let n = 0;
-  markerStore.forEach(({ marker }) => { if (map.hasLayer(marker)) n++; });
-  // Update unmapped toggle label with pin count hint
-  const toggleEl = document.getElementById('unmapped-toggle');
-  if (toggleEl) {
-    const cnt = document.getElementById('unmapped-count');
-    // cnt text is set in buildUnmappedList
-  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3864,29 +3916,55 @@ function renderPanel(taxon) {
 // ═══════════════════════════════════════════════════════════
 
 function buildClimateTable(cn) {
-  const hasMean = !!(cn.tempMean && cn.tempMean.length);
+  const hasMean    = !!(cn.tempMean && cn.tempMean.length);
+  const hasExtHi   = !!(cn.tempMaxHi && cn.tempMaxHi.some(v => v != null));
+  const hasExtLo   = !!(cn.tempMinLo && cn.tempMinLo.some(v => v != null));
+  const hasRH      = !!(cn.rhMean && cn.rhMean.some(v => v != null));
+
   const rows = MONTHS.map((m, i) => {
     const hi    = cn.tempMax   ? cn.tempMax[i]   : null;
     const lo    = cn.tempMin   ? cn.tempMin[i]   : null;
-    const mean  = hasMean       ? cn.tempMean[i]  : null;
+    const exHi  = hasExtHi     ? cn.tempMaxHi[i] : null;
+    const exLo  = hasExtLo     ? cn.tempMinLo[i] : null;
+    const mean  = hasMean      ? cn.tempMean[i]  : null;
+    const rhAvg = hasRH        ? cn.rhMean[i]    : null;
     const prec  = cn.precipMm  ? cn.precipMm[i]  : null;
     return `<tr>
       <td>${m}</td>
       <td data-celsius="${hi}">${toDisplay(hi, tempUnit)}</td>
+      ${hasExtHi ? `<td data-celsius="${exHi}">${toDisplay(exHi, tempUnit)}</td>` : ''}
       <td data-celsius="${lo}">${toDisplay(lo, tempUnit)}</td>
+      ${hasExtLo ? `<td data-celsius="${exLo}">${toDisplay(exLo, tempUnit)}</td>` : ''}
       ${hasMean ? `<td data-celsius="${mean}">${toDisplay(mean, tempUnit)}</td>` : ''}
+      ${hasRH   ? `<td>${rhAvg != null ? Math.round(rhAvg) + '%' : '—'}</td>` : ''}
       <td>${prec != null ? Math.round(prec)+'mm' : '—'}</td>
     </tr>`;
   }).join('');
 
   const annHi   = cn.tempMax  ? Math.max(...cn.tempMax)              : null;
   const annLo   = cn.tempMin  ? Math.min(...cn.tempMin)              : null;
+  // Annual extreme cells reuse typicalHottestDay/typicalColdestDay if present
+  // (p95/p5 of all daily highs/lows); fall back to max/min of the monthly
+  // extreme band when only the monthly arrays are populated.
+  const annExHi = cn.typicalHottestDay != null
+    ? cn.typicalHottestDay
+    : (hasExtHi ? Math.max(...cn.tempMaxHi.filter(v => v != null)) : null);
+  const annExLo = cn.typicalColdestDay != null
+    ? cn.typicalColdestDay
+    : (hasExtLo ? Math.min(...cn.tempMinLo.filter(v => v != null)) : null);
   const annPrec = cn.precipMm ? Math.round(cn.precipMm.reduce((a,b)=>a+b,0)) : null;
+  const validRH = hasRH ? cn.rhMean.filter(v => v != null) : [];
+  const annRH   = validRH.length ? validRH.reduce((a,b)=>a+b,0) / validRH.length : null;
 
   return `<table class="climate-table">
     <thead><tr>
-      <th>Month</th><th>High</th><th>Low</th>
+      <th>Month</th>
+      <th>High</th>
+      ${hasExtHi ? '<th title="Typical monthly heat extreme (p90 of daily highs)">Ext High</th>' : ''}
+      <th>Low</th>
+      ${hasExtLo ? '<th title="Typical monthly cold extreme (p10 of daily lows)">Ext Low</th>' : ''}
       ${hasMean ? '<th>Mean</th>' : ''}
+      ${hasRH   ? '<th title="Mean relative humidity">RH Avg</th>' : ''}
       <th>Precip</th>
     </tr></thead>
     <tbody>
@@ -3894,8 +3972,11 @@ function buildClimateTable(cn) {
       <tr class="annual-row">
         <td>Annual</td>
         <td data-celsius="${annHi}">${toDisplay(annHi, tempUnit)}</td>
+        ${hasExtHi ? `<td data-celsius="${annExHi}">${annExHi != null ? toDisplay(annExHi, tempUnit) : '—'}</td>` : ''}
         <td data-celsius="${annLo}">${toDisplay(annLo, tempUnit)}</td>
+        ${hasExtLo ? `<td data-celsius="${annExLo}">${annExLo != null ? toDisplay(annExLo, tempUnit) : '—'}</td>` : ''}
         ${hasMean ? '<td>—</td>' : ''}
+        ${hasRH   ? `<td>${annRH != null ? Math.round(annRH) + '%' : '—'}</td>` : ''}
         <td>${annPrec != null ? annPrec+'mm' : '—'}</td>
       </tr>
     </tbody>
@@ -4106,24 +4187,20 @@ function buildLightChart(cn) {
 }
 
 function buildLightTable(cn) {
-  const hasRH   = cn.rhMean && cn.rhMean.some(v => v != null);
-  const hasPPFD = cn.ppfd   && cn.ppfd.some(v => v != null);
+  const hasPPFD = cn.ppfd && cn.ppfd.some(v => v != null);
 
-  // NASA POWER's /daily endpoint only provides daily-mean RH (RH2M), so we
-  // only show a single RH Avg column. The old Open-Meteo hourly path used to
-  // surface RH High / RH Low (diurnal max/min) as well — those columns were
-  // removed when the source switched.
+  // RH Avg used to live here, but it's been moved to buildClimateTable so that
+  // temperature / precipitation / humidity all live in one table. This table
+  // now strictly covers light & atmosphere (daylight, DLI, PPFD).
   const rows = MONTHS.map((mon, i) => {
-    const dl    = cn.daylightHrs?.[i];
-    const dli   = cn.dli?.[i];
-    const ppfd  = cn.ppfd?.[i];
-    const rhAvg = cn.rhMean?.[i];
+    const dl   = cn.daylightHrs?.[i];
+    const dli  = cn.dli?.[i];
+    const ppfd = cn.ppfd?.[i];
     return `<tr>
       <td>${mon}</td>
       <td>${dl  != null ? dl.toFixed(1) + 'h' : '—'}</td>
       <td>${dli != null ? dli.toFixed(1)       : '—'}</td>
       ${hasPPFD ? `<td>${ppfd != null ? Math.round(ppfd) : '—'}</td>` : ''}
-      ${hasRH   ? `<td>${rhAvg != null ? Math.round(rhAvg) + '%' : '—'}</td>` : ''}
     </tr>`;
   }).join('');
 
@@ -4134,7 +4211,6 @@ function buildLightTable(cn) {
         <th>Daylight</th>
         <th title="Daily Light Integral (mol photons/m²/day)">DLI</th>
         ${hasPPFD ? '<th title="Avg PPFD during daylight (μmol/m²/s)">PPFD</th>' : ''}
-        ${hasRH   ? '<th title="Mean relative humidity">RH Avg</th>' : ''}
       </tr></thead>
       <tbody>${rows}</tbody>
     </table>
@@ -4698,9 +4774,6 @@ function buildLocationPanel(state) {
     const peakLow  = validMin.length ? Math.min(...validMin) : null;
     const annPrec  = Math.round(normals.precipMm.reduce((a, b) => a + (b || 0), 0));
 
-    const validDLI = normals.dli ? normals.dli.filter(x => x != null) : [];
-    const avgDLI   = validDLI.length ? validDLI.reduce((a, b) => a + b, 0) / validDLI.length : null;
-
     const validRH = normals.rhMean ? normals.rhMean.filter(v => v != null) : [];
     const annRHAvg = validRH.length ? validRH.reduce((a, b) => a + b, 0) / validRH.length : null;
 
@@ -4731,8 +4804,6 @@ function buildLocationPanel(state) {
           <div class="climate-stat-value">${normals.usdaZone}</div></div>` : ''}
         <div class="climate-stat"><div class="climate-stat-label">Annual Precip</div>
           <div class="climate-stat-value">${annPrec}<span class="climate-stat-unit">mm</span></div></div>
-        ${avgDLI != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg DLI</div>
-          <div class="climate-stat-value">${avgDLI.toFixed(1)}<span class="climate-stat-unit">mol/m²</span></div></div>` : ''}
         ${annRHAvg != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg RH</div>
           <div class="climate-stat-value">${Math.round(annRHAvg)}<span class="climate-stat-unit">%</span></div></div>` : ''}
         ${elevInfo ? `<div class="climate-stat"><div class="climate-stat-label">Elevation</div>
@@ -5763,7 +5834,11 @@ function applyFilters() {
 
   const allGenera  = availableGenera.length;
   const isDefault  = checkedGenera.size === allGenera && checkedKoppen.size === 6 && checkedElev.size === ELEV_BANDS.length + 1;
-  document.getElementById('filter-reset').style.display = isDefault ? 'none' : 'block';
+  // Optional chaining: the reset button only exists once buildFilterUI has
+  // run; the gallery toggle (in buildMapControls, which runs first) can race
+  // with that during a slow data load.
+  const resetBtn = document.getElementById('filter-reset');
+  if (resetBtn) resetBtn.style.display = isDefault ? 'none' : 'block';
 
   markerStore.forEach(({ marker, circle, taxon }) => {
     const genusOk  = checkedGenera.has(taxon.genus);
@@ -5771,11 +5846,25 @@ function applyFilters() {
     const koppenOk = checkedKoppen.has(kg);
     const eb       = getElevBand(taxon) || '?';
     const elevOk   = checkedElev.has(eb) || (eb === '?' && checkedElev.has('?'));
-    const show     = genusOk && koppenOk && elevOk;
+    // Global gallery toggle wins: when off, all gallery pins hide regardless
+    // of the filter checkbox state. The filter UI stays usable so users can
+    // dial in their preferred filter before flipping the gallery back on.
+    const show     = gallerySpeciesVisible && genusOk && koppenOk && elevOk;
 
     show ? marker.addTo(map) : map.removeLayer(marker);
     if (circle) show ? circle.addTo(map) : map.removeLayer(circle);
   });
+}
+
+// Flip the global gallery-species visibility flag, persist it, refresh the
+// button's pressed state, and re-run filters so the markers actually update.
+// Safe to call before #filter-panel exists: applyFilters tolerates that.
+function setGallerySpeciesVisible(visible) {
+  gallerySpeciesVisible = !!visible;
+  try { localStorage.setItem('bmg_gallery_visible', String(gallerySpeciesVisible)); } catch {}
+  const btn = document.getElementById('gallery-toggle');
+  if (btn) btn.classList.toggle('active', gallerySpeciesVisible);
+  applyFilters();
 }
 
 function resetFilters() {
@@ -5791,7 +5880,8 @@ function buildUnmappedList() {
   const sorted = [...unmappedTaxa].sort((a, b) =>
     (a.genus + a.species + a.displayName).localeCompare(b.genus + b.species + b.displayName)
   );
-  document.getElementById('unmapped-count').textContent = sorted.length;
+  // Count badge was removed from the toggle button — the panel header below
+  // already shows the items, so no badge update is needed here anymore.
 
   document.getElementById('unmapped-list').innerHTML = sorted.map(t => {
     const icons = [];
@@ -5942,7 +6032,7 @@ async function init() {
     availableGenera.forEach(g => activeFilters.genera.add(g));
 
     setProgress(75);
-    renderPins(allMapTaxa);
+    renderPins(allMapTaxa);   // honours gallerySpeciesVisible — no second pass needed
     buildFilterUI();
     buildUnmappedList();
     setProgress(88);
@@ -5955,7 +6045,11 @@ async function init() {
     setProgress(100);
     handleUrlParams();
     buildInatFilterPanel();
-    scheduleInatPrefetch();
+    // Observations are the map's primary utility — show them on load instead
+    // of waiting for the user to flip the "Show pins" toggle. enableInatLayer
+    // loads the data (all.json on desktop, per-genus on mobile), so the older
+    // desktop-only prefetch warm-up is no longer needed.
+    enableInatDefault();
 
     // Pre-load soil data files in the background so panels open instantly
     loadSoilCache();
@@ -5969,7 +6063,8 @@ async function init() {
   } catch (err) {
     console.error('Data load failed:', err);
     setProgress(100);
-    document.getElementById('unmapped-count').textContent = '!';
+    // (Count badge on #unmapped-toggle was removed; failure is now visible
+    // only via the dev console — the welcome modal stays put.)
   }
 }
 
@@ -6046,10 +6141,76 @@ let inatNav = {
 };
 
 const inatFilters = {
-  genera:  new Set(window.innerWidth >= 1024 ? INAT_GENERA : []),
+  // All genera selected by default on every device. Observations are the map's
+  // primary utility, so we show them on load (mobile included — heavier, but
+  // intentional; perf to be evaluated on-device).
+  genera:  new Set(INAT_GENERA),
   needsId: false,
   koppen:  new Set(Array.from({ length: 30 }, (_, i) => i + 1)),
 };
+
+// ── Reverse-geocode cache for obs detail panel ────────────
+// Nominatim asks for ≤1 req/sec/IP, so cache results aggressively per cell.
+// In-memory Map for fast hits; sessionStorage backing so the cache survives
+// re-opens within a tab session without a network hop.
+const obsLocationCache = new Map();
+const OBS_LOC_SS_KEY   = 'bmg_obs_loc_cache_v1';
+try {
+  const raw = sessionStorage.getItem(OBS_LOC_SS_KEY);
+  if (raw) {
+    const obj = JSON.parse(raw);
+    for (const [k, v] of Object.entries(obj)) obsLocationCache.set(k, v);
+  }
+} catch {}
+
+// Trailing-edge debounce: a burst of geocode resolutions (e.g. user scrolling
+// through obs detail panels) only flushes once after the burst settles, which
+// keeps the main thread from re-serialising the whole cache on every fetch.
+let _obsLocPersistTimer = null;
+function _persistObsLocCache() {
+  if (_obsLocPersistTimer) return;
+  _obsLocPersistTimer = setTimeout(() => {
+    _obsLocPersistTimer = null;
+    try {
+      sessionStorage.setItem(OBS_LOC_SS_KEY,
+        JSON.stringify(Object.fromEntries(obsLocationCache)));
+    } catch {}
+  }, 500);
+}
+
+// Build a friendly "Town, Region, Country" label from a Nominatim address obj.
+// Picks the most-specific populated-place tag available, then state, then country.
+function _formatObsLocation(addr) {
+  if (!addr) return null;
+  const local = addr.city || addr.town || addr.village || addr.hamlet
+             || addr.suburb || addr.municipality || addr.county;
+  const region = addr.state || addr.region || addr.province;
+  return [local, region, addr.country].filter(Boolean).join(', ') || null;
+}
+
+// Returns a place-name string for (lat,lng), or null on failure.
+// Coordinates are quantised to the obs cache cell (~obscured == ~0.01°, else
+// ~0.001°) so nearby observations share a cache entry.
+async function fetchObsLocationName(lat, lng, obscured) {
+  const q   = obscured ? 2 : 3;   // decimal places for cache key
+  const key = `${lat.toFixed(q)},${lng.toFixed(q)}`;
+  if (obsLocationCache.has(key)) return obsLocationCache.get(key);
+
+  try {
+    const url = `https://nominatim.openstreetmap.org/reverse?lat=${lat.toFixed(4)}&lon=${lng.toFixed(4)}&format=json&zoom=10&addressdetails=1`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    if (!r.ok) { obsLocationCache.set(key, null); _persistObsLocCache(); return null; }
+    const data = await r.json();
+    const name = _formatObsLocation(data?.address) || data?.display_name || null;
+    obsLocationCache.set(key, name);
+    _persistObsLocCache();
+    return name;
+  } catch {
+    obsLocationCache.set(key, null);
+    _persistObsLocCache();
+    return null;
+  }
+}
 
 // ── Inline worker (Supercluster runs off main thread) ─────
 
@@ -6445,11 +6606,16 @@ function openInatObsPanel(feature) {
     ? `~${p.lat.toFixed(2)}, ${p.lng.toFixed(2)} (obscured)`
     : `${p.lat.toFixed(4)}, ${p.lng.toFixed(4)}`;
 
+  // Show coords immediately while we kick off a reverse-geocode in the
+  // background. The async resolver swaps in the place name if the user hasn't
+  // navigated away; race detection reuses the same inatDetailGen counter as
+  // fetchInatObsDetail so both async paths use one consistent mechanism.
+
   document.getElementById('panel-content').innerHTML = `
     ${navBackBtnHtml()}
     <div class="p-species-name">${esc(p.taxon_name)}</div>
     ${p.common_name ? `<div class="p-common-name">${esc(p.common_name)}</div>` : ''}
-    <div class="p-location">${coordStr}</div>
+    <div class="p-location" id="obs-location" title="${esc(coordStr)}">${coordStr}</div>
     <div class="badge-row" style="margin-top:8px">${qBadge}${obsBadge}${koppenBadge}</div>
     <a class="inat-view-link" href="${INAT_OBS_URL}${p.obs_id}" target="_blank" rel="noopener">View on iNaturalist →</a>
 
@@ -6515,6 +6681,18 @@ function openInatObsPanel(feature) {
 
   const gen = ++inatDetailGen;
   fetchInatObsDetail(p.obs_id, gen);
+
+  // Reverse-geocode coords → "Town, Region, Country". The `gen !== inatDetailGen`
+  // check (same as fetchInatObsDetail) makes sure we don't stamp the name onto
+  // a different obs that opened in the meantime.
+  fetchObsLocationName(p.lat, p.lng, obscured).then(name => {
+    if (!name || gen !== inatDetailGen) return;
+    const el = document.getElementById('obs-location');
+    if (!el) return;
+    const display = obscured ? `${name} (approx.)` : name;
+    el.textContent = display;
+    el.title       = display;
+  });
 }
 
 async function fetchInatObsDetail(obsId, gen) {
@@ -6612,10 +6790,10 @@ async function loadInatClimateSection(lat, lng) {
   const peakHigh = validMax.length ? Math.max(...validMax) : null;
   const peakLow  = validMin.length ? Math.min(...validMin) : null;
   const annPrec  = Math.round(normals.precipMm.reduce((a, v) => a + (v || 0), 0));
-  const validDLI = normals.dli ? normals.dli.filter(x => x != null) : [];
-  const avgDLI   = validDLI.length ? validDLI.reduce((a, v) => a + v, 0) / validDLI.length : null;
   const validRH  = normals.rhMean ? normals.rhMean.filter(v => v != null) : [];
   const annRH    = validRH.length ? validRH.reduce((a, v) => a + v, 0) / validRH.length : null;
+  const hotEx    = normals.typicalHottestDay;
+  const coldEx   = normals.typicalColdestDay;
 
   b.innerHTML = `
     <div class="climate-grid" style="margin-top:4px">
@@ -6623,10 +6801,14 @@ async function loadInatClimateSection(lat, lng) {
         <div class="climate-stat-value" data-celsius="${peakHigh}">${toDisplay(peakHigh, tempUnit)}</div></div>
       <div class="climate-stat"><div class="climate-stat-label">Avg Low</div>
         <div class="climate-stat-value" data-celsius="${peakLow}">${toDisplay(peakLow, tempUnit)}</div></div>
+      ${hotEx != null ? `<div class="climate-stat" title="95th percentile of daily highs — the hot extreme you can expect a few days per year">
+        <div class="climate-stat-label">Extreme High</div>
+        <div class="climate-stat-value" data-celsius="${hotEx}">${toDisplay(hotEx, tempUnit)}</div></div>` : ''}
+      ${coldEx != null ? `<div class="climate-stat" title="5th percentile of daily lows — the cold extreme you can expect a few days per year">
+        <div class="climate-stat-label">Extreme Low</div>
+        <div class="climate-stat-value" data-celsius="${coldEx}">${toDisplay(coldEx, tempUnit)}</div></div>` : ''}
       <div class="climate-stat"><div class="climate-stat-label">Annual Precip</div>
         <div class="climate-stat-value">${annPrec}<span class="climate-stat-unit">mm</span></div></div>
-      ${avgDLI != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg DLI</div>
-        <div class="climate-stat-value">${avgDLI.toFixed(1)}<span class="climate-stat-unit">mol/m²</span></div></div>` : ''}
       ${annRH != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg RH</div>
         <div class="climate-stat-value">${Math.round(annRH)}<span class="climate-stat-unit">%</span></div></div>` : ''}
     </div>
@@ -6661,13 +6843,11 @@ async function loadInatSoilSection(lat, lng) {
 // ── Filter panel UI ───────────────────────────────────────
 
 function buildInatFilterPanel() {
-  const isMobile = window.innerWidth < 1024;
-
   // Genera checkboxes
   const genChecks = document.getElementById('inat-genera-checks');
   genChecks.innerHTML = INAT_GENERA.map(g => `
     <label class="inat-check-label">
-      <input type="checkbox" class="inat-genus-cb" data-genus="${g}" ${!isMobile ? 'checked' : ''}>
+      <input type="checkbox" class="inat-genus-cb" data-genus="${g}" checked>
       <span class="inat-genus-dot" style="background:${INAT_GENUS_COLORS[g]}"></span>
       ${g}
     </label>`).join('');
@@ -6795,13 +6975,16 @@ function setInatStatus(msg, loading = false) {
   bar.style.display = loading ? 'block' : 'none';
 }
 
-// ── Desktop prefetch (3s after map loads) ─────────────────
+// ── Default observations ON at load ───────────────────────
 
-function scheduleInatPrefetch() {
-  if (window.innerWidth < 1024) return;
-  setTimeout(() => {
-    fetch(inatDataUrl('all'), { priority: 'low' }).catch(() => {}); // warm browser cache silently
-  }, 3000);
+// Turn on the iNat observation layer by default (desktop + mobile). Reflects
+// the "Show pins" toggle state and kicks off the data load. Kept separate from
+// the toggle's change handler so init can call it without synthesising events.
+function enableInatDefault() {
+  const toggle = document.getElementById('inat-visible-toggle');
+  if (toggle) toggle.checked = true;
+  inatVisible = true;
+  enableInatLayer();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6810,7 +6993,7 @@ function scheduleInatPrefetch() {
 
 // Bump this if the welcome content meaningfully changes — users who'd already
 // dismissed an older version will see the new one once.
-const WELCOME_VERSION = '2';
+const WELCOME_VERSION = '3';   // bumped: added onboarding arrows + control spotlight
 
 // Inline SVG icons — Feather/Lucide-style outline, 24×24 viewBox, currentColor
 // stroke so the CSS rule controls the colour. Used in two places:
@@ -6846,7 +7029,7 @@ function getWelcomeHtml() {
     </div>
 
     <ul>
-      <li>
+      <li data-arrow-target="inat-toggle">
         <span class="bmg-li-icon">${BMG_ICONS.globe}</span>
         <strong>Browse observations</strong> — Toggle pins on in the iNaturalist panel
         and click any marker to see the observer, photos, and that exact location's
@@ -6857,7 +7040,7 @@ function getWelcomeHtml() {
         <strong>Explore by species</strong> — Click a species in the iNat list to see
         its climate envelope, dominant soil types, and where it lives.
       </li>
-      <li>
+      <li data-arrow-target="search-container">
         <span class="bmg-li-icon">${BMG_ICONS.pin}</span>
         <strong>Check any location</strong> — Search a place or click any point on the
         map to see local climate normals and soil — handy for planning a bog garden
@@ -6868,7 +7051,7 @@ function getWelcomeHtml() {
         <strong>Filter and narrow</strong> — Right panel lets you filter by genus,
         Köppen zone, observation quality, and more.
       </li>
-      <li>
+      <li data-arrow-target="bmg-info-btn">
         <span class="bmg-li-icon">${BMG_ICONS.info}</span>
         <strong>Data sources</strong> — Click the small <em>i</em> button in the
         bottom-right to see where the data comes from and how it's computed.
@@ -6967,8 +7150,11 @@ function bmgOpenWelcome() {
   // Wire dismiss buttons (re-bind each open since innerHTML replaces the nodes)
   document.getElementById('bmg-welcome-dismiss')?.addEventListener('click', bmgCloseModal);
   document.getElementById('bmg-show-info-from-welcome')?.addEventListener('click', bmgOpenInfo);
+  // Draw connector arrows after layout settles (rAF lets the modal size first).
+  requestAnimationFrame(drawOnboardingArrows);
 }
 function bmgOpenInfo() {
+  clearOnboardingArrows();   // info dialog has no onboarding overlay
   bmgModalMode = 'info';
   document.getElementById('bmg-modal-body').innerHTML = getInfoHtml();
   document.getElementById('bmg-modal-overlay').classList.remove('hidden');
@@ -6981,8 +7167,99 @@ function bmgCloseModal() {
   if (bmgModalMode === 'welcome') {
     try { localStorage.setItem('bmg_welcome_seen', WELCOME_VERSION); } catch {}
   }
+  clearOnboardingArrows();
   document.getElementById('bmg-modal-overlay').classList.add('hidden');
   bmgModalMode = null;
+}
+
+// ── Welcome onboarding arrows ──────────────────────────────
+// Draw an accent arrow from each annotated bullet (data-arrow-target) to its
+// real on-map control, and lift+highlight those controls above the overlay so
+// they're visible through the dark blur. Desktop only: on narrow screens the
+// modal fills the viewport and the controls sit under it, so arrows would be
+// cramped and overlap — we skip the whole effect there.
+const ONBOARD_ARROW_MIN_WIDTH = 1024;
+
+function clearOnboardingArrows() {
+  document.getElementById('bmg-arrow-svg')?.remove();
+  document.body.classList.remove('bmg-onboarding');
+  document.querySelectorAll('.bmg-onboard-target')
+    .forEach(el => el.classList.remove('bmg-onboard-target'));
+}
+
+function drawOnboardingArrows() {
+  clearOnboardingArrows();
+  if (bmgModalMode !== 'welcome') return;
+  if (window.innerWidth < ONBOARD_ARROW_MIN_WIDTH) return;
+
+  const overlay = document.getElementById('bmg-modal-overlay');
+  const modal   = overlay?.querySelector('.bmg-modal');
+  if (!modal) return;
+
+  // Gather (bullet → control) pairs that actually resolve to a visible element.
+  const pairs = [...document.querySelectorAll('#bmg-modal-body li[data-arrow-target]')]
+    .map(li => ({ li, target: document.getElementById(li.dataset.arrowTarget) }))
+    .filter(p => p.target && p.target.getBoundingClientRect().width > 0);
+  if (!pairs.length) return;
+
+  document.body.classList.add('bmg-onboarding');
+
+  const mr    = modal.getBoundingClientRect();
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+  let paths = '';
+
+  pairs.forEach(({ li, target }) => {
+    target.classList.add('bmg-onboard-target');
+    const tr  = target.getBoundingClientRect();
+    const tcx = tr.left + tr.width / 2;
+    const tcy = tr.top  + tr.height / 2;
+    const lr  = li.getBoundingClientRect();
+
+    // Start on the modal edge facing the target, aligned to the bullet's row
+    // (for left/right exits) or to the target column (for top/bottom exits).
+    const dx = tcx - (mr.left + mr.width / 2);
+    const dy = tcy - (mr.top  + mr.height / 2);
+    let sx, sy;
+    if (Math.abs(dx) >= Math.abs(dy)) {
+      sx = dx > 0 ? mr.right : mr.left;
+      sy = clamp(lr.top + lr.height / 2, mr.top + 14, mr.bottom - 14);
+    } else {
+      sy = dy > 0 ? mr.bottom : mr.top;
+      sx = clamp(tcx, mr.left + 14, mr.right - 14);
+    }
+
+    // End just outside the target edge facing the start. Ray-cast from the
+    // target centre toward the start and find where it crosses the target's
+    // bounding box, then step out a small gap. Using the box edge (not a
+    // radius) keeps the arrow correct for wide targets like the search bar.
+    const dirx = sx - tcx, diry = sy - tcy;
+    const dl   = Math.hypot(dirx, diry) || 1;
+    const ux   = dirx / dl, uy = diry / dl;
+    const tX   = ux !== 0 ? (tr.width  / 2) / Math.abs(ux) : Infinity;
+    const tY   = uy !== 0 ? (tr.height / 2) / Math.abs(uy) : Infinity;
+    const edge = Math.min(tX, tY);
+    const gap  = 12;
+    const ex   = tcx + ux * (edge + gap);
+    const ey   = tcy + uy * (edge + gap);
+
+    // Gentle perpendicular bow on the control point.
+    const mx = (sx + ex) / 2, my = (sy + ey) / 2;
+    const segLen = Math.hypot(ex - sx, ey - sy) || 1;
+    const nx = -(ey - sy) / segLen, ny = (ex - sx) / segLen;
+    const bow = Math.min(60, segLen * 0.18);
+    const cx = mx + nx * bow, cy = my + ny * bow;
+
+    paths += `<path class="bmg-arrow-path" d="M ${sx.toFixed(1)} ${sy.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${ex.toFixed(1)} ${ey.toFixed(1)}" marker-end="url(#bmg-arrowhead)"/>`;
+  });
+
+  const svg = `<svg id="bmg-arrow-svg" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="bmg-arrowhead" viewBox="0 0 10 10" refX="8" refY="5"
+              markerWidth="7" markerHeight="7" orient="auto" markerUnits="userSpaceOnUse">
+        <path d="M0,0 L10,5 L0,10 z" fill="#3fb950"/>
+      </marker>
+    </defs>${paths}</svg>`;
+  overlay.insertAdjacentHTML('afterbegin', svg);
 }
 
 function bmgSetupModalHandlers() {
@@ -7002,6 +7279,15 @@ function bmgSetupModalHandlers() {
     if (e.key === 'Escape' && !document.getElementById('bmg-modal-overlay')?.classList.contains('hidden')) {
       bmgCloseModal();
     }
+  });
+
+  // Keep onboarding arrows aligned when the viewport changes while the welcome
+  // modal is open (debounced to coalesce resize bursts).
+  let _onboardResizeT = null;
+  window.addEventListener('resize', () => {
+    if (bmgModalMode !== 'welcome') return;
+    clearTimeout(_onboardResizeT);
+    _onboardResizeT = setTimeout(drawOnboardingArrows, 120);
   });
 
   // First-visit auto-show: tiny delay so the map renders behind it first
