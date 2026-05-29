@@ -658,24 +658,49 @@ function parseClimateResponse(d) {
 // ── Lapse-rate elevation correction ──────────────────────────────────────────
 
 /**
- * Adjusts tempMax and tempMin for the elevation difference between the
- * Open-Meteo ERA5 model grid (modelElev) and the actual observation site
- * (elev). Uses standard environmental lapse rate: 6.5°C / 1000 m.
- * Only temperature is corrected; precip and RH are left unchanged.
+ * Humidity/temperature-aware lapse rate, °C per km. Blends the dry adiabatic
+ * rate (~9.77, dry air cools fast) toward the moist adiabatic rate (~4–6, latent
+ * heat slows cooling in humid air) by relative humidity. Mirrors the client's
+ * lapseRateCkm() so observation/click panels and species envelopes use the same
+ * physics. A physically-motivated proxy, clamped to [4, 9.8].
+ */
+function lapseRateCkm(tempC, rhPct, elevM) {
+  const g = 9.81, cpd = 1004.6, Hv = 2.501e6, Rsd = 287.05, eps = 0.622;
+  const T  = tempC + 273.15;
+  const P  = 1013.25 * Math.pow(1 - 2.25577e-5 * (elevM || 0), 5.25588);
+  const es = 6.112 * Math.exp(17.67 * tempC / (tempC + 243.5));
+  const rs = eps * es / Math.max(P - es, 1e-3);
+  const gMoist = g * (1 + Hv * rs / (Rsd * T)) /
+                 (cpd + Hv * Hv * rs * eps / (Rsd * T * T)) * 1000;
+  const gDry = g / cpd * 1000;
+  const rh = Math.max(0, Math.min(100, rhPct == null ? 55 : rhPct));
+  return Math.max(4.0, Math.min(9.8, gDry - (gDry - gMoist) * (rh / 100)));
+}
+
+/**
+ * Adjusts all temperature fields for the elevation difference between the
+ * climate-model grid (modelElev) and the cell's representative ground elevation
+ * (elev), using a per-month humidity-aware lapse rate (see lapseRateCkm). Precip
+ * and RH are left unchanged.
  */
 function applyLapseRate(climate, elev) {
   if (elev == null || climate.modelElev == null) return climate;
-  // Positive delta → obs is higher than model → obs is colder → subtract
-  const delta = LAPSE_RATE * (elev - climate.modelElev);
+  const dzKm = (elev - climate.modelElev) / 1000;   // +ve → ground higher → colder
+  const corr = (field) => Array.isArray(climate[field])
+    ? climate[field].map((v, m) => {
+        if (v == null) return null;
+        const meanT = (climate.tempMax?.[m] != null && climate.tempMin?.[m] != null)
+          ? (climate.tempMax[m] + climate.tempMin[m]) / 2 : v;
+        const rate = lapseRateCkm(meanT, climate.rhMean?.[m], climate.modelElev);
+        return round1(v - rate * dzKm);
+      })
+    : (climate[field] ?? null);
   return {
     ...climate,
-    tempMax:   climate.tempMax  .map(v => v != null ? round1(v - delta) : null),
-    tempMin:   climate.tempMin  .map(v => v != null ? round1(v - delta) : null),
-    // Apply same lapse correction to the extreme percentiles — they're also
-    // temperatures, so the same elevation offset applies. Guarded against
-    // older v2 cache entries that don't have these fields.
-    tempMaxHi: climate.tempMaxHi?.map(v => v != null ? round1(v - delta) : null) ?? null,
-    tempMinLo: climate.tempMinLo?.map(v => v != null ? round1(v - delta) : null) ?? null,
+    tempMax:   corr('tempMax'),
+    tempMin:   corr('tempMin'),
+    tempMaxHi: corr('tempMaxHi'),
+    tempMinLo: corr('tempMinLo'),
   };
 }
 
@@ -855,11 +880,11 @@ async function computeSpeciesData(allTaxa, allObs) {
     if (!cells || cells.size < OM_MIN_CELLS) continue;
 
     // Gather climate objects for this taxon's occupied cells
-    const climates = []; // [{c: climate, lat, lng}]
+    const climates = []; // [{c: climate, lat, lng, elev}]
     for (const key of cells) {
       const c = cellClimates.get(key);
       const r = cellReps.get(key);
-      if (c && r) climates.push({ c, lat: r.lat, lng: r.lng });
+      if (c && r) climates.push({ c, lat: r.lat, lng: r.lng, elev: elevs.get(key) ?? null });
     }
     if (climates.length < OM_MIN_CELLS) continue;
 
@@ -925,6 +950,53 @@ async function computeSpeciesData(allTaxa, allObs) {
     const koppenMap = taxonKoppen.get(ti) || new Map();
     const koppen    = [...koppenMap.entries()].sort((a, b) => b[1] - a[1]);
 
+    // ── Daily-extreme temperature tiers (aligned with the obs/click panels) ──
+    // Per cell: avg high/low = hottest/coldest month's MEAN; hot/cold extreme =
+    // hottest month's p90 daily high / coldest month's p10 daily low. Then:
+    //   Avg High/Low          = mean across cells (the typical site)
+    //   Typical Hot/Cold Ext  = mean across cells of the per-cell extreme
+    //   Heat/Cold Limit       = p90 / p10 across cells of the per-cell extreme
+    //                           (the hot/cold edge of the tolerated range; p10/p90
+    //                           trims one bad cell without dropping real extremes)
+    const perCell = climates.map(({ c }) => {
+      const maxA = c.tempMax.filter(v => v != null);
+      const minA = c.tempMin.filter(v => v != null);
+      const hiA  = (c.tempMaxHi || []).filter(v => v != null);
+      const loA  = (c.tempMinLo || []).filter(v => v != null);
+      return {
+        avgHigh: maxA.length ? Math.max(...maxA) : null,
+        avgLow:  minA.length ? Math.min(...minA) : null,
+        hotExt:  hiA.length  ? Math.max(...hiA)  : null,
+        coldExt: loA.length  ? Math.min(...loA)  : null,
+      };
+    });
+    const meanAcross = vals => {
+      const v = vals.filter(x => x != null);
+      return v.length ? round1(v.reduce((a, b) => a + b, 0) / v.length) : null;
+    };
+    const pctAcross = (vals, p) => {
+      const v = vals.filter(x => x != null).sort((a, b) => a - b);
+      return v.length ? round1(pctile(v, p)) : null;
+    };
+    const tempTiers = {
+      avgHigh:     meanAcross(perCell.map(x => x.avgHigh)),
+      avgLow:      meanAcross(perCell.map(x => x.avgLow)),
+      hotTypical:  meanAcross(perCell.map(x => x.hotExt)),
+      coldTypical: meanAcross(perCell.map(x => x.coldExt)),
+      hotLimit:    pctAcross(perCell.map(x => x.hotExt), 90),
+      coldLimit:   pctAcross(perCell.map(x => x.coldExt), 10),
+    };
+
+    // Elevation range across occupied cells (representative-point elevations).
+    const elevVals = climates.map(c => c.elev).filter(v => v != null).sort((a, b) => a - b);
+    const elevStats = elevVals.length ? {
+      min:    Math.round(elevVals[0]),
+      max:    Math.round(elevVals[elevVals.length - 1]),
+      p10:    Math.round(pctile(elevVals, 10)),
+      p90:    Math.round(pctile(elevVals, 90)),
+      median: Math.round(pctile(elevVals, 50)),
+    } : null;
+
     speciesData[taxonId] = {
       taxon_id:        taxonId,
       scientific_name: taxonName,
@@ -933,10 +1005,14 @@ async function computeSpeciesData(allTaxa, allObs) {
       obs_count:       taxonObsCount.get(ti) || 0,
       sample_count:    climates.length,
       stats: {
+        // Legacy annual mean-based percentiles (kept for back-compat).
         tempMax: computeStats(annualMaxT, round1),
         tempMin: computeStats(annualMinT, round1),
         precip:  computeStats(annualPrec, round0),
         rhMean:  computeStats(annualRH,   round0),
+        // Daily-extreme tiers + elevation range (v4).
+        ...tempTiers,
+        elev: elevStats,
       },
       monthly_nh: makeMonthly(nhC),
       monthly_sh: makeMonthly(shC),

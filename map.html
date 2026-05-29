@@ -3988,6 +3988,27 @@ function climateMethodologyHtml() {
   </details>`;
 }
 
+// Species-sidebar explainer. The species envelope is built by aggregating per
+// 0.5° grid cell (one climate sample per cell) across everywhere the species is
+// observed, so most numbers have two levels: a statistic within each cell's
+// daily data, then a statistic across cells.
+function speciesMethodologyHtml(entry) {
+  const n = entry?.sample_count;
+  return `<details class="climate-method">
+    <summary>How these numbers are calculated</summary>
+    <div class="climate-method-body">
+      <p><strong>Source:</strong> NASA POWER (MERRA-2), 2019–2023. The species' observations are grouped into 0.5° (~55&nbsp;km) grid cells${n ? ` (${n.toLocaleString()} occupied cells here)` : ''}; one climate sample is taken per cell and elevation-corrected with the same humidity-aware lapse rate used elsewhere.</p>
+      <p>Within each cell: <em>avg high/low</em> = hottest/coldest month's mean daily high/low; <em>hot/cold extreme</em> = hottest month's p90 daily high and coldest month's p10 daily low. Then across the species' cells:</p>
+      <ul>
+        <li><strong>Avg High / Avg Low</strong> — the <em>mean</em> across cells (a typical site in the range).</li>
+        <li><strong>Typical Hot / Cold Extreme</strong> — the <em>mean</em> across cells of each cell's hot/cold extreme.</li>
+        <li><strong>Heat Limit / Cold Limit</strong> — the <em>p90 / p10 across cells</em> of those extremes: the hot/cold edge of the range. (p90/p10 rather than the absolute max/min so a single bad cell can't define the limit, while genuine extremes are still kept.)</li>
+      </ul>
+      <p><strong>Chart:</strong> the shaded band is the p25–p75 spread of monthly averages <em>across sites</em> (how conditions vary place to place); the dashed lines are the daily hot/cold extremes (median across sites). <strong>Elevation range</strong> is the 10th–90th percentile of occupied-cell elevations.</p>
+    </div>
+  </details>`;
+}
+
 function buildClimateTable(cn) {
   const hasMean    = !!(cn.tempMean && cn.tempMean.length);
   const hasExtHi   = !!(cn.tempMaxHi && cn.tempMaxHi.some(v => v != null));
@@ -5359,35 +5380,55 @@ function buildSpeciesSidebarContent(entry) {
 
   // Headline climate stats
   const s       = entry.stats || {};
-  const coldC   = s.tempMin?.p10;
-  const heatC   = s.tempMax?.p90;
   const precMed = s.precip?.p50;
   const rhLo    = s.rhMean?.p25;
   const rhHi    = s.rhMean?.p75;
+  const elev    = s.elev;
+  // v4 data has daily-extreme tiers; older data (pre-refresh) does not.
+  const hasTiers = s.hotLimit != null || s.coldLimit != null || s.avgHigh != null;
 
-  const statsHtml = `
-    <div class="sp-stats-grid">
-      <div class="sp-stat-card">
-        <div class="sp-stat-label">Cold limit</div>
-        <div class="sp-stat-value">${toDisplay(coldC, tempUnit)}</div>
-        <div class="sp-stat-sub">10th pct annual min</div>
-      </div>
-      <div class="sp-stat-card">
-        <div class="sp-stat-label">Heat limit</div>
-        <div class="sp-stat-value">${toDisplay(heatC, tempUnit)}</div>
-        <div class="sp-stat-sub">90th pct annual max</div>
-      </div>
-      <div class="sp-stat-card">
-        <div class="sp-stat-label">Annual rainfall</div>
-        <div class="sp-stat-value">${precMed != null ? precMed + 'mm' : '—'}</div>
-        <div class="sp-stat-sub">median across range</div>
-      </div>
-      <div class="sp-stat-card">
-        <div class="sp-stat-label">Humidity</div>
-        <div class="sp-stat-value">${rhLo != null && rhHi != null ? rhLo + '–' + rhHi + '%' : '—'}</div>
-        <div class="sp-stat-sub">typical midrange</div>
-      </div>
+  // Temperature stat card (data-celsius lets the °F/°C toggle update it live).
+  const tcard = (label, c, sub) => `
+    <div class="sp-stat-card">
+      <div class="sp-stat-label">${label}</div>
+      <div class="sp-stat-value"${c != null ? ` data-celsius="${c}"` : ''}>${c != null ? toDisplay(c, tempUnit) : '—'}</div>
+      <div class="sp-stat-sub">${sub}</div>
     </div>`;
+  const rainCard = `<div class="sp-stat-card">
+      <div class="sp-stat-label">Annual Rainfall</div>
+      <div class="sp-stat-value">${precMed != null ? precMed + 'mm' : '—'}</div>
+      <div class="sp-stat-sub">median across range</div></div>`;
+  const humidCard = `<div class="sp-stat-card">
+      <div class="sp-stat-label">Humidity</div>
+      <div class="sp-stat-value">${rhLo != null && rhHi != null ? rhLo + '–' + rhHi + '%' : '—'}</div>
+      <div class="sp-stat-sub">typical midrange</div></div>`;
+  const elevCard = elev ? `<div class="sp-stat-card" style="grid-column:1/-1">
+      <div class="sp-stat-label">Elevation range</div>
+      <div class="sp-stat-value" style="font-size:16px">${elev.p10.toLocaleString()}–${elev.p90.toLocaleString()}<span class="climate-stat-unit"> m</span></div>
+      <div class="sp-stat-sub">10th–90th pct across sites · full ${elev.min.toLocaleString()}–${elev.max.toLocaleString()} m</div></div>` : '';
+
+  let statsHtml;
+  if (hasTiers) {
+    statsHtml = `<div class="sp-stats-grid">
+      ${tcard('Avg Low',  s.avgLow,      'mean coldest-month low')}
+      ${tcard('Avg High', s.avgHigh,     'mean hottest-month high')}
+      ${tcard('Typical Cold Ext', s.coldTypical, 'avg of sites’ p10 daily low')}
+      ${tcard('Typical Hot Ext',  s.hotTypical,  'avg of sites’ p90 daily high')}
+      ${tcard('Cold Limit', s.coldLimit, 'p10 daily low, p10 across sites')}
+      ${tcard('Heat Limit', s.hotLimit,  'p90 daily high, p90 across sites')}
+      ${rainCard}
+      ${humidCard}
+      ${elevCard}
+    </div>`;
+  } else {
+    // Legacy layout for data generated before the v4 refresh.
+    statsHtml = `<div class="sp-stats-grid">
+      ${tcard('Cold limit', s.tempMin?.p10, '10th pct annual min')}
+      ${tcard('Heat limit', s.tempMax?.p90, '90th pct annual max')}
+      ${rainCard}
+      ${humidCard}
+    </div>`;
+  }
 
   // Chart section — hemisphere availability for this species.
   // The data file may contain monthly_nh, monthly_sh, or both. Toggle is only
@@ -5567,6 +5608,7 @@ function buildSpeciesSidebarContent(entry) {
     </div>
     ${statsHtml}
     ${chartHtml}
+    ${speciesMethodologyHtml(entry)}
     ${koppenHtml}
     ${buildSoilSectionHtml()}
     ${wikiHtml}
