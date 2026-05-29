@@ -1151,6 +1151,7 @@ html, body {
   background: none;
   border: none;
   padding: 0 0 4px;
+  margin-right: 12px;
   text-align: left;
   opacity: 0.8;
 }
@@ -2230,6 +2231,7 @@ body.bmg-onboarding #search-container { z-index: 9100; }
         </div>
         <div class="inat-section-body" id="inat-genera-body">
           <button class="inat-check-all" id="inat-genera-all">Select all</button>
+          <button class="inat-check-all" id="inat-genera-none">Deselect all</button>
           <div id="inat-genera-checks"></div>
         </div>
       </div>
@@ -7336,6 +7338,10 @@ function buildInatFilterPanel() {
   // Genus checkboxes → filter + load data
   document.getElementById('inat-genera-all').addEventListener('click', () => {
     document.querySelectorAll('.inat-genus-cb').forEach(cb => { cb.checked = true; });
+    applyInatFilters();
+  });
+  document.getElementById('inat-genera-none').addEventListener('click', () => {
+    document.querySelectorAll('.inat-genus-cb').forEach(cb => { cb.checked = false; });
     applyInatFilters();
   });
   document.querySelectorAll('.inat-genus-cb').forEach(cb => {
