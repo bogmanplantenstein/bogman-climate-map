@@ -1553,6 +1553,28 @@ html, body {
 }
 .sp-stat-sub { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
 
+/* Low/Mid/High elevation switcher for obscured-cell climate */
+.elev-switch { display: flex; gap: 6px; margin: 8px 0 4px; }
+.elev-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 5px 4px;
+  cursor: pointer;
+  line-height: 1.2;
+}
+.elev-btn span { font-size: 9px; font-weight: 400; opacity: 0.8; }
+.elev-btn:hover { border-color: var(--accent); color: var(--text-primary); }
+.elev-btn.active { border-color: var(--accent); color: var(--accent); background: var(--accent-dim); }
+
 /* Phenology metric dropdown */
 .sp-pheno-controls { display: flex; align-items: center; gap: 8px; }
 .sp-pheno-lbl { font-size: 11px; color: var(--text-muted); }
@@ -2642,6 +2664,18 @@ function toDisplay(celsius, unit) {
   return unit === 'F'
     ? Math.round(celsius * 9/5 + 32) + '°F'
     : Math.round(celsius) + '°C';
+}
+
+// Numeric-only conversion (no unit suffix) — for building ranges.
+function toNum(celsius, unit) {
+  return unit === 'F' ? Math.round(celsius * 9/5 + 32) : Math.round(celsius);
+}
+
+// "lo–hi°U" range, always rendered low→high regardless of input order.
+function toDisplayRange(loC, hiC, unit) {
+  if (loC == null || hiC == null) return '—';
+  const a = toNum(loC, unit), b = toNum(hiC, unit);
+  return `${Math.min(a, b)}–${Math.max(a, b)}°${unit}`;
 }
 
 function koppenGroup(code) {
@@ -4336,6 +4370,11 @@ function setTempUnit(unit) {
   document.querySelectorAll('[data-celsius]').forEach(el => {
     const c = parseFloat(el.dataset.celsius);
     if (!isNaN(c)) el.textContent = toDisplay(c, unit);
+  });
+  // Temperature ranges (obscured-cell boxes): data-celsius-range="loC,hiC"
+  document.querySelectorAll('[data-celsius-range]').forEach(el => {
+    const [lo, hi] = el.dataset.celsiusRange.split(',').map(parseFloat);
+    if (!isNaN(lo) && !isNaN(hi)) el.textContent = toDisplayRange(lo, hi, unit);
   });
 
   // Rebuild chart with new unit
@@ -7225,68 +7264,122 @@ async function loadInatClimateSection(lat, lng, obscured) {
     return;
   }
 
-  // Humidity-aware, per-month lapse correction to the (median) terrain elevation.
-  let elevNote = '';
-  if (elev && normals.modelElev != null) {
-    normals = applyHumidityLapse(normals, elev.median);
-    const rate = Math.round(meanLapseRate(normals, elev.median) * 10) / 10;
-    if (obscured) {
-      const spread = Math.round(meanLapseRate(normals, elev.median) * (elev.max - elev.min) / 1000 * 10) / 10;
-      elevNote = `<div class="sp-chart-note"><strong>Approximate location.</strong> The true site is unknown within this ~22 km cell, where elevation ranges <strong>${elev.min.toLocaleString()}–${elev.max.toLocaleString()} m</strong>. Across that range, temperatures may vary by ~${spread}°C (humidity-aware lapse rate ~${rate}°C/1000 m). Values below are for the cell's mid elevation (${elev.median.toLocaleString()} m).</div>`;
-    } else {
-      elevNote = `<div class="sp-chart-note">Temperatures corrected for elevation (${elev.median.toLocaleString()} m) using a humidity-aware lapse rate (~${rate}°C/1000 m, applied per month).</div>`;
-    }
-  }
+  // Build humidity-aware, per-month elevation corrections. For obscured cells
+  // with real relief we keep three versions — at the cell's min (warmest),
+  // median, and max (coldest) elevation — so the boxes can show a range and the
+  // chart can switch between them. Exact sightings use the single point.
+  const raw       = normals;                       // uncorrected (rhMean included)
+  const canCorrect = elev && raw.modelElev != null;
+  const useRange   = obscured && canCorrect && (elev.max - elev.min) >= 25;
+  const cMed  = canCorrect ? applyHumidityLapse(raw, elev.median) : raw;
+  const cLow  = useRange   ? applyHumidityLapse(raw, elev.min)    : cMed;  // lowest → warmest
+  const cHigh = useRange   ? applyHumidityLapse(raw, elev.max)    : cMed;  // highest → coldest
+  const corrected = { low: cLow, med: cMed, high: cHigh };
+  const elevByKey = { low: elev?.min, med: elev?.median, high: elev?.max };
 
-  const validMax = normals.tempMax.filter(x => x != null);
-  const validMin = normals.tempMin.filter(x => x != null);
-  const peakHigh = validMax.length ? Math.max(...validMax) : null;
-  const peakLow  = validMin.length ? Math.min(...validMin) : null;
-  const annPrec  = Math.round(normals.precipMm.reduce((a, v) => a + (v || 0), 0));
-  const validRH  = normals.rhMean ? normals.rhMean.filter(v => v != null) : [];
-  const annRH    = validRH.length ? validRH.reduce((a, v) => a + v, 0) / validRH.length : null;
-  const { extHigh: hotEx, extLow: coldEx } = extremeBoxVals(normals);
+  const metricsOf = cn => {
+    const vMax = cn.tempMax.filter(x => x != null);
+    const vMin = cn.tempMin.filter(x => x != null);
+    const ex = extremeBoxVals(cn);
+    return {
+      avgHigh: vMax.length ? Math.max(...vMax) : null,
+      avgLow:  vMin.length ? Math.min(...vMin) : null,
+      extHigh: ex.extHigh, extLow: ex.extLow,
+    };
+  };
+  const mMed = metricsOf(cMed), warm = metricsOf(cLow), cold = metricsOf(cHigh);
+
+  // Precip / RH are not elevation-dependent.
+  const annPrec = Math.round(raw.precipMm.reduce((a, v) => a + (v || 0), 0));
+  const validRH = raw.rhMean ? raw.rhMean.filter(v => v != null) : [];
+  const annRH   = validRH.length ? validRH.reduce((a, v) => a + v, 0) / validRH.length : null;
+
+  // Temperature stat box — a range (cold→warm across the elevation span) for
+  // obscured cells, otherwise a single value.
+  const tBox = (label, title, single, loC, hiC) => {
+    if (single == null && !(useRange && loC != null)) return '';
+    return useRange
+      ? `<div class="climate-stat" title="${title} — range across the cell's elevation span">
+           <div class="climate-stat-label">${label}</div>
+           <div class="climate-stat-value" style="font-size:15px" data-celsius-range="${loC},${hiC}">${toDisplayRange(loC, hiC, tempUnit)}</div></div>`
+      : `<div class="climate-stat" title="${title}">
+           <div class="climate-stat-label">${label}</div>
+           <div class="climate-stat-value" data-celsius="${single}">${toDisplay(single, tempUnit)}</div></div>`;
+  };
+
   const elevBox = elev
-    ? (obscured
+    ? (useRange
         ? `<div class="climate-stat" title="Elevation range across the obscured ~22 km cell"><div class="climate-stat-label">Elevation</div>
             <div class="climate-stat-value" style="font-size:13px">${elev.min.toLocaleString()}–${elev.max.toLocaleString()}<span class="climate-stat-unit">m</span></div></div>`
         : `<div class="climate-stat"><div class="climate-stat-label">Elevation</div>
             <div class="climate-stat-value">${elev.median.toLocaleString()}<span class="climate-stat-unit">m</span></div></div>`)
     : '';
 
+  // Note + (for obscured ranges) a Low/Mid/High elevation switcher.
+  let controlsHtml = '';
+  if (useRange) {
+    const rate = Math.round(meanLapseRate(cMed, elev.median) * 10) / 10;
+    controlsHtml = `
+      <div class="sp-chart-note"><strong>Approximate location.</strong> The true site is unknown within this ~22 km cell, where elevation ranges <strong>${elev.min.toLocaleString()}–${elev.max.toLocaleString()} m</strong>. Boxes show the range across that span (humidity-aware lapse ~${rate}°C/1000 m). Pick an elevation for the chart &amp; table:</div>
+      <div class="elev-switch">
+        <button class="elev-btn" data-elev="low">Low<span>${elev.min.toLocaleString()} m</span></button>
+        <button class="elev-btn active" data-elev="med">Mid<span>${elev.median.toLocaleString()} m</span></button>
+        <button class="elev-btn" data-elev="high">High<span>${elev.max.toLocaleString()} m</span></button>
+      </div>
+      <div class="sp-chart-note" id="elev-sel-note"></div>`;
+  } else if (canCorrect) {
+    const rate = Math.round(meanLapseRate(cMed, elev.median) * 10) / 10;
+    controlsHtml = obscured
+      ? `<div class="sp-chart-note"><strong>Approximate location</strong> (~22 km cell, little elevation variation). Temperatures corrected to ${elev.median.toLocaleString()} m (humidity-aware lapse ~${rate}°C/1000 m).</div>`
+      : `<div class="sp-chart-note">Temperatures corrected for elevation (${elev.median.toLocaleString()} m) using a humidity-aware lapse rate (~${rate}°C/1000 m, applied per month).</div>`;
+  }
+
   b.innerHTML = `
     <div class="climate-grid" style="margin-top:4px">
-      <div class="climate-stat" title="Hottest month's average daily high"><div class="climate-stat-label">Avg High</div>
-        <div class="climate-stat-value" data-celsius="${peakHigh}">${toDisplay(peakHigh, tempUnit)}</div></div>
-      <div class="climate-stat" title="Coldest month's average daily low"><div class="climate-stat-label">Avg Low</div>
-        <div class="climate-stat-value" data-celsius="${peakLow}">${toDisplay(peakLow, tempUnit)}</div></div>
-      ${hotEx != null ? `<div class="climate-stat" title="Hottest month's p90 daily high — a hot day in the warmest part of the year">
-        <div class="climate-stat-label">Extreme High</div>
-        <div class="climate-stat-value" data-celsius="${hotEx}">${toDisplay(hotEx, tempUnit)}</div></div>` : ''}
-      ${coldEx != null ? `<div class="climate-stat" title="Coldest month's p10 daily low — a cold day in the coldest part of the year">
-        <div class="climate-stat-label">Extreme Low</div>
-        <div class="climate-stat-value" data-celsius="${coldEx}">${toDisplay(coldEx, tempUnit)}</div></div>` : ''}
+      ${tBox('Avg High', "Hottest month's average daily high", mMed.avgHigh, cold.avgHigh, warm.avgHigh)}
+      ${tBox('Avg Low',  "Coldest month's average daily low",  mMed.avgLow,  cold.avgLow,  warm.avgLow)}
+      ${tBox('Extreme High', "Hottest month's p90 daily high", mMed.extHigh, cold.extHigh, warm.extHigh)}
+      ${tBox('Extreme Low',  "Coldest month's p10 daily low",  mMed.extLow,  cold.extLow,  warm.extLow)}
       <div class="climate-stat"><div class="climate-stat-label">Annual Precip</div>
         <div class="climate-stat-value">${annPrec}<span class="climate-stat-unit">mm</span></div></div>
       ${annRH != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg RH</div>
         <div class="climate-stat-value">${Math.round(annRH)}<span class="climate-stat-unit">%</span></div></div>` : ''}
       ${elevBox}
     </div>
-    ${elevNote}
+    ${controlsHtml}
     <div class="section-label" style="margin-top:12px">Temperature &amp; Precipitation</div>
-    <div class="chart-wrap"><canvas id="climate-chart"></canvas></div>
-    ${buildClimateTable(normals)}
-    ${normals.daylightHrs ? `
+    <div id="inat-temp-dynamic"></div>
+    ${raw.daylightHrs ? `
       <div class="section-divider"></div>
       <div class="section-label">Light &amp; Atmosphere</div>
       <div class="chart-wrap"><canvas id="light-chart"></canvas></div>
-      ${buildLightTable(normals)}
+      ${buildLightTable(cMed)}
     ` : ''}
     ${climateMethodologyHtml()}
   `;
 
-  buildClimateChart(normals);
-  if (normals.daylightHrs) buildLightChart(normals);
+  // Render the temperature chart + table for a chosen elevation version.
+  const renderTempElev = (sel) => {
+    const dyn = document.getElementById('inat-temp-dynamic');
+    if (!dyn) return;
+    if (climateChart) { climateChart.destroy(); climateChart = null; }
+    const cn = corrected[sel] || cMed;
+    dyn.innerHTML = `<div class="chart-wrap"><canvas id="climate-chart"></canvas></div>${buildClimateTable(cn)}`;
+    buildClimateChart(cn);
+    if (useRange) {
+      document.querySelectorAll('.elev-btn').forEach(bt => bt.classList.toggle('active', bt.dataset.elev === sel));
+      const noteEl = document.getElementById('elev-sel-note');
+      if (noteEl) noteEl.textContent = `Chart & table shown for ${sel === 'low' ? 'low' : sel === 'high' ? 'high' : 'mid'} elevation (${(elevByKey[sel] ?? 0).toLocaleString()} m).`;
+    }
+  };
+
+  renderTempElev('med');
+  if (useRange) {
+    document.querySelectorAll('.elev-btn').forEach(bt => {
+      bt.addEventListener('click', () => renderTempElev(bt.dataset.elev));
+    });
+  }
+  if (raw.daylightHrs) buildLightChart(cMed);
 }
 
 // ── Inline soil section for obs detail ────────────────────
