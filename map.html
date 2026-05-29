@@ -1552,6 +1552,19 @@ html, body {
 }
 .sp-stat-sub { font-size: 10px; color: var(--text-muted); margin-top: 4px; }
 
+/* Phenology metric dropdown */
+.sp-pheno-controls { display: flex; align-items: center; gap: 8px; }
+.sp-pheno-lbl { font-size: 11px; color: var(--text-muted); }
+.sp-pheno-select {
+  background: var(--bg-elevated);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 12px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
 .sp-chart-section { margin: 12px 0; }
 .sp-chart-header {
   display: flex;
@@ -5336,7 +5349,9 @@ async function openSpeciesSidebar(taxonId, taxonName) {
   inatSpeciesSidebarId     = taxonId;
   speciesHemi              = 'nh';
   speciesShiftSH           = false;   // always start un-swapped for each species
+  speciesPhenoMetric       = 'flowering';
   if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
+  if (speciesPhenoChart)   { speciesPhenoChart.destroy();   speciesPhenoChart   = null; }
 
   openSidePanelForInat();
   document.getElementById('panel-content').innerHTML = `
@@ -5373,6 +5388,7 @@ async function openSpeciesSidebar(taxonId, taxonName) {
 
 function buildSpeciesSidebarContent(entry) {
   if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
+  if (speciesPhenoChart)   { speciesPhenoChart.destroy();   speciesPhenoChart   = null; }
 
   const photoHtml = entry.photo_url
     ? `<img class="sp-photo" src="${esc(entry.photo_url)}" loading="lazy" onerror="this.style.display='none'">`
@@ -5609,6 +5625,7 @@ function buildSpeciesSidebarContent(entry) {
     ${statsHtml}
     ${chartHtml}
     ${speciesMethodologyHtml(entry)}
+    ${buildSpeciesPhenologySection(entry)}
     ${koppenHtml}
     ${buildSoilSectionHtml()}
     ${wikiHtml}
@@ -5749,6 +5766,8 @@ function buildSpeciesSidebarContent(entry) {
     if (actionsEl) actionsEl.innerHTML  = buildActionsHtml();
     bindChartActionHandlers();
     buildSpeciesClimateChart(getDisplayMonthly());
+    // Phenology histogram shares the hemisphere/swap state, so redraw it too.
+    if (document.getElementById('sp-pheno-chart')) buildSpeciesPhenoChart(entry);
   };
 
   function bindChartActionHandlers() {
@@ -5766,6 +5785,15 @@ function buildSpeciesSidebarContent(entry) {
   // wire the handlers and draw the chart.
   bindChartActionHandlers();
   buildSpeciesClimateChart(getDisplayMonthly());
+
+  // Phenology histogram + metric dropdown (present only when data exists).
+  if (document.getElementById('sp-pheno-chart')) {
+    buildSpeciesPhenoChart(entry);
+    document.getElementById('sp-pheno-metric')?.addEventListener('change', e => {
+      speciesPhenoMetric = e.target.value;
+      buildSpeciesPhenoChart(entry);
+    });
+  }
 
   // Köppen expand/collapse
   let koppenExpanded = false;
@@ -5800,8 +5828,96 @@ function buildSpeciesSidebarContent(entry) {
   }
 }
 
+// ── Species phenology (blooming period) histogram ────────────────────────────
+const PHENO_META = {
+  flowering: { label: 'Flowering',      color: 'rgba(232,62,140,0.65)',  border: 'rgba(232,62,140,0.9)'  },
+  budding:   { label: 'Flower buds',    color: 'rgba(120,180,70,0.65)',  border: 'rgba(120,180,70,0.9)'  },
+  fruiting:  { label: 'Fruits / seeds', color: 'rgba(200,120,50,0.65)',  border: 'rgba(200,120,50,0.9)'  },
+};
+
+// Section markup — only emitted when the species has phenology data. Falls the
+// active metric back to the first available one if flowering is absent.
+function buildSpeciesPhenologySection(entry) {
+  const ph = entry.phenology;
+  if (!ph) return '';
+  const order = ['flowering', 'budding', 'fruiting'];
+  const available = order.filter(k => ph[k] && (ph[k].nh || ph[k].sh));
+  if (!available.length) return '';
+  if (!available.includes(speciesPhenoMetric)) speciesPhenoMetric = available[0];
+  const options = available.map(k =>
+    `<option value="${k}"${k === speciesPhenoMetric ? ' selected' : ''}>${PHENO_META[k].label}</option>`).join('');
+  return `<details class="inat-section" open id="sp-pheno-section">
+    <summary><span class="bmg-section-icon">${BMG_ICONS.leaf}</span>Phenology (iNat annotations)</summary>
+    <div class="inat-section-body">
+      <div class="sp-pheno-controls">
+        <label class="sp-pheno-lbl">Show</label>
+        <select id="sp-pheno-metric" class="sp-pheno-select">${options}</select>
+      </div>
+      <div class="sp-chart-section" style="margin-top:8px">
+        <div id="sp-pheno-container" style="position:relative;height:150px"><canvas id="sp-pheno-chart"></canvas></div>
+        <div class="sp-chart-note" id="sp-pheno-note"></div>
+      </div>
+    </div>
+  </details>`;
+}
+
+function buildSpeciesPhenoChart(entry) {
+  if (speciesPhenoChart) { speciesPhenoChart.destroy(); speciesPhenoChart = null; }
+  const ctx = document.getElementById('sp-pheno-chart');
+  const noteEl = document.getElementById('sp-pheno-note');
+  if (!ctx) return;
+  const meta = PHENO_META[speciesPhenoMetric] || PHENO_META.flowering;
+  const series = entry.phenology?.[speciesPhenoMetric]?.[speciesHemi];
+
+  if (!series) {
+    if (noteEl) noteEl.textContent = `No wild ${meta.label.toLowerCase()} annotations in the ${speciesHemi === 'sh' ? 'Southern' : 'Northern'} hemisphere for this species.`;
+    return;
+  }
+
+  // Align the month axis with the climate chart: apply the Hemisphere Swap and
+  // the SH display rotation in the same order, and use the same month labels.
+  let data = series.slice();
+  if (speciesShiftSH)        data = [...data.slice(6), ...data.slice(0, 6)];
+  if (speciesHemi === 'sh')  data = [...data.slice(6), ...data.slice(0, 6)];
+  const SH_MONTHS = ['Jul','Aug','Sep','Oct','Nov','Dec','Jan','Feb','Mar','Apr','May','Jun'];
+  const labels = speciesHemi === 'sh' ? SH_MONTHS : MONTHS;
+  const total = series.reduce((a, b) => a + b, 0);
+
+  speciesPhenoChart = new Chart(ctx, {
+    type: 'bar',
+    data: { labels, datasets: [{
+      label: meta.label, data,
+      backgroundColor: meta.color, borderColor: meta.border, borderWidth: 1,
+    }] },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          backgroundColor: '#161b22', borderColor: '#30363d', borderWidth: 1,
+          titleColor: '#e6edf3', bodyColor: '#8b949e',
+          callbacks: { label: c => `${c.raw} obs annotated ${meta.label.toLowerCase()}` },
+        },
+      },
+      scales: {
+        y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.05)' },
+             ticks: { color: 'rgba(255,255,255,0.45)', font: { size: 10 }, precision: 0 } },
+        x: { grid: { display: false },
+             ticks: { color: 'rgba(255,255,255,0.45)', font: { size: 10 } } },
+      },
+    },
+  });
+
+  if (noteEl) {
+    noteEl.textContent = `${total.toLocaleString()} wild observations annotated “${meta.label}” on iNaturalist ` +
+      `(${speciesHemi === 'sh' ? 'Southern' : 'Northern'} hemisphere). Community phenology annotations — ` +
+      `reflects when people observe & record this stage, not an authoritative botanical record.`;
+  }
+}
+
 function buildSpeciesClimateChart(monthly) {
   if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
+  if (speciesPhenoChart)   { speciesPhenoChart.destroy();   speciesPhenoChart   = null; }
   const ctx = document.getElementById('sp-climate-chart');
   if (!ctx || !monthly) return;
 
@@ -6025,6 +6141,7 @@ function initSearch() {
     inatNav.speciesTaxonId   = null;
     inatNav.speciesTaxonName = null;
     if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
+  if (speciesPhenoChart)   { speciesPhenoChart.destroy();   speciesPhenoChart   = null; }
     input.focus();
   });
 
@@ -6370,6 +6487,8 @@ let speciesShiftSH         = false;
 // (~10ms) and the result is stable for the session.
 const speciesTropicalCache = new Map();
 let speciesClimateChart    = null;   // Chart.js instance for species sidebar chart
+let speciesPhenoChart      = null;   // Chart.js instance for the phenology histogram
+let speciesPhenoMetric     = 'flowering';  // 'flowering' | 'budding' | 'fruiting'
 let inatClusterGroup  = null;       // L.layerGroup
 let inatRectGroup     = null;       // L.layerGroup for obscured rectangles
 
@@ -6767,6 +6886,7 @@ function openSidePanelForInat() {
 function renderInatSpeciesList(leaves) {
   inatNav.mode = 'species-list';
   if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
+  if (speciesPhenoChart)   { speciesPhenoChart.destroy();   speciesPhenoChart   = null; }
   openSidePanelForInat();
 
   // Count by taxon name
@@ -6823,6 +6943,7 @@ const INAT_OBS_PAGE = 20;
 function renderInatObsList(leaves, offset = 0) {
   inatNav.mode = 'obs-list';
   if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
+  if (speciesPhenoChart)   { speciesPhenoChart.destroy();   speciesPhenoChart   = null; }
 
   const page    = leaves.slice(offset, offset + INAT_OBS_PAGE);
   const hasMore = leaves.length > offset + INAT_OBS_PAGE;
@@ -6895,6 +7016,7 @@ function openInatObsPanel(feature) {
   inatNav.mode       = 'obs-detail';
   inatNav.obsFeature = feature;
   if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
+  if (speciesPhenoChart)   { speciesPhenoChart.destroy();   speciesPhenoChart   = null; }
   openSidePanelForInat();
 
   const p        = feature.properties;

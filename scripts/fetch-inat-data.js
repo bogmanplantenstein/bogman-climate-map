@@ -739,6 +739,65 @@ async function fetchInatTaxaInfo(taxaToFetch) {
   return info;
 }
 
+// ── iNat phenology (blooming period) histograms ───────────────────────────────
+// iNaturalist's "Flowers and Fruits" annotation (controlled term 12) drives the
+// seasonality chart on a species page. We fetch the month-of-year histogram for
+// each phenology value, wild-only (captive=false), split by hemisphere so the
+// austral / boreal seasons don't smear together. One request per (value ×
+// occupied hemisphere); single-hemisphere species cost 3 requests, dual cost 6.
+const PHENO_TERM = 12;
+const PHENO_VALUES = {            // output key → controlled-term value id
+  flowering: 13,                 // "Flowers"
+  budding:   15,                 // "Flower Buds"
+  fruiting:  14,                 // "Fruits or Seeds"
+};
+const PHENO_HEMIS = {
+  nh: { swlat: 0,   swlng: -180, nelat: 90, nelng: 180 },
+  sh: { swlat: -90, swlng: -180, nelat: 0,  nelng: 180 },
+};
+
+async function phenoHistogram(taxonId, valueId, hemi) {
+  try {
+    const data = await apiGet('/observations/histogram', {
+      taxon_id: taxonId,
+      term_id: PHENO_TERM,
+      term_value_id: valueId,
+      interval: 'month_of_year',
+      captive: false,
+      verifiable: true,
+      ...PHENO_HEMIS[hemi],
+    });
+    const h = data?.results?.month_of_year;
+    if (!h) return null;
+    const arr = Array.from({ length: 12 }, (_, m) => h[String(m + 1)] || 0);
+    return arr.some(v => v > 0) ? arr : null;   // drop empty series
+  } catch {
+    return null;
+  }
+}
+
+async function fetchPhenology(taxaToFetch) {
+  const out = new Map();   // ti → { flowering:{nh,sh}, budding:{...}, fruiting:{...} }
+  let done = 0;
+  for (const { ti, taxonId, hasNH, hasSH } of taxaToFetch) {
+    const hemis = [];
+    if (hasNH) hemis.push('nh');
+    if (hasSH) hemis.push('sh');
+    const ph = {};
+    for (const [key, valueId] of Object.entries(PHENO_VALUES)) {
+      const byHemi = {};
+      for (const hemi of hemis) {
+        const arr = await phenoHistogram(taxonId, valueId, hemi);
+        if (arr) byHemi[hemi] = arr;
+      }
+      if (Object.keys(byHemi).length) ph[key] = byHemi;
+    }
+    if (Object.keys(ph).length) out.set(ti, ph);
+    if (++done % 50 === 0) console.log(`  ${done}/${taxaToFetch.length} phenology fetched`);
+  }
+  return out;
+}
+
 // ── Main species precompute orchestrator ──────────────────────────────────────
 
 async function computeSpeciesData(allTaxa, allObs) {
@@ -1020,7 +1079,7 @@ async function computeSpeciesData(allTaxa, allObs) {
       // photo_url, wikipedia_summary, inat_url added in step 6
     };
 
-    taxaToFetch.push({ ti, taxonId });
+    taxaToFetch.push({ ti, taxonId, hasNH: nhC.length > 0, hasSH: shC.length > 0 });
   }
 
   console.log(`  ✓ ${Object.keys(speciesData).length} species with ≥${OM_MIN_CELLS} cells\n`);
@@ -1033,6 +1092,15 @@ async function computeSpeciesData(allTaxa, allObs) {
     if (info && speciesData[taxonId]) Object.assign(speciesData[taxonId], info);
   }
   console.log(`  ✓ ${taxaInfo.size} taxa with photo/Wikipedia data\n`);
+
+  // ── 6b. iNat phenology (flowering / budding / fruiting) histograms ────────
+  console.log(`▶ Fetching iNat phenology histograms for ${taxaToFetch.length} species...`);
+  const phenology = await fetchPhenology(taxaToFetch);
+  for (const { ti, taxonId } of taxaToFetch) {
+    const ph = phenology.get(ti);
+    if (ph && speciesData[taxonId]) speciesData[taxonId].phenology = ph;
+  }
+  console.log(`  ✓ ${phenology.size} taxa with phenology data\n`);
 
   // ── 7. Write output ───────────────────────────────────────────────────────
   const output = {
