@@ -1,5 +1,5 @@
 {
-  "generated": "2026-05-29T16:42:35.515Z",
+  "generated": "2026-05-29T20:05:58.997Z",
   "genera": {
     "Aldrovanda": {
       "fetched": 111,
@@ -27,8 +27,8 @@
       "failed": []
     },
     "Drosera": {
-      "fetched": 163233,
-      "expected": 164955,
+      "fetched": 163255,
+      "expected": 164977,
       "failed": []
     },
     "Drosophyllum": {
@@ -52,8 +52,8 @@
       "failed": []
     },
     "Pinguicula": {
-      "fetched": 38277,
-      "expected": 38996,
+      "fetched": 38285,
+      "expected": 39004,
       "failed": []
     },
     "Roridula": {
@@ -62,17 +62,17 @@
       "failed": []
     },
     "Sarracenia": {
-      "fetched": 60782,
-      "expected": 61916,
+      "fetched": 60796,
+      "expected": 61930,
       "failed": []
     },
     "Utricularia": {
-      "fetched": 62414,
-      "expected": 63076,
+      "fetched": 62419,
+      "expected": 63081,
       "failed": []
     }
   },
   "totalRequests": 2734,
-  "totalObs": 346379,
-  "durationMin": 50
+  "totalObs": 346428,
+  "durationMin": 51
 }
