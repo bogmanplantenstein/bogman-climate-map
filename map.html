@@ -1202,6 +1202,25 @@ html, body {
   fill-opacity: 0.08;
   stroke-width: 1.5;
 }
+/* Count badge centered in an obscured 0.2° cell box. Square/dashed styling
+   distinguishes it from the round exact-point cluster icons. */
+.inat-obsc-badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 16px;
+  padding: 0 4px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  background: rgba(40, 44, 52, 0.85);
+  border: 1px dashed rgba(255, 255, 255, 0.7);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.inat-obsc-badge:hover { background: rgba(60, 66, 78, 0.95); }
 
 /* ── iNat side panel content ─────────────────────────────────── */
 .inat-panel-back {
@@ -1569,6 +1588,35 @@ html, body {
   line-height: 1.5;
   font-style: italic;
 }
+
+/* Collapsible "how it's calculated" methodology block under climate panels */
+.climate-method {
+  margin-top: 14px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+}
+.climate-method > summary {
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary, var(--text-muted));
+  list-style: none;
+  user-select: none;
+}
+.climate-method > summary::before { content: '▸ '; color: var(--text-muted); }
+.climate-method[open] > summary::before { content: '▾ '; }
+.climate-method > summary:hover { color: var(--text-primary); }
+.climate-method-body {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.55;
+  margin-top: 8px;
+}
+.climate-method-body p { margin: 0 0 8px; }
+.climate-method-body ul { margin: 0 0 8px; padding-left: 16px; }
+.climate-method-body li { margin-bottom: 4px; }
+.climate-method-body strong { color: var(--text-secondary, var(--text-primary)); }
+.climate-method-body em { font-style: normal; color: var(--accent); }
 
 .sp-koppen-row {
   display: flex;
@@ -3907,6 +3955,39 @@ function renderPanel(taxon) {
 //  CLIMATE TABLE
 // ═══════════════════════════════════════════════════════════
 
+// The "Extreme High/Low" stat boxes = peak/trough of the monthly extreme band:
+// the hottest month's p90 daily high and the coldest month's p10 daily low.
+// Defined here so the boxes, the chart band, and the table's Annual row all
+// use one source and never disagree.
+function extremeBoxVals(cn) {
+  const hi = (cn.tempMaxHi || []).filter(v => v != null);
+  const lo = (cn.tempMinLo || []).filter(v => v != null);
+  return {
+    extHigh: hi.length ? Math.max(...hi) : null,
+    extLow:  lo.length ? Math.min(...lo) : null,
+  };
+}
+
+// Collapsible "how these numbers are calculated" block, shared by the
+// observation-detail and clicked-location climate panels (both use the same
+// live NASA POWER computation).
+function climateMethodologyHtml() {
+  return `<details class="climate-method">
+    <summary>How these numbers are calculated</summary>
+    <div class="climate-method-body">
+      <p><strong>Source:</strong> NASA POWER (MERRA-2 reanalysis), daily max/min 2&nbsp;m air temperature, 2014–2023 (10&nbsp;years). Daily values are grouped by calendar month.</p>
+      <ul>
+        <li><strong>High / Low</strong> (each month) — the <em>average</em> of that month's daily highs / lows.</li>
+        <li><strong>Ext High / Ext Low</strong> (each month) — the <em>p90</em> of daily highs and <em>p10</em> of daily lows (a hot/cold day that month, beaten by ~10% of days).</li>
+        <li><strong>Avg High / Avg Low</strong> boxes — the hottest month's average high and the coldest month's average low.</li>
+        <li><strong>Extreme High / Extreme Low</strong> boxes — the hottest month's p90 high and the coldest month's p10 low (the peak/trough of the dashed band on the chart, so box and chart always agree).</li>
+      </ul>
+      <p><strong>Elevation correction:</strong> NASA's grid sits at a smoothed model elevation. Temperatures are shifted to the actual ground elevation using a <em>humidity-aware lapse rate</em> — dry air cools faster with height (~9.8&nbsp;°C/km), humid air slower (~4–6&nbsp;°C/km), so each month's rate is blended by its relative humidity (typically ~5.5–8&nbsp;°C/km). This is a physically-based estimate; it can't capture local inversions or cold-air pooling.</p>
+      <p><strong>Obscured sightings:</strong> the exact location is hidden by iNaturalist within a ~22&nbsp;km box, so the elevation (and therefore temperature) is given as a range across that box.</p>
+    </div>
+  </details>`;
+}
+
 function buildClimateTable(cn) {
   const hasMean    = !!(cn.tempMean && cn.tempMean.length);
   const hasExtHi   = !!(cn.tempMaxHi && cn.tempMaxHi.some(v => v != null));
@@ -3935,15 +4016,11 @@ function buildClimateTable(cn) {
 
   const annHi   = cn.tempMax  ? Math.max(...cn.tempMax)              : null;
   const annLo   = cn.tempMin  ? Math.min(...cn.tempMin)              : null;
-  // Annual extreme cells reuse typicalHottestDay/typicalColdestDay if present
-  // (p95/p5 of all daily highs/lows); fall back to max/min of the monthly
-  // extreme band when only the monthly arrays are populated.
-  const annExHi = cn.typicalHottestDay != null
-    ? cn.typicalHottestDay
-    : (hasExtHi ? Math.max(...cn.tempMaxHi.filter(v => v != null)) : null);
-  const annExLo = cn.typicalColdestDay != null
-    ? cn.typicalColdestDay
-    : (hasExtLo ? Math.min(...cn.tempMinLo.filter(v => v != null)) : null);
+  // Annual extreme = peak/trough of the monthly extreme band: the hottest
+  // month's p90 daily high and the coldest month's p10 daily low. This is the
+  // same value shown in the "Extreme High/Low" stat boxes, so they always agree.
+  const annExHi = hasExtHi ? Math.max(...cn.tempMaxHi.filter(v => v != null)) : null;
+  const annExLo = hasExtLo ? Math.min(...cn.tempMinLo.filter(v => v != null)) : null;
   const annPrec = cn.precipMm ? Math.round(cn.precipMm.reduce((a,b)=>a+b,0)) : null;
   const validRH = hasRH ? cn.rhMean.filter(v => v != null) : [];
   const annRH   = validRH.length ? validRH.reduce((a,b)=>a+b,0) / validRH.length : null;
@@ -4491,24 +4568,151 @@ async function _retired_fetchRHNormals_oldOpenMeteo(lat, lng) {
 }
 
 async function fetchTerrainElevation(lat, lng) {
-  // SRTM 30m via OpenTopoData public API — same source used by the backend script
+  // Open-Meteo Elevation (Copernicus GLO-90, ~90 m) — CORS-enabled & keyless.
+  // (OpenTopoData, used by the Node pipeline, can't be called from the browser
+  // because it sends no CORS headers.)
+  const r = await fetchElevationBatch([[lat, lng]]);
+  return (r && r[0] != null) ? r[0] : null;
+}
+
+// ── Humidity/temperature-aware lapse rate ────────────────────────────
+// Returns the local lapse rate in °C per km for the given monthly mean
+// temperature, relative humidity, and elevation. Instead of a flat 6.5°C/km,
+// we blend the dry adiabatic rate (~9.77°C/km, dry air cools fast) toward the
+// moist adiabatic rate (~4–6°C/km, latent-heat release slows cooling in humid
+// air) by relative humidity. So a humid summer bog gets a shallow rate and a
+// dry/cold month gets a steep one — the seasonal/spatial variation a flat
+// constant ignores. This is a physically-motivated proxy for the environmental
+// lapse rate, not a measured value (it can't see inversions or cold-air
+// pooling), but it uses only data we already have (T from T2M_MAX/MIN, RH from
+// RH2M) and brackets the 6.5 standard at moderate conditions.
+function lapseRateCkm(tempC, rhPct, elevM) {
+  const g = 9.81, cpd = 1004.6, Hv = 2.501e6, Rsd = 287.05, eps = 0.622;
+  const T = tempC + 273.15;
+  // Surface pressure from elevation (barometric formula), hPa
+  const P  = 1013.25 * Math.pow(1 - 2.25577e-5 * (elevM || 0), 5.25588);
+  // Saturation vapour pressure (Tetens), hPa → saturation mixing ratio, kg/kg
+  const es = 6.112 * Math.exp(17.67 * tempC / (tempC + 243.5));
+  const rs = eps * es / Math.max(P - es, 1e-3);
+  // Moist (saturated) adiabatic lapse rate, K/m → K/km
+  const gMoist = g * (1 + Hv * rs / (Rsd * T)) /
+                 (cpd + Hv * Hv * rs * eps / (Rsd * T * T)) * 1000;
+  const gDry = g / cpd * 1000;   // ≈ 9.77 °C/km
+  const rh = Math.max(0, Math.min(100, rhPct == null ? 55 : rhPct));
+  const gamma = gDry - (gDry - gMoist) * (rh / 100);
+  return Math.max(4.0, Math.min(9.8, gamma));
+}
+
+// Apply a per-month, humidity-aware lapse correction to every temperature
+// field, moving from the climate model's grid elevation to a target elevation.
+// Each month uses its own mean T and RH to pick the rate.
+function applyHumidityLapse(normals, targetElevM) {
+  const modelElev = normals.modelElev;
+  if (targetElevM == null || modelElev == null) return normals;
+  const dzKm = (targetElevM - modelElev) / 1000;
+  const out = { ...normals };
+  for (const f of ['tempMax', 'tempMin', 'tempMaxHi', 'tempMinLo']) {
+    if (!Array.isArray(normals[f])) continue;
+    out[f] = normals[f].map((v, m) => {
+      if (v == null) return null;
+      const meanT = (normals.tempMax?.[m] != null && normals.tempMin?.[m] != null)
+        ? (normals.tempMax[m] + normals.tempMin[m]) / 2 : v;
+      const rate = lapseRateCkm(meanT, normals.rhMean?.[m], modelElev);
+      return Math.round((v - rate * dzKm) * 10) / 10;
+    });
+  }
+  return out;
+}
+
+// Mean monthly lapse rate (°C/km) for a set of normals — used for the obscured
+// cell's "temperatures may vary by ~X°C" caveat.
+function meanLapseRate(normals, elevM) {
+  const rates = [];
+  for (let m = 0; m < 12; m++) {
+    const hi = normals.tempMax?.[m], lo = normals.tempMin?.[m];
+    if (hi == null || lo == null) continue;
+    rates.push(lapseRateCkm((hi + lo) / 2, normals.rhMean?.[m], elevM));
+  }
+  return rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : 6.5;
+}
+
+// Backwards-compatible wrapper: exact-point elevation correction (used by the
+// search/click path). Delegates to the humidity-aware per-month correction.
+function applyLapseRateCorrection(normals, terrainElev) {
+  return applyHumidityLapse(normals, terrainElev);
+}
+
+// ── Batch elevation + obscured-cell elevation range ──────────────────
+// Open-Meteo Elevation API (Copernicus GLO-90, ~90 m): CORS-enabled and
+// keyless, up to 100 coordinates per request. We use it instead of OpenTopoData
+// because OpenTopoData's public API doesn't send CORS headers, so it can't be
+// called from the browser (the Node data pipeline still uses OpenTopoData).
+async function fetchElevationBatch(points) {
+  if (!points.length) return [];
+  const lats = points.map(p => p[0].toFixed(5)).join(',');
+  const lngs = points.map(p => p[1].toFixed(5)).join(',');
   try {
-    const url = `https://api.opentopodata.org/v1/aster30m?locations=${lat.toFixed(4)},${lng.toFixed(4)}`;
-    const r = await fetch(url);
+    const r = await fetch(`https://api.open-meteo.com/v1/elevation?latitude=${lats}&longitude=${lngs}`);
     if (!r.ok) return null;
     const d = await r.json();
-    return d.results?.[0]?.elevation ?? null;  // null for ocean / no-data
+    return Array.isArray(d.elevation) ? d.elevation.map(v => (v != null && isFinite(v)) ? v : null) : null;
   } catch { return null; }
 }
 
-function applyLapseRateCorrection(normals, terrainElev) {
-  // Adjusts ERA5 temperatures for the difference between model grid elevation
-  // and actual terrain elevation. Standard lapse rate: 6.5°C per 1000 m.
-  const modelElev = normals.modelElev;
-  if (terrainElev == null || modelElev == null) return normals;
-  const delta = (6.5 / 1000) * (terrainElev - modelElev); // positive = terrain higher = colder
-  const adj = v => v != null ? Math.round((v - delta) * 10) / 10 : null;
-  return { ...normals, tempMax: normals.tempMax.map(adj), tempMin: normals.tempMin.map(adj) };
+// Adaptive 2-pass min/max/median elevation across an obscured 0.2° cell.
+// Pass 1: a coarse 9×9 grid (~2.4 km). Pass 2: a fine 5×5 grid (~0.5 km) around
+// the coarse min and max points. Cached per cell (in-memory + sessionStorage).
+const _cellElevCache = new Map();
+async function sampleCellElevationRange(swLat, swLng, sizeDeg = 0.2) {
+  const key = `${swLat.toFixed(4)},${swLng.toFixed(4)}`;
+  if (_cellElevCache.has(key)) return _cellElevCache.get(key);
+  try {
+    const ss = sessionStorage.getItem('bmg_cellelev_' + key);
+    if (ss) { const v = JSON.parse(ss); _cellElevCache.set(key, v); return v; }
+  } catch {}
+
+  const N = 9, coarse = [];
+  for (let i = 0; i < N; i++) for (let j = 0; j < N; j++)
+    coarse.push([swLat + (i + 0.5) / N * sizeDeg, swLng + (j + 0.5) / N * sizeDeg]);
+  const e1 = await fetchElevationBatch(coarse);
+  if (!e1) return null;
+
+  const all = [];
+  let minPt = null, maxPt = null, minV = Infinity, maxV = -Infinity;
+  e1.forEach((e, idx) => {
+    if (e == null) return;
+    all.push(e);
+    if (e < minV) { minV = e; minPt = coarse[idx]; }
+    if (e > maxV) { maxV = e; maxPt = coarse[idx]; }
+  });
+
+  // Pass 2: refine ±1 coarse-cell around min and max points.
+  const step = sizeDeg / N, M = 5;
+  const refine = (ctr) => {
+    const pts = [];
+    for (let i = 0; i < M; i++) for (let j = 0; j < M; j++)
+      pts.push([ctr[0] - step + (i / (M - 1)) * 2 * step,
+                ctr[1] - step + (j / (M - 1)) * 2 * step]);
+    return pts;
+  };
+  let refinePts = [];
+  if (minPt) refinePts = refinePts.concat(refine(minPt));
+  if (maxPt) refinePts = refinePts.concat(refine(maxPt));
+  if (refinePts.length) {
+    const e2 = await fetchElevationBatch(refinePts);
+    if (e2) e2.forEach(e => { if (e != null) all.push(e); });
+  }
+
+  if (!all.length) return null;
+  all.sort((a, b) => a - b);
+  const res = {
+    min:    Math.round(all[0]),
+    max:    Math.round(all[all.length - 1]),
+    median: Math.round(all[Math.floor(all.length / 2)]),
+  };
+  _cellElevCache.set(key, res);
+  try { sessionStorage.setItem('bmg_cellelev_' + key, JSON.stringify(res)); } catch {}
+  return res;
 }
 
 // ─── Climate-match feature ─────────────────────────────────────────────
@@ -4772,21 +4976,22 @@ function buildLocationPanel(state) {
     // USDA hardiness zone only shown for US locations — outside the US the
     // zoning system has different meaning / different names in use.
     const inUS = (a.country_code || '').toLowerCase() === 'us';
-    const hotEx = normals.typicalHottestDay;
-    const coldEx = normals.typicalColdestDay;
+    const { extHigh: hotEx, extLow: coldEx } = extremeBoxVals(normals);
     const freezeDays = normals.daysBelowFreezing;
 
     climateHtml = `
       <div class="climate-grid">
-        <div class="climate-stat"><div class="climate-stat-label">Avg Daily High</div>
+        <div class="climate-stat" title="Hottest month's average daily high">
+          <div class="climate-stat-label">Avg High</div>
           <div class="climate-stat-value" data-celsius="${peakHigh}">${toDisplay(peakHigh, tempUnit)}</div></div>
-        <div class="climate-stat"><div class="climate-stat-label">Avg Daily Low</div>
+        <div class="climate-stat" title="Coldest month's average daily low">
+          <div class="climate-stat-label">Avg Low</div>
           <div class="climate-stat-value" data-celsius="${peakLow}">${toDisplay(peakLow, tempUnit)}</div></div>
-        ${hotEx != null ? `<div class="climate-stat" title="95th percentile of daily highs — the hot extreme you can expect a few days per year">
-          <div class="climate-stat-label">Typical Hot Extreme</div>
+        ${hotEx != null ? `<div class="climate-stat" title="Hottest month's p90 daily high — a hot day in the warmest part of the year (exceeded ~10% of that month's days)">
+          <div class="climate-stat-label">Extreme High</div>
           <div class="climate-stat-value" data-celsius="${hotEx}">${toDisplay(hotEx, tempUnit)}</div></div>` : ''}
-        ${coldEx != null ? `<div class="climate-stat" title="5th percentile of daily lows — the cold extreme you can expect a few days per year">
-          <div class="climate-stat-label">Typical Cold Extreme</div>
+        ${coldEx != null ? `<div class="climate-stat" title="Coldest month's p10 daily low — a cold day in the coldest part of the year (below this ~10% of that month's days)">
+          <div class="climate-stat-label">Extreme Low</div>
           <div class="climate-stat-value" data-celsius="${coldEx}">${toDisplay(coldEx, tempUnit)}</div></div>` : ''}
         ${freezeDays != null ? `<div class="climate-stat" title="Average number of days per year with daily minimum below 0°C">
           <div class="climate-stat-label">Freeze Days/yr</div>
@@ -4807,9 +5012,10 @@ function buildLocationPanel(state) {
         const dir     = diff > 0 ? 'higher' : 'lower';
         const sign    = diff > 0 ? '−' : '+';  // higher → cooler → negative adjustment
         const adj     = Math.abs(elevInfo.tempDelta).toFixed(1);
-        return `<div class="sp-chart-note">ERA5 climate model elevation: ${elevInfo.modelElev.toLocaleString()} m. ` +
+        return `<div class="sp-chart-note">Climate-model grid elevation: ${elevInfo.modelElev.toLocaleString()} m. ` +
                `This location is ${diffAbs.toLocaleString()} m ${dir} (${elevInfo.terrainElev.toLocaleString()} m), ` +
-               `corresponding to a ~${sign}${adj}°C temperature adjustment using a standard 6.5°C/1000 m lapse rate.</div>`;
+               `so temperatures are adjusted ~${sign}${adj}°C using a humidity-aware lapse rate ` +
+               `(~${elevInfo.lapseRate}°C/1000 m here, applied per month).</div>`;
       })() : ''}
       <button class="expand-btn" id="expand-btn">↓ Monthly Climate Data</button>
       <div id="climate-expanded">
@@ -4823,6 +5029,7 @@ function buildLocationPanel(state) {
           <div class="chart-wrap"><canvas id="light-chart"></canvas></div>
           ${buildLightTable(normals)}
         ` : ''}
+        ${climateMethodologyHtml()}
       </div>`;
   } else {
     climateHtml = `<div class="climate-pending">Climate data unavailable for this location</div>`;
@@ -4940,12 +5147,16 @@ window.openClimateAt = async function(lat, lng) {
   if (mergedNormals && terrainElev != null && mergedNormals.modelElev != null) {
     const modelElev = mergedNormals.modelElev;
     const elevDiff  = terrainElev - modelElev;
-    const tempDelta = (6.5 / 1000) * elevDiff;  // °C subtracted from raw temps
-    mergedNormals   = applyLapseRateCorrection(mergedNormals, terrainElev);
+    // Humidity/temperature-aware mean lapse rate for the explanatory note
+    // (the actual correction applied below is per-month, not this average).
+    const rate      = meanLapseRate(mergedNormals, modelElev);
+    const tempDelta = (rate / 1000) * elevDiff;  // °C subtracted from raw temps
+    mergedNormals   = applyHumidityLapse(mergedNormals, terrainElev);
     elevInfo = {
       terrainElev: Math.round(terrainElev),
       modelElev:   Math.round(modelElev),
       elevDiff:    Math.round(elevDiff),
+      lapseRate:   Math.round(rate * 10) / 10,
       tempDelta:   Math.round(tempDelta * 10) / 10,
     };
   }
@@ -6304,8 +6515,15 @@ async function loadInatGenus(genus) {
 const OBS_ID=0, OBS_LAT=1, OBS_LNG=2, OBS_TI=3, OBS_DATE=4, OBS_FLAGS=5, OBS_PHOTO=6, OBS_KOP=7;
 const F_NEEDSID=1, F_OBSCURED=2, F_PHOTO=4;
 
+// Obscured observations are kept OUT of the cluster engine. iNaturalist snaps
+// each to a ~0.2° (~22 km) grid cell, so we bucket them by cell and always draw
+// one box per cell (with a count) at every zoom — no morphing circles ↔ boxes.
+// Map<cellKey, { swLat, swLng, feats: [] }>. Rebuilt whenever filters change.
+let inatObscuredCells = new Map();
+
 function buildInatFeatures() {
-  const features = [];
+  const features = [];          // exact (non-obscured) points → supercluster
+  inatObscuredCells = new Map();
   for (const o of inatObs) {
     const taxon  = inatTaxa[o[OBS_TI]];
     if (!taxon) continue;
@@ -6319,7 +6537,7 @@ function buildInatFeatures() {
     // Köppen legend filter — AND-ed with the iNat-panel filters above.
     // Empty selectedKoppenCodes set = no filter.
     if (selectedKoppenCodes.size > 0 && !selectedKoppenCodes.has(koppen)) continue;
-    features.push({
+    const feat = {
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [o[OBS_LNG], o[OBS_LAT]] },
       properties: {
@@ -6335,7 +6553,17 @@ function buildInatFeatures() {
         taxon_name:  taxon[1],
         common_name: taxon[3],
       }
-    });
+    };
+    if (flags & F_OBSCURED) {
+      const swLat = Math.floor(o[OBS_LAT] / 0.2) * 0.2;
+      const swLng = Math.floor(o[OBS_LNG] / 0.2) * 0.2;
+      const key   = `${swLat.toFixed(4)},${swLng.toFixed(4)}`;
+      let cell = inatObscuredCells.get(key);
+      if (!cell) { cell = { swLat, swLng, feats: [] }; inatObscuredCells.set(key, cell); }
+      cell.feats.push(feat);
+    } else {
+      features.push(feat);
+    }
   }
   return features;
 }
@@ -6343,8 +6571,9 @@ function buildInatFeatures() {
 function rebuildInatIndex() {
   if (!inatWorker) return;
   setInatStatus('Indexing…', true);
-  const features = buildInatFeatures();
+  const features = buildInatFeatures();   // also rebuilds inatObscuredCells
   inatWorker.postMessage({ type: 'load', features });
+  drawObscuredBoxes();                     // obscured layer is client-side, redraw now
 }
 
 // ── Rendering ─────────────────────────────────────────────
@@ -6355,18 +6584,13 @@ function renderInatClusters() {
   const bbox   = [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()];
   const zoom   = Math.floor(map.getZoom());
   inatWorker.postMessage({ type: 'getClusters', bbox, zoom });
+  drawObscuredBoxes();   // obscured layer is client-side, independent of the worker
 }
 
+// Exact (non-obscured) observations only — obscured ones are drawn as boxes by
+// drawObscuredBoxes(), so this only ever sees precise points + clusters.
 function drawInatClusters(clusters, zoom) {
   inatClusterGroup.clearLayers();
-  inatRectGroup.clearLayers();
-
-  // iNaturalist snaps obscured observations to a 0.2° grid, so several can land
-  // in the exact same cell. We bucket all declustered obscured points by cell
-  // and draw ONE rectangle per cell — clicking it lists every sighting in that
-  // cell (mirroring how a cluster expands) rather than opening only whichever
-  // overlapping rectangle happened to be on top.
-  const obscuredCells = new Map();   // "swLat,swLng" → { swLat, swLng, feats: [] }
 
   for (const f of clusters) {
     const props = f.properties;
@@ -6391,65 +6615,88 @@ function drawInatClusters(clusters, zoom) {
       inatClusterGroup.addLayer(marker);
 
     } else {
-      // ── Individual observation ───────────────────────
-      const { lat, lng, flags, genus } = props;
-      const color    = INAT_GENUS_COLORS[genus] || '#aaa';
-      const obscured = !!(flags & F_OBSCURED);
-
-      if (obscured) {
-        // Bucket by 0.2° uncertainty cell; rectangles are drawn after the loop.
-        const swLat = Math.floor(lat / 0.2) * 0.2;
-        const swLng = Math.floor(lng / 0.2) * 0.2;
-        const key   = `${swLat.toFixed(4)},${swLng.toFixed(4)}`;
-        let cell = obscuredCells.get(key);
-        if (!cell) { cell = { swLat, swLng, feats: [] }; obscuredCells.set(key, cell); }
-        cell.feats.push(f);
-      } else {
-        const marker = L.circleMarker([lat, lng], {
-          radius:      5,
-          color:       '#fff',
-          fillColor:   color,
-          weight:      1.5,
-          fillOpacity: 0.85,
-          opacity:     0.9,
-          interactive: true,
-        });
-        marker.on('click', e => { L.DomEvent.stopPropagation(e); openInatObsPanel(f); });
-        inatClusterGroup.addLayer(marker);
-      }
+      // ── Individual (exact) observation ───────────────
+      const { lat, lng, genus } = props;
+      const color  = INAT_GENUS_COLORS[genus] || '#aaa';
+      const marker = L.circleMarker([lat, lng], {
+        radius:      5,
+        color:       '#fff',
+        fillColor:   color,
+        weight:      1.5,
+        fillOpacity: 0.85,
+        opacity:     0.9,
+        interactive: true,
+      });
+      marker.on('click', e => { L.DomEvent.stopPropagation(e); openInatObsPanel(f); });
+      inatClusterGroup.addLayer(marker);
     }
   }
+}
 
-  // One rectangle per obscured 0.2° cell.
-  obscuredCells.forEach(({ swLat, swLng, feats }) => {
-    const color = INAT_GENUS_COLORS[feats[0].properties.genus] || '#aaa';
-    const rect  = L.rectangle([[swLat, swLng], [swLat + 0.2, swLng + 0.2]], {
+// ── Obscured observations: always 0.2° boxes with a count, never clusters ───
+const OBSC_MIN_ZOOM   = 4;    // below this the boxes are sub-pixel noise → hide
+const OBSC_LABEL_ZOOM = 6;    // show the count badge at/above this zoom
+const OBSC_MAX_BOXES  = 600;  // perf cap on boxes drawn at once (densest first)
+
+function openObscuredCell(cell) {
+  if (cell.feats.length === 1) { openInatObsPanel(cell.feats[0]); return; }
+  // Same flow as expanding a cluster: list the species in this cell.
+  navClear();
+  inatNav.clusterLatlng = L.latLng(cell.swLat + 0.1, cell.swLng + 0.1);
+  inatNav.clusterLeaves = cell.feats;
+  openSidePanelForInat();
+  renderInatSpeciesList(cell.feats);
+}
+
+function drawObscuredBoxes() {
+  if (!inatRectGroup) return;
+  inatRectGroup.clearLayers();
+  if (!inatVisible || !inatObscuredCells.size) return;
+  const z = map.getZoom();
+  if (z < OBSC_MIN_ZOOM) return;
+
+  const b = map.getBounds();
+  const inView = [];
+  inatObscuredCells.forEach(cell => {
+    if (cell.swLat + 0.2 < b.getSouth() || cell.swLat > b.getNorth()) return;
+    if (cell.swLng + 0.2 < b.getWest()  || cell.swLng > b.getEast())  return;
+    inView.push(cell);
+  });
+  // Densest cells first so the cap keeps the most significant boxes.
+  inView.sort((a, c) => c.feats.length - a.feats.length);
+  const showLabel = z >= OBSC_LABEL_ZOOM;
+
+  for (const cell of inView.slice(0, OBSC_MAX_BOXES)) {
+    const color = INAT_GENUS_COLORS[cell.feats[0].properties.genus] || '#aaa';
+    const rect  = L.rectangle([[cell.swLat, cell.swLng], [cell.swLat + 0.2, cell.swLng + 0.2]], {
       className:   'inat-obscured-rect',
       color,
       fillColor:   color,
-      fillOpacity: 0.08,
+      fillOpacity: 0.10,
       weight:      1.5,
       dashArray:   '5,4',
       interactive: true,
     });
-    if (feats.length > 1) {
-      rect.bindTooltip(`${feats.length} sightings · approx. location`, { direction: 'top', sticky: true });
+    const onClick = e => { L.DomEvent.stopPropagation(e); openObscuredCell(cell); };
+    rect.on('click', onClick);
+    if (!showLabel) {
+      rect.bindTooltip(`${cell.feats.length} obscured sighting${cell.feats.length > 1 ? 's' : ''}`, { direction: 'top', sticky: true });
     }
-    rect.on('click', e => {
-      L.DomEvent.stopPropagation(e);
-      if (feats.length === 1) {
-        openInatObsPanel(feats[0]);
-      } else {
-        // Same flow as expanding a cluster: list the species in this cell.
-        navClear();
-        inatNav.clusterLatlng = L.latLng(swLat + 0.1, swLng + 0.1);
-        inatNav.clusterLeaves = feats;
-        openSidePanelForInat();
-        renderInatSpeciesList(feats);
-      }
-    });
     inatRectGroup.addLayer(rect);
-  });
+
+    if (showLabel) {
+      const badge = L.marker([cell.swLat + 0.1, cell.swLng + 0.1], {
+        icon: L.divIcon({
+          className: '',
+          html: `<div class="inat-obsc-badge" title="${cell.feats.length} obscured sighting${cell.feats.length > 1 ? 's' : ''} — approximate location">${cell.feats.length}</div>`,
+          iconSize: [22, 16], iconAnchor: [11, 8],
+        }),
+        zIndexOffset: 40, interactive: true,
+      });
+      badge.on('click', onClick);
+      inatRectGroup.addLayer(badge);
+    }
+  }
 }
 
 // ── Side panel — species list ─────────────────────────────
@@ -6686,7 +6933,7 @@ function openInatObsPanel(feature) {
   document.getElementById('inat-sec-climate')?.addEventListener('toggle', function () {
     if (this.open && !climateLoaded) {
       climateLoaded = true;
-      loadInatClimateSection(p.lat, p.lng);
+      loadInatClimateSection(p.lat, p.lng, obscured);
     }
   });
 
@@ -6782,17 +7029,26 @@ async function fetchInatObsDetail(obsId, gen) {
 
 // ── Inline climate section for obs detail ─────────────────
 
-async function loadInatClimateSection(lat, lng) {
+async function loadInatClimateSection(lat, lng, obscured) {
   const body = document.getElementById('inat-climate-body');
   if (!body) return;
-  body.innerHTML = '<div class="climate-pending">Loading climate data…</div>';
+  body.innerHTML = `<div class="climate-pending">Loading climate data${obscured ? ' (sampling area elevation…)' : '…'}</div>`;
 
   if (climateChart) { climateChart.destroy(); climateChart = null; }
   if (lightChart)   { lightChart.destroy();   lightChart   = null; }
 
-  const [normals, rh] = await Promise.all([
+  // Elevation: exact sightings use the precise point; obscured sightings get a
+  // min/max/median across the ~0.2° (~22 km) cell so we can show a range.
+  const swLat = Math.floor(lat / 0.2) * 0.2, swLng = Math.floor(lng / 0.2) * 0.2;
+  const elevTask = obscured
+    ? sampleCellElevationRange(swLat, swLng).catch(() => null)
+    : fetchTerrainElevation(lat, lng)
+        .then(e => e == null ? null : { min: Math.round(e), max: Math.round(e), median: Math.round(e) })
+        .catch(() => null);
+
+  let [normals, elev] = await Promise.all([
     fetchSearchClimateNormals(lat, lng).catch(() => null),
-    fetchRHNormals(lat, lng).catch(() => null),
+    elevTask,
   ]);
 
   const b = document.getElementById('inat-climate-body');
@@ -6802,10 +7058,19 @@ async function loadInatClimateSection(lat, lng) {
     b.innerHTML = '<div class="climate-pending">Climate data unavailable for this location</div>';
     return;
   }
-  // fetchRHNormals now returns null (RH bundled into the main POWER fetch),
-  // so this merge is a no-op in practice — kept for legacy callers in case
-  // RH ever gets split out again.
-  if (rh) { normals.rhMean = rh.rhMean; }
+
+  // Humidity-aware, per-month lapse correction to the (median) terrain elevation.
+  let elevNote = '';
+  if (elev && normals.modelElev != null) {
+    normals = applyHumidityLapse(normals, elev.median);
+    const rate = Math.round(meanLapseRate(normals, elev.median) * 10) / 10;
+    if (obscured) {
+      const spread = Math.round(meanLapseRate(normals, elev.median) * (elev.max - elev.min) / 1000 * 10) / 10;
+      elevNote = `<div class="sp-chart-note"><strong>Approximate location.</strong> The true site is unknown within this ~22 km cell, where elevation ranges <strong>${elev.min.toLocaleString()}–${elev.max.toLocaleString()} m</strong>. Across that range, temperatures may vary by ~${spread}°C (humidity-aware lapse rate ~${rate}°C/1000 m). Values below are for the cell's mid elevation (${elev.median.toLocaleString()} m).</div>`;
+    } else {
+      elevNote = `<div class="sp-chart-note">Temperatures corrected for elevation (${elev.median.toLocaleString()} m) using a humidity-aware lapse rate (~${rate}°C/1000 m, applied per month).</div>`;
+    }
+  }
 
   const validMax = normals.tempMax.filter(x => x != null);
   const validMin = normals.tempMin.filter(x => x != null);
@@ -6814,26 +7079,34 @@ async function loadInatClimateSection(lat, lng) {
   const annPrec  = Math.round(normals.precipMm.reduce((a, v) => a + (v || 0), 0));
   const validRH  = normals.rhMean ? normals.rhMean.filter(v => v != null) : [];
   const annRH    = validRH.length ? validRH.reduce((a, v) => a + v, 0) / validRH.length : null;
-  const hotEx    = normals.typicalHottestDay;
-  const coldEx   = normals.typicalColdestDay;
+  const { extHigh: hotEx, extLow: coldEx } = extremeBoxVals(normals);
+  const elevBox = elev
+    ? (obscured
+        ? `<div class="climate-stat" title="Elevation range across the obscured ~22 km cell"><div class="climate-stat-label">Elevation</div>
+            <div class="climate-stat-value" style="font-size:13px">${elev.min.toLocaleString()}–${elev.max.toLocaleString()}<span class="climate-stat-unit">m</span></div></div>`
+        : `<div class="climate-stat"><div class="climate-stat-label">Elevation</div>
+            <div class="climate-stat-value">${elev.median.toLocaleString()}<span class="climate-stat-unit">m</span></div></div>`)
+    : '';
 
   b.innerHTML = `
     <div class="climate-grid" style="margin-top:4px">
-      <div class="climate-stat"><div class="climate-stat-label">Avg High</div>
+      <div class="climate-stat" title="Hottest month's average daily high"><div class="climate-stat-label">Avg High</div>
         <div class="climate-stat-value" data-celsius="${peakHigh}">${toDisplay(peakHigh, tempUnit)}</div></div>
-      <div class="climate-stat"><div class="climate-stat-label">Avg Low</div>
+      <div class="climate-stat" title="Coldest month's average daily low"><div class="climate-stat-label">Avg Low</div>
         <div class="climate-stat-value" data-celsius="${peakLow}">${toDisplay(peakLow, tempUnit)}</div></div>
-      ${hotEx != null ? `<div class="climate-stat" title="95th percentile of daily highs — the hot extreme you can expect a few days per year">
+      ${hotEx != null ? `<div class="climate-stat" title="Hottest month's p90 daily high — a hot day in the warmest part of the year">
         <div class="climate-stat-label">Extreme High</div>
         <div class="climate-stat-value" data-celsius="${hotEx}">${toDisplay(hotEx, tempUnit)}</div></div>` : ''}
-      ${coldEx != null ? `<div class="climate-stat" title="5th percentile of daily lows — the cold extreme you can expect a few days per year">
+      ${coldEx != null ? `<div class="climate-stat" title="Coldest month's p10 daily low — a cold day in the coldest part of the year">
         <div class="climate-stat-label">Extreme Low</div>
         <div class="climate-stat-value" data-celsius="${coldEx}">${toDisplay(coldEx, tempUnit)}</div></div>` : ''}
       <div class="climate-stat"><div class="climate-stat-label">Annual Precip</div>
         <div class="climate-stat-value">${annPrec}<span class="climate-stat-unit">mm</span></div></div>
       ${annRH != null ? `<div class="climate-stat"><div class="climate-stat-label">Avg RH</div>
         <div class="climate-stat-value">${Math.round(annRH)}<span class="climate-stat-unit">%</span></div></div>` : ''}
+      ${elevBox}
     </div>
+    ${elevNote}
     <div class="section-label" style="margin-top:12px">Temperature &amp; Precipitation</div>
     <div class="chart-wrap"><canvas id="climate-chart"></canvas></div>
     ${buildClimateTable(normals)}
@@ -6843,6 +7116,7 @@ async function loadInatClimateSection(lat, lng) {
       <div class="chart-wrap"><canvas id="light-chart"></canvas></div>
       ${buildLightTable(normals)}
     ` : ''}
+    ${climateMethodologyHtml()}
   `;
 
   buildClimateChart(normals);
