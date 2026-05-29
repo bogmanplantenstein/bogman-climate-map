@@ -5103,6 +5103,7 @@ async function openSpeciesSidebar(taxonId, taxonName) {
   inatNav.speciesTaxonName = taxonName;
   inatSpeciesSidebarId     = taxonId;
   speciesHemi              = 'nh';
+  speciesShiftSH           = false;   // always start un-swapped for each species
   if (speciesClimateChart) { speciesClimateChart.destroy(); speciesClimateChart = null; }
 
   openSidePanelForInat();
@@ -5240,7 +5241,7 @@ function buildSpeciesSidebarContent(entry) {
       ? 'Shift Southern hemisphere months by +6 to align with the Northern hemisphere calendar (useful for NH-based cultivators planning a growing cycle).'
       : 'Shift Northern hemisphere months by +6 to view in the Southern hemisphere calendar.';
     const shiftBtn = !isTropical
-      ? `<button class="sp-hemi-btn${speciesShiftSH ? ' active-sh' : ''}" id="sp-shift-toggle" title="${shiftTitle}">Swap seasons ⇄</button>`
+      ? `<button class="sp-hemi-btn${speciesShiftSH ? ' active-sh' : ''}" id="sp-shift-toggle" title="${shiftTitle}">Hemisphere Swap ⇄</button>`
       : '';
     // Hemisphere toggle only present when both hemispheres have data.
     const hemiBtn = hasBoth
@@ -5503,8 +5504,7 @@ function buildSpeciesSidebarContent(entry) {
       rerenderChartUI();
     });
     document.getElementById('sp-shift-toggle')?.addEventListener('click', () => {
-      speciesShiftSH = !speciesShiftSH;
-      try { localStorage.setItem('bmg_sh_shift', speciesShiftSH ? '1' : '0'); } catch {}
+      speciesShiftSH = !speciesShiftSH;   // session-only; intentionally not persisted
       rerenderChartUI();
     });
   }
@@ -6107,12 +6107,11 @@ let inatSpeciesDataPromise = null;   // singleton fetch promise for species-data
 let inatSpeciesData        = null;   // species data keyed by taxon_id (number)
 let inatSpeciesSidebarId   = null;   // taxon_id currently shown in species sidebar
 let speciesHemi            = 'nh';   // 'nh' | 'sh' for the species monthly chart
-// When true, the displayed monthly data is rotated by +6 months. For SH-species
-// data this aligns the seasonal cycle with the Northern Hemisphere calendar
-// (the primary cultivator use case). For NH-species data it does the reverse
-// (NH → SH calendar view). Symmetric: just a 6-month phase shift. Persisted
-// across sessions; defaults to off so first-time users see native data.
-let speciesShiftSH         = (() => { try { return localStorage.getItem('bmg_sh_shift') === '1'; } catch { return false; } })();
+// When true, the displayed monthly data is rotated by +6 months ("Hemisphere
+// Swap"): it views the data on the opposite hemisphere's seasonal calendar.
+// Always defaults OFF and is NOT persisted — it must be manually re-applied per
+// species, so a stale swap can never silently misrepresent a species' seasons.
+let speciesShiftSH         = false;
 // Cache of per-species tropical classification (median |lat| < 23.5°). Computed
 // lazily from inatObs on first lookup; ~344k obs is one linear scan per species
 // (~10ms) and the result is stable for the session.
