@@ -7138,7 +7138,7 @@ function openInatObsPanel(feature) {
   document.getElementById('inat-sec-climate')?.addEventListener('toggle', function () {
     if (this.open && !climateLoaded) {
       climateLoaded = true;
-      loadInatClimateSection(p.lat, p.lng, obscured);
+      loadInatClimateSection(p.lat, p.lng, obscured, p.taxon_name);
     }
   });
 
@@ -7232,9 +7232,32 @@ async function fetchInatObsDetail(obsId, gen) {
   }
 }
 
+// ── Nepenthes species elevation bands (from the curated spreadsheet) ──────────
+// For an obscured Nepenthes sighting we can narrow the plausible elevation —
+// and therefore the temperature estimate — by intersecting the cell's terrain
+// range with the species' published elevation band.
+let _nepElev = null, _nepElevPromise = null;
+function loadNepenthesElev() {
+  if (_nepElev) return Promise.resolve(_nepElev);
+  if (!_nepElevPromise) {
+    _nepElevPromise = fetch('./inat/nepenthes-elevation.json')
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { _nepElev = d?.species || {}; return _nepElev; })
+      .catch(() => { _nepElevPromise = null; return null; });
+  }
+  return _nepElevPromise;
+}
+function lookupNepenthesBand(taxonName) {
+  if (!_nepElev || !taxonName) return null;
+  const words = taxonName.toLowerCase().replace(/×/g, ' ').replace(/\bx\b/g, ' ')
+    .split(/\s+/).filter(Boolean);
+  if (words.length < 2 || words[0] !== 'nepenthes') return null;
+  return _nepElev[`${words[0]} ${words[1]}`] || null;   // [minM, maxM]
+}
+
 // ── Inline climate section for obs detail ─────────────────
 
-async function loadInatClimateSection(lat, lng, obscured) {
+async function loadInatClimateSection(lat, lng, obscured, taxonName) {
   const body = document.getElementById('inat-climate-body');
   if (!body) return;
   body.innerHTML = `<div class="climate-pending">Loading climate data${obscured ? ' (sampling area elevation…)' : '…'}</div>`;
@@ -7245,6 +7268,7 @@ async function loadInatClimateSection(lat, lng, obscured) {
   // Elevation: exact sightings use the precise point; obscured sightings get a
   // min/max/median across the ~0.2° (~22 km) cell so we can show a range.
   const swLat = Math.floor(lat / 0.2) * 0.2, swLng = Math.floor(lng / 0.2) * 0.2;
+  const isNepenthes = /^nepenthes\b/i.test(taxonName || '');
   const elevTask = obscured
     ? sampleCellElevationRange(swLat, swLng).catch(() => null)
     : fetchTerrainElevation(lat, lng)
@@ -7254,6 +7278,7 @@ async function loadInatClimateSection(lat, lng, obscured) {
   let [normals, elev] = await Promise.all([
     fetchSearchClimateNormals(lat, lng).catch(() => null),
     elevTask,
+    (obscured && isNepenthes) ? loadNepenthesElev().catch(() => null) : Promise.resolve(null),
   ]);
 
   const b = document.getElementById('inat-climate-body');
@@ -7262,6 +7287,30 @@ async function loadInatClimateSection(lat, lng, obscured) {
   if (!normals?.tempMax) {
     b.innerHTML = '<div class="climate-pending">Climate data unavailable for this location</div>';
     return;
+  }
+
+  // Refine the obscured cell's elevation range using the species' published band.
+  // The observation is physically in this cell, so terrain is the hard constraint:
+  // the band can only NARROW within the cell's terrain, never override it.
+  let nepBand = null;   // { spMin, spMax, terrainMin, terrainMax, kind } when relevant
+  if (obscured && elev && isNepenthes) {
+    const band = lookupNepenthesBand(taxonName);
+    if (band) {
+      const [spMin, spMax] = band;
+      const ovMin = Math.max(elev.min, spMin);
+      const ovMax = Math.min(elev.max, spMax);
+      const base  = { spMin, spMax, terrainMin: elev.min, terrainMax: elev.max };
+      if (ovMin > ovMax) {
+        // Band and terrain don't overlap — keep terrain, flag the mismatch
+        // (likely a cultivated plant or one outside its typical range).
+        nepBand = { ...base, kind: 'no-overlap' };
+      } else if (ovMin > elev.min || ovMax < elev.max) {
+        // Band genuinely tightens the plausible elevation → use the overlap.
+        elev = { min: ovMin, max: ovMax, median: Math.round((ovMin + ovMax) / 2) };
+        nepBand = { ...base, kind: 'narrowed' };
+      }
+      // else band already contains the whole terrain range → no change, plain note.
+    }
   }
 
   // Build humidity-aware, per-month elevation corrections. For obscured cells
@@ -7315,12 +7364,19 @@ async function loadInatClimateSection(lat, lng, obscured) {
             <div class="climate-stat-value">${elev.median.toLocaleString()}<span class="climate-stat-unit">m</span></div></div>`)
     : '';
 
+  // Explanatory lead-in describing how the elevation range was derived.
+  const bandLead = (nepBand && nepBand.kind === 'narrowed')
+    ? `<strong>Approximate location, refined by species.</strong> Within this ~22 km cell (terrain ${nepBand.terrainMin.toLocaleString()}–${nepBand.terrainMax.toLocaleString()} m), the plausible elevation narrows to the overlap with <em>${esc(taxonName)}</em>’s published band (${nepBand.spMin.toLocaleString()}–${nepBand.spMax.toLocaleString()} m) → <strong>${elev.min.toLocaleString()}–${elev.max.toLocaleString()} m</strong>.`
+    : (nepBand && nepBand.kind === 'no-overlap')
+    ? `<strong>Approximate location.</strong> This cell's terrain (${nepBand.terrainMin.toLocaleString()}–${nepBand.terrainMax.toLocaleString()} m) doesn't reach <em>${esc(taxonName)}</em>’s published band (${nepBand.spMin.toLocaleString()}–${nepBand.spMax.toLocaleString()} m) — the species refinement doesn't apply (possibly cultivated or atypical), so the cell's terrain range is used.`
+    : `<strong>Approximate location.</strong> The true site is unknown within this ~22 km cell, where elevation ranges <strong>${elev.min.toLocaleString()}–${elev.max.toLocaleString()} m</strong>.`;
+
   // Note + (for obscured ranges) a Low/Mid/High elevation switcher.
   let controlsHtml = '';
   if (useRange) {
     const rate = Math.round(meanLapseRate(cMed, elev.median) * 10) / 10;
     controlsHtml = `
-      <div class="sp-chart-note"><strong>Approximate location.</strong> The true site is unknown within this ~22 km cell, where elevation ranges <strong>${elev.min.toLocaleString()}–${elev.max.toLocaleString()} m</strong>. Boxes show the range across that span (humidity-aware lapse ~${rate}°C/1000 m). Pick an elevation for the chart &amp; table:</div>
+      <div class="sp-chart-note">${bandLead} Boxes show the range across that span (humidity-aware lapse ~${rate}°C/1000 m). Pick an elevation for the chart &amp; table:</div>
       <div class="elev-switch">
         <button class="elev-btn" data-elev="low">Low<span>${elev.min.toLocaleString()} m</span></button>
         <button class="elev-btn active" data-elev="med">Mid<span>${elev.median.toLocaleString()} m</span></button>
@@ -7329,7 +7385,9 @@ async function loadInatClimateSection(lat, lng, obscured) {
       <div class="sp-chart-note" id="elev-sel-note"></div>`;
   } else if (canCorrect) {
     const rate = Math.round(meanLapseRate(cMed, elev.median) * 10) / 10;
-    controlsHtml = obscured
+    controlsHtml = nepBand
+      ? `<div class="sp-chart-note">${bandLead} Temperatures corrected to ${elev.median.toLocaleString()} m (humidity-aware lapse ~${rate}°C/1000 m).</div>`
+      : obscured
       ? `<div class="sp-chart-note"><strong>Approximate location</strong> (~22 km cell, little elevation variation). Temperatures corrected to ${elev.median.toLocaleString()} m (humidity-aware lapse ~${rate}°C/1000 m).</div>`
       : `<div class="sp-chart-note">Temperatures corrected for elevation (${elev.median.toLocaleString()} m) using a humidity-aware lapse rate (~${rate}°C/1000 m, applied per month).</div>`;
   }
