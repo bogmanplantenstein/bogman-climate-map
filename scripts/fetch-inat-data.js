@@ -40,7 +40,8 @@ const GRID_DEG        = 0.5;          // 0.5° cell ≈ 55 km north-south
 const DENSE_RADIUS_KM = 8;            // neighbour radius for dense-cluster pick
 const OM_RATE_MS      = 300;          // ~3 req/s — NASA POWER has no documented daily limit;
                                        // we pace conservatively as a good-citizen default
-const OM_MIN_CELLS    = 3;            // skip species with fewer occupied cells
+const OM_MIN_CELLS    = 1;            // include any species with ≥1 occupied cell;
+                                       // the client flags small samples as low-confidence
 const LAPSE_RATE      = 6.5 / 1000;  // °C per metre (standard environmental lapse)
 // Climate source: NASA POWER (MERRA-2 reanalysis). Free, no auth, no per-IP
 // daily cap. Returns daily T2M_MAX, T2M_MIN, PRECTOTCORR, and RH2M (daily mean)

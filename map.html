@@ -5418,7 +5418,7 @@ async function openSpeciesSidebar(taxonId, taxonName) {
     document.getElementById('panel-content').innerHTML = `
       ${navBackBtnHtml()}
       <div class="p-species-name" style="font-style:italic">${esc(taxonName)}</div>
-      <div style="color:var(--text-muted);font-size:12px;margin-top:16px">No precomputed climate data for this species (fewer than 3 occupied 0.5° grid cells).</div>
+      <div style="color:var(--text-muted);font-size:12px;margin-top:16px">No precomputed climate data for this species yet (no observations with usable coordinates, or the data needs a refresh).</div>
     `;
     wireNavBackBtn();
     return;
@@ -5615,9 +5615,12 @@ function buildSpeciesSidebarContent(entry) {
       </details>`;
   }
 
+  const nCells = entry.sample_count || 0;
+  const lowSample = nCells < 3;
   const sampleNote = `<div class="sp-sample-note">
-    Climate envelope from ${entry.sample_count} representative locations (0.5° grid, dense-cluster selection).
-    ${entry.obs_count.toLocaleString()} total sightings.
+    Climate envelope from ${nCells.toLocaleString()} representative location${nCells === 1 ? '' : 's'}
+    (one per occupied 0.5° grid cell), drawn from ${entry.obs_count.toLocaleString()} total sighting${entry.obs_count === 1 ? '' : 's'}.
+    ${lowSample ? `<span style="display:block;margin-top:4px;color:#d9a441">⚠ Small sample (${nCells} location${nCells === 1 ? '' : 's'}) — treat as indicative only. With so few sites the across-site limits collapse toward a single place.</span>` : ''}
   </div>`;
 
   // ── All Observations section (lazy-loaded list of iNat obs for this species) ──
