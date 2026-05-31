@@ -172,6 +172,55 @@ html, body {
   line-height: 1.5;
 }
 
+/* Copy-link button (shareable deep links on panels) */
+.copy-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  color: var(--text-secondary, var(--text-muted));
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+  margin: 2px 0 12px;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.copy-link-btn svg { width: 13px; height: 13px; }
+.copy-link-btn:hover { color: var(--text-primary); border-color: var(--accent); }
+.copy-link-btn.copied { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+
+/* Region filter chip (admin-region observation filter) */
+#region-chip {
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  display: none;
+  align-items: center;
+  gap: 8px;
+  background: var(--bg-panel);
+  border: 1px solid var(--accent);
+  border-radius: 16px;
+  padding: 5px 8px 5px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+  box-shadow: 0 2px 10px rgba(0,0,0,0.4);
+  max-width: calc(100vw - 40px);
+}
+#region-chip.open { display: flex; }
+#region-chip .region-chip-count { color: var(--text-muted); font-size: 11px; }
+#region-chip .region-chip-close {
+  display: flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  background: var(--bg-elevated); border: none; color: var(--text-muted);
+  cursor: pointer; font-size: 14px; line-height: 1; flex-shrink: 0;
+}
+#region-chip .region-chip-close:hover { color: var(--text-primary); background: var(--border); }
+
 .badge-row {
   display: flex;
   flex-wrap: wrap;
@@ -2223,11 +2272,14 @@ body.bmg-onboarding #search-container { z-index: 9100; }
 
     <div id="search-container">
       <div id="search-input-wrap">
-        <input id="search-input" type="text" placeholder="Search location or species…" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="none">
+        <input id="search-input" type="text" placeholder="Search species, location, or region…" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="none">
         <button id="search-clear" title="Clear search">×</button>
       </div>
       <div id="search-suggestions"></div>
     </div>
+
+    <!-- Admin-region filter chip (shown when filtering obs to a region) -->
+    <div id="region-chip"></div>
 
     <!-- iNat filter panel -->
     <div id="inat-panel">
@@ -3871,7 +3923,7 @@ function openPanel(taxon) {
   renderPanel(taxon);
   document.getElementById('side-panel').classList.add('open');
   highlightRegion(taxon);
-  setUrlParam('taxon', taxon.id);
+  setDeepLink('taxon', taxon.id);
 }
 
 function closePanel() {
@@ -3883,7 +3935,7 @@ function closePanel() {
   selectedId = null;
   document.getElementById('side-panel').classList.remove('open');
   clearRegionHighlight();
-  setUrlParam('taxon', null);
+  setDeepLink(null);   // drop any deep-link param (taxon/sp/obs/at)
   if (climateChart) { climateChart.destroy(); climateChart = null; }
   navClear();   // dropping the panel discards back-history
 }
@@ -5124,6 +5176,7 @@ function buildLocationPanel(state) {
     <div class="p-species-name">${esc(name)}</div>
     ${subLabel ? `<div class="p-common-name">${esc(subLabel)}</div>` : ''}
     <div class="p-location">${lat.toFixed(4)}, ${lng.toFixed(4)}</div>
+    ${copyLinkBtnHtml('at', `${lat.toFixed(4)},${lng.toFixed(4)},${Math.round(map.getZoom())}`, 'loc-copy-link')}
     ${koppenBadgeHtml}
     <div class="section-divider"></div>
     <div class="section-label">Climate (2014–2023 avg)</div>
@@ -5133,6 +5186,8 @@ function buildLocationPanel(state) {
   `;
 
   document.getElementById('side-panel').classList.add('open');
+  wireCopyLinkButtons(document.getElementById('panel-content'));
+  if (!loading) setDeepLink('at', `${lat.toFixed(4)},${lng.toFixed(4)},${Math.round(map.getZoom())}`);
 
   // Wire the climate-match button (only present when climate has loaded)
   document.getElementById('find-species-btn')?.addEventListener('click', () => runSpeciesMatch(state));
@@ -5159,6 +5214,7 @@ function closeLocationPanel() {
   document.getElementById('side-panel').classList.remove('open');
   if (climateChart) { climateChart.destroy(); climateChart = null; }
   if (lightChart)   { lightChart.destroy();   lightChart   = null; }
+  setDeepLink(null);   // drop ?at= deep link
   navClear();   // dropping the panel discards back-history
 }
 
@@ -5271,8 +5327,10 @@ function renderSuggestions(results) {
     const name = r.display_name.split(',')[0];
     const a = r.address || {};
     const sub = [a.state, a.country].filter(Boolean).join(', ') || (r.type || '').replace(/_/g, ' ');
+    const region = isAdminRegionResult(r)
+      ? `<span style="color:var(--accent);font-size:10px;font-style:normal;margin-left:6px">▦ filter region</span>` : '';
     return `<div class="search-suggestion" data-idx="${i}">
-      <div class="search-suggestion-name">${esc(name)}</div>
+      <div class="search-suggestion-name">${esc(name)}${region}</div>
       ${sub ? `<div class="search-suggestion-sub">${esc(sub)}</div>` : ''}
     </div>`;
   }).join('');
@@ -5285,10 +5343,22 @@ function renderSuggestions(results) {
   el.classList.add('open');
 }
 
+// Nominatim "class"/"type" combos that represent an administrative area we can
+// filter observations within (state, province, county, country, island, etc.).
+function isAdminRegionResult(r) {
+  if (r._type === 'inat-taxon') return false;
+  if (r.class === 'boundary' && r.type === 'administrative') return true;
+  if (r.class === 'place' && ['state','region','province','county','island','archipelago','country'].includes(r.type)) return true;
+  return false;
+}
+
 function selectSearchResult(result) {
   if (result._type === 'inat-taxon') { selectInatTaxon(result); return; }
+  if (isAdminRegionResult(result)) { selectRegionResult(result); return; }
   // Clear any active species filter when a location is chosen
   if (inatSpeciesFilter) { inatSpeciesFilter = null; rebuildInatIndex(); }
+  // A plain place pick clears any active region filter.
+  if (inatRegionFilter) clearRegionFilter(false);
   const lat = parseFloat(result.lat);
   const lng = parseFloat(result.lon);
   const zoom = nominatimZoom(result);
@@ -5666,6 +5736,7 @@ function buildSpeciesSidebarContent(entry) {
         <div class="sp-meta">${entry.obs_count.toLocaleString()} sightings${inatUrl ? ` · <a href="${esc(inatUrl)}" target="_blank" rel="noopener">iNaturalist →</a>` : ''}</div>
       </div>
     </div>
+    ${copyLinkBtnHtml('sp', entry.taxon_id, 'sp-copy-link')}
     ${statsHtml}
     ${chartHtml}
     ${speciesMethodologyHtml(entry)}
@@ -5677,6 +5748,8 @@ function buildSpeciesSidebarContent(entry) {
     ${obsSectionHtml}
   `;
   wireNavBackBtn();
+  wireCopyLinkButtons(document.getElementById('panel-content'));
+  if (entry.taxon_id != null) setDeepLink('sp', entry.taxon_id);
 
   // ── Wire All-Observations section ──
   // Lazy-render: filter the per-species obs (already computed above) and
@@ -6113,6 +6186,138 @@ function selectInatTaxon(result) {
   openSpeciesSidebar(result.taxonId, taxonName);
 }
 
+// ── Admin-region observation filter ───────────────────────────────────────
+// Selecting a state/province/country etc. fetches its boundary polygon and
+// restricts the visible observations to inside that border (precise PIP).
+
+// Convert a GeoJSON Polygon/MultiPolygon geometry to a flat array of rings
+// ([[ [lng,lat], ... ], ...]) for pointInRings.
+function geomToRings(geom) {
+  if (!geom) return null;
+  if (geom.type === 'Polygon')      return geom.coordinates;                 // [ring, hole...]
+  if (geom.type === 'MultiPolygon') return geom.coordinates.flat();          // each poly's rings
+  return null;
+}
+
+async function selectRegionResult(result) {
+  const name = result.display_name.split(',').slice(0, 2).map(s => s.trim()).join(', ');
+  document.getElementById('search-input').value = result.display_name.split(',')[0];
+  document.getElementById('search-clear').classList.add('visible');
+  document.getElementById('search-suggestions').classList.remove('open');
+  searchCurrentSuggestions = [];
+  if (inatSpeciesFilter) { inatSpeciesFilter = null; searchInatTaxa._counts = null; }
+  if (!inatVisible) enableInatLayer();
+  setRegionChip(name, null, true);   // loading state
+
+  // Fetch the boundary polygon via Nominatim lookup (osm_type+osm_id).
+  const osmRef = `${(result.osm_type || '')[0].toUpperCase()}${result.osm_id}`;
+  let rings = null, bbox = null;
+  try {
+    const url = `https://nominatim.openstreetmap.org/lookup?osm_ids=${osmRef}&format=json&polygon_geojson=1&polygon_threshold=0.005`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    const d = r.ok ? await r.json() : [];
+    const hit = d && d[0];
+    if (hit) {
+      rings = geomToRings(hit.geojson);
+      if (hit.boundingbox) {
+        const bb = hit.boundingbox.map(Number);   // [south, north, west, east]
+        bbox = [bb[0], bb[1], bb[2], bb[3]];
+      }
+    }
+  } catch { /* fall through to bbox-only below */ }
+
+  // Fallback to the search result's bbox if the polygon lookup failed.
+  if (!bbox && result.boundingbox) {
+    const bb = result.boundingbox.map(Number);
+    bbox = [bb[0], bb[1], bb[2], bb[3]];
+  }
+  if (!bbox) { clearRegionFilter(); return; }
+
+  inatRegionFilter = { name, bbox, rings, osmRef };
+  rebuildInatIndex();
+  const count = countRegionObs();
+  setRegionChip(name, count, false);
+
+  // Close any open side panel first (it clears deep-link params), THEN set the
+  // region deep link so it isn't immediately clobbered.
+  closeLocationPanel();
+  setDeepLink('region', osmRef);
+
+  // Frame the region.
+  map.fitBounds(L.latLngBounds([[bbox[0], bbox[2]], [bbox[1], bbox[3]]]),
+                { padding: [40, 40], animate: true });
+}
+
+// Re-create a region filter from a ?region=<osmRef> deep link.
+async function applyRegionFromOsmRef(osmRef) {
+  if (!inatVisible) enableInatLayer();
+  setRegionChip('Loading region…', null, true);
+  try {
+    const url = `https://nominatim.openstreetmap.org/lookup?osm_ids=${osmRef}&format=json&polygon_geojson=1&polygon_threshold=0.005&addressdetails=1`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'en' } });
+    const d = r.ok ? await r.json() : [];
+    const hit = d && d[0];
+    if (!hit) { clearRegionFilter(); return; }
+    const name = hit.display_name.split(',').slice(0, 2).map(s => s.trim()).join(', ');
+    const bb = hit.boundingbox.map(Number);
+    inatRegionFilter = { name, bbox: [bb[0], bb[1], bb[2], bb[3]], rings: geomToRings(hit.geojson), osmRef };
+    map.fitBounds(L.latLngBounds([[bb[0], bb[2]], [bb[1], bb[3]]]), { padding: [40, 40], animate: true });
+    // On a fresh deep-link load the obs data may still be loading — wait for it
+    // so the chip count and the rebuilt index reflect the full dataset.
+    await whenInatObsReady();
+    if (!inatRegionFilter || inatRegionFilter.osmRef !== osmRef) return;  // user changed it
+    rebuildInatIndex();
+    setRegionChip(name, countRegionObs(), false);
+  } catch { clearRegionFilter(); }
+}
+
+// Resolve once the iNat observation array is populated (deep links can run
+// before the data finishes loading). Polls briefly, then gives up gracefully.
+function whenInatObsReady(timeoutMs = 20000) {
+  return new Promise(resolve => {
+    if (inatObs.length) return resolve(true);
+    const t0 = Date.now();
+    const iv = setInterval(() => {
+      if (inatObs.length || Date.now() - t0 > timeoutMs) { clearInterval(iv); resolve(inatObs.length > 0); }
+    }, 200);
+  });
+}
+
+// Count observations passing the current region (+ genus/quality) filters.
+function countRegionObs() {
+  let n = 0;
+  for (const o of inatObs) {
+    const taxon = inatTaxa[o[OBS_TI]];
+    if (!taxon) continue;
+    if (!inatFilters.genera.has(taxon[2])) continue;
+    if ((o[OBS_FLAGS] & F_NEEDSID) && !inatFilters.needsId) continue;
+    if (passesRegionFilter(o[OBS_LAT], o[OBS_LNG])) n++;
+  }
+  return n;
+}
+
+function clearRegionFilter(rebuild = true) {
+  inatRegionFilter = null;
+  setRegionChip(null);
+  if (rebuild) rebuildInatIndex();
+  // Only drop the URL param if it's the active deep link.
+  const p = new URLSearchParams(location.search);
+  if (p.get('region')) setDeepLink(null);
+}
+
+function setRegionChip(name, count, loading) {
+  const chip = document.getElementById('region-chip');
+  if (!chip) return;
+  if (!name) { chip.classList.remove('open'); chip.innerHTML = ''; return; }
+  const countHtml = loading
+    ? `<span class="region-chip-count">loading…</span>`
+    : (count != null ? `<span class="region-chip-count">${count.toLocaleString()} observation${count === 1 ? '' : 's'}</span>` : '');
+  chip.innerHTML = `<span>${BMG_ICONS.pin}</span><span>${esc(name)}</span>${countHtml}
+    <button class="region-chip-close" id="region-chip-close" title="Clear region filter">×</button>`;
+  chip.classList.add('open');
+  document.getElementById('region-chip-close')?.addEventListener('click', () => clearRegionFilter());
+}
+
 function initSearch() {
   const container   = document.getElementById('search-container');
   const input       = document.getElementById('search-input');
@@ -6176,11 +6381,12 @@ function initSearch() {
     suggestions.classList.remove('open');
     searchCurrentSuggestions = [];
     closeLocationPanel();
+    if (inatRegionFilter) clearRegionFilter(false);
     if (inatSpeciesFilter) {
       inatSpeciesFilter = null;
       searchInatTaxa._counts = null;
-      rebuildInatIndex();
     }
+    rebuildInatIndex();
     inatSpeciesSidebarId     = null;
     inatNav.speciesTaxonId   = null;
     inatNav.speciesTaxonName = null;
@@ -6312,14 +6518,142 @@ function setUrlParam(key, val) {
   history.replaceState(null, '', url);
 }
 
+// The deep-link params are mutually exclusive views. Setting one clears the
+// others (and the legacy ?taxon / ?slug gallery params) so the address bar
+// always reflects a single shareable state.
+const DEEPLINK_KEYS = ['taxon', 'slug', 'sp', 'obs', 'at', 'region'];
+function setDeepLink(key, val) {
+  const url = new URL(location.href);
+  for (const k of DEEPLINK_KEYS) url.searchParams.delete(k);
+  if (key && val != null) url.searchParams.set(key, val);
+  history.replaceState(null, '', url);
+}
+
+// Build a full shareable URL for a given deep-link param without touching the
+// current address bar (used by the Copy-link buttons).
+function buildShareUrl(key, val) {
+  const url = new URL(location.href);
+  for (const k of DEEPLINK_KEYS) url.searchParams.delete(k);
+  url.searchParams.set(key, val);
+  return url.toString();
+}
+
+// Small inline "Copy link" button. `id` must be unique within the panel.
+function copyLinkBtnHtml(key, val, id) {
+  return `<button class="copy-link-btn" id="${id}" data-key="${esc(String(key))}" data-val="${esc(String(val))}" title="Copy a shareable link to this view">${BMG_ICONS.link} Copy link</button>`;
+}
+// Delegated handler (wired once) — copies the link and shows a transient ✓.
+function wireCopyLinkButtons(root) {
+  (root || document).querySelectorAll('.copy-link-btn').forEach(btn => {
+    if (btn._wired) return;
+    btn._wired = true;
+    btn.addEventListener('click', async () => {
+      const url = buildShareUrl(btn.dataset.key, btn.dataset.val);
+      try { await navigator.clipboard.writeText(url); }
+      catch { /* clipboard blocked — fall back to prompt */ prompt('Copy this link:', url); return; }
+      const prev = btn.innerHTML;
+      btn.innerHTML = `${BMG_ICONS.check} Copied`;
+      btn.classList.add('copied');
+      setTimeout(() => { btn.innerHTML = prev; btn.classList.remove('copied'); }, 1600);
+    });
+  });
+}
+
 function handleUrlParams() {
   const p    = new URLSearchParams(location.search);
+
+  // ?region=<osm_type><osm_id> e.g. "R165475" — admin region filter + fit.
+  const region = p.get('region');
+  if (region) { applyRegionFromOsmRef(region); return; }
+
+  // ?obs=<obsId> — open a specific observation (resolved via iNat API).
+  const obsId = p.get('obs');
+  if (obsId) { openObsById(obsId); return; }
+
+  // ?sp=<taxonId> — open a species sidebar + fit to its observations.
+  const spId = p.get('sp');
+  if (spId) {
+    const ti = inatTaxa.findIndex(t => String(t[0]) === String(spId) || t[1] === spId);
+    // taxonId in species-data is the iNat taxon id; our inatTaxa rows are
+    // [taxonId?, name, genus, common] — match by name fallback below.
+    const name = ti >= 0 ? inatTaxa[ti][1] : null;
+    selectInatTaxonById(spId, name);
+    return;
+  }
+
+  // ?at=lat,lng[,zoom] — open the clicked-location panel.
+  const at = p.get('at');
+  if (at) {
+    const parts = at.split(',').map(Number);
+    if (parts.length >= 2 && parts.every(n => isFinite(n))) {
+      const [lat, lng, z] = parts;
+      if (z) map.setView([lat, lng], z);
+      window.openClimateAt(lat, lng);
+      return;
+    }
+  }
+
+  // Legacy gallery deep links.
   const txnId = p.get('taxon');
   const slug  = p.get('slug');
   let taxon = null;
   if (txnId)  taxon = allMapTaxa.find(t => t.id === txnId);
   if (!taxon && slug) taxon = allMapTaxa.find(t => t.slug === slug);
   if (taxon) { openPanel(taxon); flyToTaxon(taxon); }
+}
+
+// Resolve a ?sp= link. Species pages key on the iNat taxon id (string). We have
+// that id in species-data.json; fit the map to the species' observations.
+async function selectInatTaxonById(taxonId, taxonNameHint) {
+  await loadSpeciesData().catch(() => null);
+  const entry = inatSpeciesData && inatSpeciesData[taxonId];
+  const taxonName = entry?.scientific_name || taxonNameHint;
+  if (!taxonName) return;
+  if (!inatVisible) enableInatLayer();
+  inatSpeciesFilter = taxonName;
+  searchInatTaxa._counts = null;
+  rebuildInatIndex();
+  const pts = [];
+  for (const o of inatObs) if (inatTaxa[o[OBS_TI]]?.[1] === taxonName) pts.push([o[OBS_LAT], o[OBS_LNG]]);
+  if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 9, animate: true });
+  openSpeciesSidebar(taxonId, taxonName);
+}
+
+// Resolve a ?obs= link: fetch the single observation from iNat and open it.
+async function openObsById(obsId) {
+  try {
+    const res = await fetch(`${INAT_API_OBS}${obsId}?`);
+    if (!res.ok) return;
+    const o = (await res.json()).results?.[0];
+    if (!o) return;
+    const geo = o.geojson?.coordinates;                       // [lng, lat], public (obscured) coords
+    const lat = geo ? geo[1] : (o.latitude != null ? +o.latitude : null);
+    const lng = geo ? geo[0] : (o.longitude != null ? +o.longitude : null);
+    if (lat == null || lng == null) return;
+    const obscured = o.geoprivacy === 'obscured' || o.taxon_geoprivacy === 'obscured';
+    let flags = 0;
+    if (obscured) flags |= F_OBSCURED;
+    if (o.quality_grade !== 'research') flags |= F_NEEDSID;
+    if (o.photos?.length) flags |= F_PHOTO;
+    const kv = getKoppenAt(lat, lng);
+    const feature = {
+      geometry: { coordinates: [lng, lat] },
+      properties: {
+        obs_id:      o.id,
+        lat, lng,
+        taxon_name:  o.taxon?.name || 'Unknown',
+        common_name: o.taxon?.preferred_common_name || null,
+        genus:       (o.taxon?.name || '').split(' ')[0],
+        date:        o.observed_on || null,
+        flags,
+        photo_id:    o.photos?.[0]?.id || null,
+        koppen:      (kv >= 1 && kv <= 30) ? kv : 0,
+      },
+    };
+    if (!inatVisible) enableInatLayer();
+    map.setView([lat, lng], obscured ? 9 : 11, { animate: true });
+    openInatObsPanel(feature);
+  } catch { /* ignore */ }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6516,6 +6850,7 @@ let inatAllLoaded     = false;      // whether all.json is loaded
 let inatTaxa          = [];         // merged taxa lookup [[id,name,genus,common],...]
 let inatObs           = [];         // merged obs arrays [[id,lat,lng,ti,date,flags,photoId,koppen],...]
 let inatSpeciesFilter  = null;       // taxon_name string when a species is selected via search
+let inatRegionFilter   = null;       // { name, bbox:[s,n,w,e], rings:[[[lng,lat],...],...], osmRef } admin-region filter
 let inatDetailGen      = 0;          // incremented each time an obs panel opens; stale fetches are discarded
 let inatSpeciesDataPromise = null;   // singleton fetch promise for species-data.json
 let inatSpeciesData        = null;   // species data keyed by taxon_id (number)
@@ -6726,6 +7061,32 @@ const F_NEEDSID=1, F_OBSCURED=2, F_PHOTO=4;
 // Map<cellKey, { swLat, swLng, feats: [] }>. Rebuilt whenever filters change.
 let inatObscuredCells = new Map();
 
+// Ray-casting point-in-polygon. `rings` is an array of linear rings, each an
+// array of [lng, lat]. A point inside an odd number of rings is "in" (handles
+// multipolygons + holes well enough for an admin-boundary mask).
+function pointInRings(lng, lat, rings) {
+  let inside = false;
+  for (const ring of rings) {
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const xi = ring[i][0], yi = ring[i][1];
+      const xj = ring[j][0], yj = ring[j][1];
+      if (((yi > lat) !== (yj > lat)) &&
+          (lng < (xj - xi) * (lat - yi) / (yj - yi) + xi)) inside = !inside;
+    }
+  }
+  return inside;
+}
+
+// True when an obs at (lat,lng) passes the active region filter (bbox fast-path
+// then precise polygon test). No filter → always true.
+function passesRegionFilter(lat, lng) {
+  const rf = inatRegionFilter;
+  if (!rf) return true;
+  const [s, n, w, e] = rf.bbox;
+  if (lat < s || lat > n || lng < w || lng > e) return false;
+  return rf.rings ? pointInRings(lng, lat, rf.rings) : true;
+}
+
 function buildInatFeatures() {
   const features = [];          // exact (non-obscured) points → supercluster
   inatObscuredCells = new Map();
@@ -6737,6 +7098,7 @@ function buildInatFeatures() {
     const koppen = o[OBS_KOP];
     // Filter
     if (inatSpeciesFilter ? taxon[1] !== inatSpeciesFilter : !inatFilters.genera.has(genus)) continue;
+    if (inatRegionFilter && !passesRegionFilter(o[OBS_LAT], o[OBS_LNG])) continue;
     if ((flags & F_NEEDSID) && !inatFilters.needsId) continue;
     if (!inatFilters.koppen.has(koppen) && koppen !== 0) continue;
     // Köppen legend filter — AND-ed with the iNat-panel filters above.
@@ -7093,7 +7455,8 @@ function openInatObsPanel(feature) {
     <div class="p-species-name">${esc(p.taxon_name)}</div>
     ${p.common_name ? `<div class="p-common-name">${esc(p.common_name)}</div>` : ''}
     <div class="p-location" id="obs-location" title="${esc(coordStr)}">${coordStr}</div>
-    <div class="badge-row" style="margin-top:8px">${qBadge}${obsBadge}${koppenBadge}</div>
+    <div class="badge-row" style="margin-top:8px;margin-bottom:8px">${qBadge}${obsBadge}${koppenBadge}</div>
+    ${copyLinkBtnHtml('obs', p.obs_id, 'obs-copy-link')}
     <a class="inat-view-link" href="${INAT_OBS_URL}${p.obs_id}" target="_blank" rel="noopener">View on iNaturalist →</a>
 
     ${hasPhoto ? `
@@ -7135,6 +7498,8 @@ function openInatObsPanel(feature) {
   `;
 
   wireNavBackBtn();
+  wireCopyLinkButtons(document.getElementById('panel-content'));
+  setDeepLink('obs', p.obs_id);
 
   // Lazy-load climate data the first time that section is opened
   let climateLoaded = false;
@@ -7543,10 +7908,16 @@ function applyInatFilters() {
   // On mobile: load needed genus files; on desktop: all.json already loaded
   if (window.innerWidth < 1024 && !inatAllLoaded) {
     Promise.all([...inatFilters.genera].filter(g => !inatLoadedGenera.has(g)).map(loadInatGenus))
-      .then(() => rebuildInatIndex());
+      .then(() => { rebuildInatIndex(); refreshRegionChipCount(); });
   } else {
     rebuildInatIndex();
+    refreshRegionChipCount();
   }
+}
+
+// Keep the region chip's observation count in sync after a genus/quality change.
+function refreshRegionChipCount() {
+  if (inatRegionFilter) setRegionChip(inatRegionFilter.name, countRegionObs(), false);
 }
 
 // ── Layer enable/disable ──────────────────────────────────
@@ -7638,6 +8009,8 @@ const BMG_ICONS = {
   // "Palette" — used for the Soil legend toggle (distinct from the Köppen
   // legend's grid icon so the two key buttons read as different categories).
   palette:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 22a10 10 0 1 1 10-10c0 3.31-2.69 6-6 6h-1.5a2 2 0 0 0-2 2 2.5 2.5 0 0 1-2.5 2.5z"/></svg>`,
+  link:        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
+  check:       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
 };
 
 function getWelcomeHtml() {
