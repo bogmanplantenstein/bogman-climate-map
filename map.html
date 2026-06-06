@@ -5776,7 +5776,7 @@ function buildSpeciesSidebarContent(entry) {
     function speciesObsCard(o, idx) {
       const hasPhoto = !!(o[OBS_FLAGS] & F_PHOTO);
       const photoEl  = hasPhoto && o[OBS_PHOTO]
-        ? `<img class="inat-obs-thumb" src="${INAT_PHOTO_BASE}${o[OBS_PHOTO]}/square.jpeg" loading="lazy" onerror="this.style.display='none'">`
+        ? inatThumbImg(o[OBS_PHOTO], 'inat-obs-thumb')
         : `<div class="inat-obs-thumb-placeholder">🌿</div>`;
       const qBadge = (o[OBS_FLAGS] & F_NEEDSID)
         ? `<span class="inat-badge inat-badge-nid">Needs ID</span>`
@@ -6840,6 +6840,47 @@ const INAT_PHOTO_BASE = 'https://inaturalist-open-data.s3.amazonaws.com/photos/'
 const INAT_OBS_URL    = 'https://www.inaturalist.org/observations/';
 const INAT_API_OBS    = 'https://api.inaturalist.org/v1/observations/';
 
+// We only store the numeric photo_id in the obs data (to keep it compact), but
+// iNat photos vary by extension (.jpg/.jpeg/.png) AND host (open-data S3 vs
+// static.inaturalist.org). A single hardcoded URL only resolves the subset that
+// happen to match — so we build a candidate list and fall through on error.
+// Order is by observed frequency: open-data .jpg is by far the most common.
+const INAT_PHOTO_HOSTS = [
+  'https://inaturalist-open-data.s3.amazonaws.com/photos/',
+  'https://static.inaturalist.org/photos/',
+];
+const INAT_PHOTO_EXTS = ['jpg', 'jpeg', 'png'];
+function inatPhotoCandidates(photoId, size = 'square') {
+  const urls = [];
+  for (const ext of INAT_PHOTO_EXTS)
+    for (const host of INAT_PHOTO_HOSTS)
+      urls.push(`${host}${photoId}/${size}.${ext}`);
+  return urls;
+}
+// Build an <img> that walks the candidate URLs on error, then hides if none work.
+// The candidate list is JSON-encoded into a data attribute; a single delegated
+// 'error' listener (added once) advances to the next candidate.
+function inatThumbImg(photoId, cls, size = 'square', extraAttrs = '') {
+  const cands = inatPhotoCandidates(photoId, size);
+  return `<img class="${cls}" src="${cands[0]}" loading="lazy" ` +
+         `data-fallbacks='${JSON.stringify(cands.slice(1))}' ${extraAttrs}>`;
+}
+// One global handler advances any iNat thumb to its next candidate URL.
+// Capture phase so it catches <img> error events (which don't bubble).
+document.addEventListener('error', e => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.dataset.fallbacks) return;
+  let list;
+  try { list = JSON.parse(img.dataset.fallbacks); } catch { list = []; }
+  if (list.length) {
+    img.src = list.shift();
+    img.dataset.fallbacks = JSON.stringify(list);
+  } else {
+    img.dataset.fallbacks = '';
+    img.style.display = 'none';   // exhausted — hide gracefully
+  }
+}, true);
+
 // ── iNat state ────────────────────────────────────────────
 
 let inatVisible       = false;
@@ -7407,7 +7448,7 @@ function obsCard(lf, idx = 0) {
   const p       = lf.properties;
   const hasPhoto = !!(p.flags & F_PHOTO);
   const photoEl  = hasPhoto && p.photo_id
-    ? `<img class="inat-obs-thumb" src="${INAT_PHOTO_BASE}${p.photo_id}/square.jpeg" loading="lazy" onerror="this.style.display='none'">`
+    ? inatThumbImg(p.photo_id, 'inat-obs-thumb')
     : `<div class="inat-obs-thumb-placeholder">🌿</div>`;
   const qBadge   = (p.flags & F_NEEDSID)
     ? `<span class="inat-badge inat-badge-nid">Needs ID</span>`
