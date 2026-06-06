@@ -1062,8 +1062,44 @@ html, body {
 }
 
 /* ── Mobile ──────────────────────────────────────────────── */
+/* Mobile-only control-stack toggle (hamburger). Hidden on desktop. */
+#mobile-controls-toggle { display: none; }
+
 @media (max-width: 768px) {
-  #search-container { width: calc(100% - 100px); max-width: none; }
+  /* Search bar: leave room for BOTH the controls toggle (top-right) and a small
+     gutter, so it never overlaps the control stack / its group labels. */
+  #search-container { left: 10px; transform: none; width: calc(100% - 64px); max-width: none; }
+
+  /* The hamburger toggle sits in the top-right corner where the stack used to
+     crowd the search bar. */
+  #mobile-controls-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: absolute;
+    top: 10px; right: 10px;
+    width: 40px; height: 40px;
+    z-index: 1002;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text-primary);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    cursor: pointer;
+  }
+  #mobile-controls-toggle svg { width: 20px; height: 20px; }
+  #mobile-controls-toggle.active { background: var(--accent-dim); border-color: var(--accent); color: var(--accent); }
+
+  /* The Leaflet top-right control stack starts BELOW the toggle and is hidden by
+     default on mobile; the toggle reveals it. It also auto-hides whenever the
+     bottom info panel is open (body.panel-open), so buttons never sit on top of
+     the popup. */
+  .leaflet-top.leaflet-right { top: 56px; }
+  body:not(.controls-open) .leaflet-top.leaflet-right { display: none; }
+  body.panel-open .leaflet-top.leaflet-right { display: none; }
+  /* When the panel is open, also drop the toggle so the map area is clean. */
+  body.panel-open #mobile-controls-toggle { display: none; }
+
   #side-panel {
     position: absolute;
     bottom: 0; left: 0; right: 0;
@@ -1081,10 +1117,7 @@ html, body {
   #panel-drag-handle { display: block; }
   #panel-scroll { max-height: calc(72vh - 80px); }
 
-  /* Sightings panels on mobile: anchor to right edge, full-width.
-     Desktop positions them at right: 54px (next to the Leaflet control
-     stack); on narrow screens we drop them straight to right: 10px and
-     take the full available width. */
+  /* Sightings panels on mobile: anchor to right edge, full-width. */
   #unmapped-panel { right: 10px; width: calc(100vw - 20px); }
   #filter-panel   { right: 10px; max-width: calc(100vw - 20px); }
 }
@@ -2269,6 +2302,12 @@ body.bmg-onboarding #search-container { z-index: 9100; }
 
   <div id="map-container">
     <div id="map"></div>
+
+    <!-- Mobile-only: toggles the top-right control stack open/closed. Hidden on
+         desktop via CSS. -->
+    <button id="mobile-controls-toggle" title="Map controls" aria-label="Toggle map controls">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
 
     <div id="search-container">
       <div id="search-input-wrap">
@@ -6690,6 +6729,66 @@ function initMobileSwipe() {
   });
   window.addEventListener('touchmove', onMove, { passive: true });
   window.addEventListener('touchend',  onEnd);
+
+  // Keep body.panel-open in sync with #side-panel.open (used by mobile CSS to
+  // auto-hide the control stack while the bottom info panel is up). One observer
+  // beats threading a class toggle through all five open/close call sites.
+  const sync = () => {
+    const open = panel.classList.contains('open');
+    document.body.classList.toggle('panel-open', open);
+    // Opening the panel collapses the control stack so they never overlap.
+    if (open) document.body.classList.remove('controls-open');
+  };
+  new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ['class'] });
+  sync();
+
+  // Horizontal swipe-back on the panel body (mobile). Swipe RIGHT to go back a
+  // page (matches the system back gesture); at the root view it closes the
+  // panel. Vertical drags are left to the drag-to-dismiss handler above.
+  initPanelSwipeBack();
+}
+
+// Swipe-right-to-go-back on the bottom info panel. Tracks a touch on
+// #panel-scroll; if it's a mostly-horizontal rightward swipe past a threshold,
+// it triggers the same action as the back button (or closes at the root).
+function initPanelSwipeBack() {
+  const scroll = document.getElementById('panel-scroll');
+  if (!scroll) return;
+  let x0 = 0, y0 = 0, tracking = false;
+
+  scroll.addEventListener('touchstart', e => {
+    if (e.touches.length !== 1) { tracking = false; return; }
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; tracking = true;
+  }, { passive: true });
+
+  scroll.addEventListener('touchend', e => {
+    if (!tracking) return;
+    tracking = false;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - x0, dy = t.clientY - y0;
+    // Rightward, clearly horizontal, and a meaningful distance.
+    if (dx > 70 && Math.abs(dx) > Math.abs(dy) * 1.8) {
+      if (navStack.length) navGoBack();   // go back one page
+      else                 closePanel();  // root view → dismiss
+    }
+  }, { passive: true });
+}
+
+// Mobile: the hamburger button toggles the top-right control stack open/closed
+// (via body.controls-open). Tapping the map or opening a panel collapses it.
+function initMobileControlsToggle() {
+  const btn = document.getElementById('mobile-controls-toggle');
+  if (!btn) return;
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const open = document.body.classList.toggle('controls-open');
+    btn.classList.toggle('active', open);
+  });
+  // Tapping the map closes the stack.
+  map.on('click', () => {
+    document.body.classList.remove('controls-open');
+    btn.classList.remove('active');
+  });
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6714,6 +6813,7 @@ async function init() {
   initMap();
   buildMapControls();
   initMobileSwipe();
+  initMobileControlsToggle();
   initSearch();
 
   // UI wiring
