@@ -7354,7 +7354,11 @@ function renderInatObsList(leaves, offset = 0) {
   const page    = leaves.slice(offset, offset + INAT_OBS_PAGE);
   const hasMore = leaves.length > offset + INAT_OBS_PAGE;
 
-  const cards = page.map(lf => obsCard(lf)).join('');
+  // Pass the ABSOLUTE index into `leaves` (offset + i) so the click handler's
+  // `leaves[idx]` opens the right observation — and so paginated pages don't
+  // all collide on data-idx. (Was obsCard(lf) → every card got the default
+  // idx=0, which opened leaves[0] for every row.)
+  const cards = page.map((lf, i) => obsCard(lf, offset + i)).join('');
 
   const content = `
     ${navBackBtnHtml()}
@@ -7376,8 +7380,11 @@ function renderInatObsList(leaves, offset = 0) {
     }
   }
 
-  // Wire events
+  // Wire events. Guard against double-binding: on "Load more" this block runs
+  // again over the full list, so skip cards that already have a handler.
   document.querySelectorAll('.inat-obs-card').forEach(card => {
+    if (card._wired) return;
+    card._wired = true;
     card.addEventListener('click', () => {
       const idx = parseInt(card.dataset.idx);
       inatNav.obsFeature = leaves[idx];
