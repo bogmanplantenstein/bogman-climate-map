@@ -1381,7 +1381,7 @@ html, body {
 
 .gallery-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 4px;
   margin-top: 8px;
 }
@@ -7622,43 +7622,58 @@ function galleryPhotoObsCount(descs) {
   return descs.filter(d => d.hasPhoto).length;
 }
 
+// Remaining photo-bearing observation descriptors not yet fetched, plus the
+// number of obs already pulled — drives the "Load more photos" button.
+let galleryPending = [];   // descriptors with photos, awaiting fetch
+let galleryObsLoaded = 0;  // obs whose photos have been fetched so far
+let galleryGen = 0;        // guards stale fetches / load-more clicks
+
 // Entry point. `descs` = normalised descriptors; `title` heads the view;
 // `backEntry` is the nav-stack entry to return to.
 async function openPhotoGallery(descs, title, backEntry) {
   inatNav.mode = 'gallery';
   if (backEntry) navPush(backEntry);
 
-  const withPhotos = descs.filter(d => d.hasPhoto).slice(0, GALLERY_MAX_OBS);
-  const capped = descs.filter(d => d.hasPhoto).length > GALLERY_MAX_OBS;
+  galleryPending = descs.filter(d => d.hasPhoto);
+  galleryPhotos = [];
+  galleryObsLoaded = 0;
+  galleryGen++;
 
   document.getElementById('panel-content').innerHTML = `
     ${navBackBtnHtml()}
     <div class="inat-cluster-title">${esc(title)}</div>
-    <div class="inat-cluster-sub">Photo gallery${capped ? ` · first ${GALLERY_MAX_OBS} observations` : ''}</div>
-    <div class="gallery-status" id="gallery-status">Loading photos…</div>
+    <div class="inat-cluster-sub">${galleryPending.length.toLocaleString()} observation${galleryPending.length === 1 ? '' : 's'} with photos</div>
     <div class="gallery-grid" id="gallery-grid"></div>
+    <div class="gallery-status" id="gallery-status">Loading photos…</div>
+    <div id="gallery-more-wrap"></div>
   `;
   wireNavBackBtn();
   document.getElementById('panel-scroll')?.scrollTo(0, 0);
 
-  galleryPhotos = [];
-  const grid = document.getElementById('gallery-grid');
-  const statusEl = document.getElementById('gallery-status');
-  const myGen = ++inatDetailGen;   // reuse the obs-detail generation guard
+  await loadMoreGalleryPhotos();
+}
 
-  // Index obs by id so we can attach photos back to the descriptor.
-  const byId = new Map(withPhotos.map(d => [String(d.obsId), d]));
-  const ids = withPhotos.map(d => d.obsId);
+// Fetch the next batch (up to GALLERY_MAX_OBS observations) of photos, append to
+// the grid, and show a "Load more" button while observations remain.
+async function loadMoreGalleryPhotos() {
+  const myGen = galleryGen;
+  const statusEl = document.getElementById('gallery-status');
+  const moreWrap = document.getElementById('gallery-more-wrap');
+  if (moreWrap) moreWrap.innerHTML = '';   // remove the button while loading
+
+  const batch = galleryPending.slice(galleryObsLoaded, galleryObsLoaded + GALLERY_MAX_OBS);
+  const byId  = new Map(batch.map(d => [String(d.obsId), d]));
+  const ids   = batch.map(d => d.obsId);
 
   for (let i = 0; i < ids.length; i += GALLERY_FETCH_CHUNK) {
-    if (myGen !== inatDetailGen) return;   // user navigated away
+    if (myGen !== galleryGen) return;   // navigated away or restarted
     const chunk = ids.slice(i, i + GALLERY_FETCH_CHUNK);
     let results = [];
     try {
       const res = await fetch(`${INAT_API_OBS}?id=${chunk.join(',')}&per_page=${GALLERY_FETCH_CHUNK}&photos=true`);
       if (res.ok) results = (await res.json()).results || [];
     } catch { /* skip this chunk */ }
-    if (myGen !== inatDetailGen) return;
+    if (myGen !== galleryGen) return;
 
     for (const obs of results) {
       const d = byId.get(String(obs.id));
@@ -7673,26 +7688,44 @@ async function openPhotoGallery(descs, title, backEntry) {
         });
       }
     }
-    // Render incrementally so the grid fills as chunks arrive.
-    renderGalleryGrid();
-    statusEl.textContent = `${galleryPhotos.length} photo${galleryPhotos.length === 1 ? '' : 's'}` +
-      (i + GALLERY_FETCH_CHUNK < ids.length ? ' · loading more…' : '');
+    renderGalleryGrid();   // fill in as chunks arrive
+    if (statusEl) statusEl.textContent = `${galleryPhotos.length.toLocaleString()} photos · loading…`;
+  }
+  if (myGen !== galleryGen) return;
+
+  galleryObsLoaded += batch.length;
+  const remaining = galleryPending.length - galleryObsLoaded;
+
+  if (statusEl) {
+    statusEl.textContent = `${galleryPhotos.length.toLocaleString()} photo${galleryPhotos.length === 1 ? '' : 's'} from ` +
+      `${galleryObsLoaded.toLocaleString()} observation${galleryObsLoaded === 1 ? '' : 's'}` +
+      (remaining > 0 ? ` (${remaining.toLocaleString()} more available)` : '');
+    if (!galleryPhotos.length) statusEl.textContent = 'No photos available for these observations.';
   }
 
-  if (!galleryPhotos.length) statusEl.textContent = 'No photos available for these observations.';
-  else statusEl.textContent = `${galleryPhotos.length} photo${galleryPhotos.length === 1 ? '' : 's'} from ${ids.length} observation${ids.length === 1 ? '' : 's'}`;
+  const moreWrap2 = document.getElementById('gallery-more-wrap');
+  if (moreWrap2 && remaining > 0) {
+    moreWrap2.innerHTML = `<button class="inat-load-more" id="gallery-more-btn">Load more photos (${remaining.toLocaleString()} observations remaining)</button>`;
+    document.getElementById('gallery-more-btn').addEventListener('click', loadMoreGalleryPhotos);
+  }
 }
 
 function renderGalleryGrid() {
   const grid = document.getElementById('gallery-grid');
   if (!grid) return;
-  grid.innerHTML = galleryPhotos.map((ph, i) =>
-    `<div class="gallery-cell" data-idx="${i}">
-       <img src="${ph.url}" loading="lazy" alt="${esc(ph.taxonName)}" onerror="this.parentElement.style.display='none'">
-     </div>`).join('');
-  grid.querySelectorAll('.gallery-cell').forEach(cell => {
-    cell.addEventListener('click', () => openGalleryLightbox(parseInt(cell.dataset.idx)));
-  });
+  // Only append cells that aren't rendered yet (preserves scroll + avoids
+  // re-binding existing cells on each incremental render).
+  const existing = grid.children.length;
+  if (existing > galleryPhotos.length) { grid.innerHTML = ''; }   // safety: list shrank
+  for (let i = grid.children.length; i < galleryPhotos.length; i++) {
+    const ph = galleryPhotos[i];
+    const cell = document.createElement('div');
+    cell.className = 'gallery-cell';
+    cell.dataset.idx = i;
+    cell.innerHTML = `<img src="${ph.url}" loading="lazy" alt="${esc(ph.taxonName)}" onerror="this.parentElement.style.display='none'">`;
+    cell.addEventListener('click', () => openGalleryLightbox(i));
+    grid.appendChild(cell);
+  }
 }
 
 // ── Lightbox ──────────────────────────────────────────────
