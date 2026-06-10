@@ -6656,15 +6656,12 @@ function buildUnmappedList() {
 //  URL / DEEP LINK
 // ═══════════════════════════════════════════════════════════
 
-// Public base URL of the page the map is embedded on. Shareable links are built
-// against THIS, not the map's own (iframe / jsDelivr) URL — so "Copy link"
-// yields e.g. https://burymeinthebog.com/map?sp=52666 rather than the CDN URL.
+// Public base URL of the page the map is embedded on. Shareable links ALWAYS
+// build against THIS — never the map's own (iframe / jsDelivr / GitHub) URL — so
+// "Copy link" always yields e.g. https://www.burymeinthebog.com/map?sp=52666.
 // The embed page must forward its query string into the iframe src AND listen
-// for the postMessage below to keep its address bar in sync (see README embed
-// snippet). When the map is opened standalone (not in an iframe), we fall back
-// to its own location so local testing and direct opens still work.
-const SHARE_BASE_URL = 'https://burymeinthebog.com/map';
-const IS_EMBEDDED    = (() => { try { return window.self !== window.top; } catch { return true; } })();
+// for the postMessage below to keep its address bar in sync (see README snippet).
+const SHARE_BASE_URL = 'https://www.burymeinthebog.com/map';
 
 function setUrlParam(key, val) {
   const url = new URL(location.href);
@@ -6691,12 +6688,10 @@ function setDeepLink(key, val) {
   } catch {}
 }
 
-// Build a full shareable URL for a given deep-link param. Uses the public embed
-// page (SHARE_BASE_URL) when the map is running inside an iframe; otherwise the
-// map's own URL (standalone / local dev).
+// Build a full shareable URL for a given deep-link param. ALWAYS uses the public
+// website (SHARE_BASE_URL) — never the map's own iframe/CDN/GitHub URL.
 function buildShareUrl(key, val) {
-  const base = IS_EMBEDDED ? SHARE_BASE_URL : location.href;
-  const url  = new URL(base, location.href);
+  const url  = new URL(SHARE_BASE_URL, location.href);
   for (const k of DEEPLINK_KEYS) url.searchParams.delete(k);
   url.searchParams.set(key, val);
   return url.toString();

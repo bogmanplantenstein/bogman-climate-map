@@ -55,7 +55,7 @@ The file uses the `CODE` property for zone codes (e.g. `"Cfa"`, `"ET"`) which th
 
 In Squarespace, create a page at `/map` and add a Code Block with the snippet
 below. This version makes **shareable deep links work** (e.g.
-`burymeinthebog.com/map?sp=52666`): it forwards the page's query string into the
+`www.burymeinthebog.com/map?sp=52666`): it forwards the page's query string into the
 iframe on load, and keeps the page's address bar in sync as you navigate inside
 the map (via `postMessage`).
 
