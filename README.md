@@ -53,16 +53,45 @@ The file uses the `CODE` property for zone codes (e.g. `"Cfa"`, `"ET"`) which th
 
 ## Squarespace Embedding
 
-In Squarespace, create a page at `/map` and add a Code Block:
+In Squarespace, create a page at `/map` and add a Code Block with the snippet
+below. This version makes **shareable deep links work** (e.g.
+`burymeinthebog.com/map?sp=52666`): it forwards the page's query string into the
+iframe on load, and keeps the page's address bar in sync as you navigate inside
+the map (via `postMessage`).
 
 ```html
 <iframe
-  src="https://cdn.jsdelivr.net/gh/bogmanplantenstein/bogman-climate-map@main/map.html"
-  style="width:100%;height:calc(100vh - 80px);border:none;display:block;">
-</iframe>
+  id="bmg-map-frame"
+  style="width:100%;height:calc(100vh - 80px);border:none;display:block;"></iframe>
+
+<script>
+(function () {
+  var BASE  = "https://cdn.jsdelivr.net/gh/bogmanplantenstein/bogman-climate-map@main/map.html";
+  var frame = document.getElementById("bmg-map-frame");
+
+  // 1. Forward the page's query string (?sp=, ?obs=, ?at=, ?region=) into the
+  //    iframe so an incoming deep link opens the right view.
+  frame.src = BASE + window.location.search;
+
+  // 2. Keep this page's address bar in sync with the map's current view, so any
+  //    link is copyable straight from the browser bar and back/forward works.
+  window.addEventListener("message", function (e) {
+    if (!e.data || e.data.type !== "bmg-map-deeplink") return;
+    var qs = new URLSearchParams();
+    var p  = e.data.params || {};
+    Object.keys(p).forEach(function (k) { qs.set(k, p[k]); });
+    var url = window.location.pathname + (qs.toString() ? "?" + qs.toString() : "");
+    history.replaceState(null, "", url);
+  });
+})();
+</script>
 ```
 
 Adjust the `80px` offset to match the actual Squarespace header height.
+
+> The map builds its **Copy link** buttons against `SHARE_BASE_URL` (set near the
+> top of the deep-link section in `map.html`). If the public page URL changes,
+> update that constant to match.
 
 ---
 

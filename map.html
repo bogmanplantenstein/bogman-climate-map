@@ -6656,6 +6656,16 @@ function buildUnmappedList() {
 //  URL / DEEP LINK
 // ═══════════════════════════════════════════════════════════
 
+// Public base URL of the page the map is embedded on. Shareable links are built
+// against THIS, not the map's own (iframe / jsDelivr) URL — so "Copy link"
+// yields e.g. https://burymeinthebog.com/map?sp=52666 rather than the CDN URL.
+// The embed page must forward its query string into the iframe src AND listen
+// for the postMessage below to keep its address bar in sync (see README embed
+// snippet). When the map is opened standalone (not in an iframe), we fall back
+// to its own location so local testing and direct opens still work.
+const SHARE_BASE_URL = 'https://burymeinthebog.com/map';
+const IS_EMBEDDED    = (() => { try { return window.self !== window.top; } catch { return true; } })();
+
 function setUrlParam(key, val) {
   const url = new URL(location.href);
   val ? url.searchParams.set(key, val) : url.searchParams.delete(key);
@@ -6671,12 +6681,22 @@ function setDeepLink(key, val) {
   for (const k of DEEPLINK_KEYS) url.searchParams.delete(k);
   if (key && val != null) url.searchParams.set(key, val);
   history.replaceState(null, '', url);
+  // Tell the embedding page about the new view so it can update its own
+  // address bar (and browser history). Harmless when not embedded.
+  try {
+    window.parent?.postMessage(
+      { type: 'bmg-map-deeplink', params: (key && val != null) ? { [key]: String(val) } : {} },
+      '*'
+    );
+  } catch {}
 }
 
-// Build a full shareable URL for a given deep-link param without touching the
-// current address bar (used by the Copy-link buttons).
+// Build a full shareable URL for a given deep-link param. Uses the public embed
+// page (SHARE_BASE_URL) when the map is running inside an iframe; otherwise the
+// map's own URL (standalone / local dev).
 function buildShareUrl(key, val) {
-  const url = new URL(location.href);
+  const base = IS_EMBEDDED ? SHARE_BASE_URL : location.href;
+  const url  = new URL(base, location.href);
   for (const k of DEEPLINK_KEYS) url.searchParams.delete(k);
   url.searchParams.set(key, val);
   return url.toString();
