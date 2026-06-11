@@ -108,18 +108,42 @@ html, body {
   flex-shrink: 0;
 }
 
-#panel-close {
+.panel-header-btns { display: flex; align-items: center; gap: 2px; }
+#panel-close, #panel-minimize {
   background: none;
   border: none;
   color: var(--text-muted);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
-  padding: 2px 5px;
+  padding: 2px 7px;
   border-radius: 4px;
   transition: color 0.15s;
 }
-#panel-close:hover { color: var(--text-primary); }
+#panel-minimize { font-size: 26px; padding-bottom: 8px; }
+#panel-close:hover, #panel-minimize:hover { color: var(--text-primary); }
+
+/* Restore tab — shown when the panel is minimized (state preserved). Sits on
+   the right edge; clicking it reopens the panel exactly as it was. */
+#panel-restore-tab {
+  position: absolute;
+  top: 50%; right: 0; transform: translateY(-50%);
+  display: none;
+  align-items: center; gap: 4px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border); border-right: none;
+  border-radius: 8px 0 0 8px;
+  color: var(--text-primary);
+  font-size: 12px; font-weight: 600;
+  padding: 12px 8px 12px 10px;
+  cursor: pointer;
+  z-index: 600;
+  box-shadow: -2px 2px 10px rgba(0,0,0,0.4);
+  writing-mode: vertical-rl;
+}
+#panel-restore-tab.show { display: flex; }
+#panel-restore-tab:hover { border-color: var(--accent); color: var(--accent); }
+#panel-restore-tab #panel-restore-icon { writing-mode: horizontal-tb; font-size: 16px; transform: rotate(180deg); }
 
 .temp-toggle {
   display: flex;
@@ -191,6 +215,25 @@ html, body {
 .copy-link-btn svg { width: 13px; height: 13px; }
 .copy-link-btn:hover { color: var(--text-primary); border-color: var(--accent); }
 .copy-link-btn.copied { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+
+/* In-app copy fallback toast — shows the link with a Select-all/copy hint when
+   the clipboard API is blocked (e.g. inside a cross-origin iframe). Replaces the
+   native prompt() so no browser/origin chrome ("...github.io says") appears. */
+#copy-toast {
+  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px);
+  z-index: 9600; max-width: min(92vw, 460px);
+  background: var(--bg-panel); border: 1px solid var(--accent);
+  border-radius: 10px; padding: 12px 14px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+  opacity: 0; pointer-events: none; transition: opacity 0.2s, transform 0.2s;
+}
+#copy-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+#copy-toast .copy-toast-label { font-size: 12px; color: var(--text-muted); margin-bottom: 6px; }
+#copy-toast input {
+  width: 100%; box-sizing: border-box;
+  background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 6px;
+  color: var(--text-primary); font-size: 12px; padding: 7px 9px; font-family: 'JetBrains Mono', monospace;
+}
 
 /* Region filter chip (admin-region observation filter) */
 #region-chip {
@@ -2494,12 +2537,20 @@ body.bmg-onboarding #search-container { z-index: 9100; }
         <button id="unit-f">°F</button>
         <button id="unit-c">°C</button>
       </div>
-      <button id="panel-close">×</button>
+      <div class="panel-header-btns">
+        <button id="panel-minimize" title="Minimize — keeps this view to reopen">–</button>
+        <button id="panel-close" title="Close">×</button>
+      </div>
     </div>
     <div id="panel-scroll">
       <div id="panel-content"></div>
     </div>
   </div>
+
+  <!-- Restore tab: appears when the panel is minimized; click to reopen it -->
+  <button id="panel-restore-tab" title="Reopen the panel">
+    <span id="panel-restore-icon">›</span><span id="panel-restore-label">Details</span>
+  </button>
 
   <!-- Reusable modal — content swapped between welcome and info dialogs -->
   <div id="bmg-modal-overlay" class="bmg-modal-overlay hidden" role="dialog" aria-modal="true">
@@ -2518,6 +2569,12 @@ body.bmg-onboarding #search-container { z-index: 9100; }
       <button class="glb-nav glb-next" id="glb-next" aria-label="Next photo">›</button>
     </div>
     <div class="glb-caption" id="glb-caption"></div>
+  </div>
+
+  <!-- Copy-link fallback toast (shown only if the clipboard API is blocked) -->
+  <div id="copy-toast">
+    <div class="copy-toast-label">Copy this link:</div>
+    <input id="copy-toast-input" type="text" readonly>
   </div>
 
 </div>
@@ -4061,6 +4118,7 @@ function openPanel(taxon) {
 
 function closePanel() {
   closeGalleryLightbox();   // never leave a lightbox floating over a closed panel
+  hideRestoreTab();         // a real close clears any minimized state too
   if (searchPanelOpen) { closeLocationPanel(); return; }
   if (selectedId && markerStore.has(selectedId)) {
     const { marker, taxon } = markerStore.get(selectedId);
@@ -4072,6 +4130,43 @@ function closePanel() {
   setDeepLink(null);   // drop any deep-link param (taxon/sp/obs/at)
   if (climateChart) { climateChart.destroy(); climateChart = null; }
   navClear();   // dropping the panel discards back-history
+}
+
+// Minimize: hide the panel WITHOUT discarding its content or state, and show a
+// restore tab. Unlike closePanel(), this keeps selectedId / searchState / the
+// nav stack / charts / the deep link intact so restorePanel() reopens the exact
+// same view. Closing the lightbox is fine (it floats above the panel).
+function minimizePanel() {
+  const panel = document.getElementById('side-panel');
+  if (!panel.classList.contains('open')) return;
+  closeGalleryLightbox();
+  panel.classList.remove('open');
+  panel.classList.add('minimized');
+  document.body.classList.remove('panel-open');   // let mobile controls reappear
+  showRestoreTab();
+}
+function restorePanel() {
+  const panel = document.getElementById('side-panel');
+  panel.classList.remove('minimized');
+  panel.classList.add('open');
+  document.body.classList.add('panel-open');
+  hideRestoreTab();
+}
+function showRestoreTab() {
+  // Label the tab by what's open, so it's clear what will reopen.
+  let label = 'Details';
+  if (searchPanelOpen) label = 'Location';
+  else if (inatNav.mode === 'species-sidebar') label = 'Species';
+  else if (inatNav.mode === 'obs-detail') label = 'Observation';
+  else if (inatNav.mode === 'obs-list' || inatNav.mode === 'gallery') label = 'List';
+  else if (selectedId) label = 'Species';
+  const lbl = document.getElementById('panel-restore-label');
+  if (lbl) lbl.textContent = label;
+  document.getElementById('panel-restore-tab')?.classList.add('show');
+}
+function hideRestoreTab() {
+  document.getElementById('side-panel')?.classList.remove('minimized');
+  document.getElementById('panel-restore-tab')?.classList.remove('show');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -6701,6 +6796,43 @@ function buildShareUrl(key, val) {
 function copyLinkBtnHtml(key, val, id) {
   return `<button class="copy-link-btn" id="${id}" data-key="${esc(String(key))}" data-val="${esc(String(val))}" title="Copy a shareable link to this view">${BMG_ICONS.link} Copy link</button>`;
 }
+// Copy text to the clipboard, returning true on success. Tries the async
+// Clipboard API first, then a hidden-textarea execCommand fallback (which works
+// in many cross-origin iframes where the async API is blocked).
+async function copyToClipboard(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {}
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed'; ta.style.top = '-1000px'; ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus(); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
+}
+
+// Last-resort, in-app fallback: show the URL pre-selected in our own toast so
+// the user can copy it manually. NEVER use prompt() — the browser prefixes that
+// with the iframe's origin ("...github.io says"), which we can't change.
+let _copyToastTimer = null;
+function showCopyToast(url) {
+  const toast = document.getElementById('copy-toast');
+  const input = document.getElementById('copy-toast-input');
+  if (!toast || !input) return;
+  input.value = url;
+  toast.classList.add('show');
+  input.focus(); input.select();
+  clearTimeout(_copyToastTimer);
+  _copyToastTimer = setTimeout(() => toast.classList.remove('show'), 6000);
+}
+
 // Delegated handler (wired once) — copies the link and shows a transient ✓.
 function wireCopyLinkButtons(root) {
   (root || document).querySelectorAll('.copy-link-btn').forEach(btn => {
@@ -6708,8 +6840,8 @@ function wireCopyLinkButtons(root) {
     btn._wired = true;
     btn.addEventListener('click', async () => {
       const url = buildShareUrl(btn.dataset.key, btn.dataset.val);
-      try { await navigator.clipboard.writeText(url); }
-      catch { /* clipboard blocked — fall back to prompt */ prompt('Copy this link:', url); return; }
+      const ok = await copyToClipboard(url);
+      if (!ok) { showCopyToast(url); return; }   // in-app fallback, no browser prompt
       const prev = btn.innerHTML;
       btn.innerHTML = `${BMG_ICONS.check} Copied`;
       btn.classList.add('copied');
@@ -6858,6 +6990,8 @@ function initMobileSwipe() {
     document.body.classList.toggle('panel-open', open);
     // Opening the panel collapses the control stack so they never overlap.
     if (open) document.body.classList.remove('controls-open');
+    // A freshly-opened panel supersedes any minimized one — drop the restore tab.
+    if (open) hideRestoreTab();
   };
   new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ['class'] });
   sync();
@@ -6939,6 +7073,8 @@ async function init() {
 
   // UI wiring
   document.getElementById('panel-close').addEventListener('click', closePanel);
+  document.getElementById('panel-minimize').addEventListener('click', minimizePanel);
+  document.getElementById('panel-restore-tab').addEventListener('click', restorePanel);
   document.getElementById('unit-f').addEventListener('click', () => setTempUnit('F'));
   document.getElementById('unit-c').addEventListener('click', () => setTempUnit('C'));
   document.getElementById('unit-f').classList.toggle('active', tempUnit === 'F');
