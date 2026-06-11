@@ -54,24 +54,39 @@ The file uses the `CODE` property for zone codes (e.g. `"Cfa"`, `"ET"`) which th
 ## Squarespace Embedding
 
 In Squarespace, create a page at `/map` and add a Code Block with the snippet
-below. This version makes **shareable deep links work** (e.g.
-`www.burymeinthebog.com/map?sp=52666`): it forwards the page's query string into the
-iframe on load, and keeps the page's address bar in sync as you navigate inside
-the map (via `postMessage`).
+below.
+
+**Two important things this version gets right:**
+
+1. **The iframe has a real `src` in the HTML** — so the map loads even if
+   Squarespace strips or fails to run the inline `<script>` (Code Blocks often
+   sanitize scripts). The script only *enhances* deep-linking; it is never
+   required for the map to appear. *(A previous version set `src` only from the
+   script — if the script didn't run, the iframe was blank.)*
+2. **It pins to a commit hash, not `@main`.** jsDelivr caches the mutable
+   `@main` tag for up to 7 days and can briefly serve an inconsistent file right
+   after a push. A commit hash is immutable and always consistent. **To publish
+   an update, bump the hash** (see "Publishing an update" below).
 
 ```html
 <iframe
   id="bmg-map-frame"
+  src="https://cdn.jsdelivr.net/gh/bogmanplantenstein/bogman-climate-map@3c105ba/map.html"
   style="width:100%;height:calc(100vh - 80px);border:none;display:block;"></iframe>
 
 <script>
 (function () {
-  var BASE  = "https://cdn.jsdelivr.net/gh/bogmanplantenstein/bogman-climate-map@main/map.html";
   var frame = document.getElementById("bmg-map-frame");
+  if (!frame) return;
 
   // 1. Forward the page's query string (?sp=, ?obs=, ?at=, ?region=) into the
-  //    iframe so an incoming deep link opens the right view.
-  frame.src = BASE + window.location.search;
+  //    iframe so an incoming deep link opens the right view. We append to the
+  //    EXISTING src (which already has the pinned commit), so the map still
+  //    loads from the hash even if this runs.
+  if (window.location.search) {
+    var sep = frame.src.indexOf("?") === -1 ? "?" : "&";
+    frame.src = frame.src + sep + window.location.search.slice(1);
+  }
 
   // 2. Keep this page's address bar in sync with the map's current view, so any
   //    link is copyable straight from the browser bar and back/forward works.
@@ -88,6 +103,20 @@ the map (via `postMessage`).
 ```
 
 Adjust the `80px` offset to match the actual Squarespace header height.
+
+### Publishing an update
+
+The iframe is pinned to a commit hash, so pushing to `main` does **not** change
+the live site until you bump the hash:
+
+1. Push your changes to `main`.
+2. Copy the new short hash: `git rev-parse --short HEAD`.
+3. In the Squarespace Code Block, replace the hash in the iframe `src`
+   (`...@<hash>/map.html`) with the new one. Save.
+
+The new file is served immediately and consistently (immutable hash = no CDN
+cache lag). The data files (`inat/*.json`) are still loaded by the map at the
+same pinned commit, so the HTML and its data always match.
 
 > The map builds its **Copy link** buttons against `SHARE_BASE_URL` (set near the
 > top of the deep-link section in `map.html`). If the public page URL changes,
