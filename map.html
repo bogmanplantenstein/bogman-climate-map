@@ -7071,14 +7071,16 @@ async function init() {
   initGalleryLightbox();
   initSearch();
 
-  // UI wiring
-  document.getElementById('panel-close').addEventListener('click', closePanel);
-  document.getElementById('panel-minimize').addEventListener('click', minimizePanel);
-  document.getElementById('panel-restore-tab').addEventListener('click', restorePanel);
-  document.getElementById('unit-f').addEventListener('click', () => setTempUnit('F'));
-  document.getElementById('unit-c').addEventListener('click', () => setTempUnit('C'));
-  document.getElementById('unit-f').classList.toggle('active', tempUnit === 'F');
-  document.getElementById('unit-c').classList.toggle('active', tempUnit === 'C');
+  // UI wiring. Use optional chaining so one missing element can never throw and
+  // halt init() (which would leave the whole map blank). Defensive against a
+  // stale-cached HTML/JS mismatch or a markup change.
+  document.getElementById('panel-close')?.addEventListener('click', closePanel);
+  document.getElementById('panel-minimize')?.addEventListener('click', minimizePanel);
+  document.getElementById('panel-restore-tab')?.addEventListener('click', restorePanel);
+  document.getElementById('unit-f')?.addEventListener('click', () => setTempUnit('F'));
+  document.getElementById('unit-c')?.addEventListener('click', () => setTempUnit('C'));
+  document.getElementById('unit-f')?.classList.toggle('active', tempUnit === 'F');
+  document.getElementById('unit-c')?.classList.toggle('active', tempUnit === 'C');
 
   // Filter / unmapped buttons are Leaflet controls now (FilterCtrl / UnmappedCtrl
    // in buildMapControls), so their click handlers live there. We still need to
@@ -7093,15 +7095,15 @@ async function init() {
     document.getElementById('unmapped-toggle')?.classList.remove('active');
   });
 
-  document.getElementById('copy-csv').addEventListener('click', () => {
+  document.getElementById('copy-csv')?.addEventListener('click', () => {
     const lines = ['id,slug,displayName,country,entryType'];
     unmappedTaxa.forEach(t =>
       lines.push(`${t.id},${t.slug},"${(t.displayName||'').replace(/"/g,'""')}",${t.country||''},${t.entryType}`)
     );
     navigator.clipboard?.writeText(lines.join('\n')).then(() => {
       const btn = document.getElementById('copy-csv');
-      btn.textContent = '✓ Copied';
-      setTimeout(() => { btn.textContent = 'Copy CSV'; }, 1600);
+      if (btn) btn.textContent = '✓ Copied';
+      setTimeout(() => { const b = document.getElementById('copy-csv'); if (b) b.textContent = 'Copy CSV'; }, 1600);
     });
   });
 
