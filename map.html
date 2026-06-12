@@ -2581,6 +2581,20 @@ body.bmg-onboarding #search-container { z-index: 9100; }
 
 <script>
 // ═══════════════════════════════════════════════════════════
+//  SAFE STORAGE  (must come first — used throughout)
+// ═══════════════════════════════════════════════════════════
+// When the map is embedded as a cross-origin iframe (e.g. on Squarespace), some
+// browsers BLOCK third-party storage by THROWING a SecurityError on any access
+// to localStorage / sessionStorage — not just returning null. An unguarded
+// access then throws, and because these run in click/render paths, the whole UI
+// freezes. These wrappers never throw: storage is a best-effort cache only.
+const lsGet = (k)        => { try { return localStorage.getItem(k); } catch { return null; } };
+const lsSet = (k, v)     => { try { localStorage.setItem(k, v); } catch {} };
+const lsDel = (k)        => { try { localStorage.removeItem(k); } catch {} };
+const ssGet = (k)        => { try { return sessionStorage.getItem(k); } catch { return null; } };
+const ssSet = (k, v)     => { try { sessionStorage.setItem(k, v); } catch {} };
+
+// ═══════════════════════════════════════════════════════════
 //  CONSTANTS
 // ═══════════════════════════════════════════════════════════
 
@@ -2820,7 +2834,7 @@ function wireNavBackBtn()  {
   document.getElementById('nav-back-btn')?.addEventListener('click', navGoBack);
 }
 
-function persistKoppenFilter() { try { localStorage.setItem('bmg_koppen_filter', JSON.stringify([...selectedKoppenCodes])); } catch {} }
+function persistKoppenFilter() { lsSet('bmg_koppen_filter', JSON.stringify([...selectedKoppenCodes])); }
 
 function toggleKoppenFilter(code) {
   if (selectedKoppenCodes.has(code)) selectedKoppenCodes.delete(code);
@@ -2871,7 +2885,7 @@ const markerStore = new Map();
 
 let selectedId    = null;
 let climateChart  = null;
-let tempUnit      = localStorage.getItem('bmg_temp_unit') || 'F';
+let tempUnit      = lsGet('bmg_temp_unit') || 'F';
 
 let countriesGeoJSON = null;
 let statesGeoJSON    = null;
@@ -3661,16 +3675,14 @@ function getGridKey(lat, lng) {
 
 function lsSoilGet(key) {
   // Returns undefined (never stored), null (cached no-data), or object (valid data)
-  const raw = localStorage.getItem('bmg_soil_' + key);
+  const raw = lsGet('bmg_soil_' + key);
   if (raw === null) return undefined;       // not in storage
   if (raw === 'null') return null;           // cached ocean / no-data
   try { return JSON.parse(raw); } catch { return undefined; }
 }
 
 function lsSoilSet(key, data) {
-  try {
-    localStorage.setItem('bmg_soil_' + key, data === null ? 'null' : JSON.stringify(data));
-  } catch { /* localStorage full — skip silently */ }
+  lsSet('bmg_soil_' + key, data === null ? 'null' : JSON.stringify(data));
 }
 
 function loadSoilCache() {
@@ -4165,8 +4177,14 @@ function showRestoreTab() {
   document.getElementById('panel-restore-tab')?.classList.add('show');
 }
 function hideRestoreTab() {
-  document.getElementById('side-panel')?.classList.remove('minimized');
-  document.getElementById('panel-restore-tab')?.classList.remove('show');
+  // Guard against re-entrancy: this is called from a MutationObserver on
+  // #side-panel's class. Mutating that class unconditionally here re-triggers
+  // the observer → calls this again → infinite loop → hard page freeze. Only
+  // touch the class when it actually needs changing.
+  const panel = document.getElementById('side-panel');
+  if (panel && panel.classList.contains('minimized')) panel.classList.remove('minimized');
+  const tab = document.getElementById('panel-restore-tab');
+  if (tab && tab.classList.contains('show')) tab.classList.remove('show');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4643,8 +4661,8 @@ function buildLightTable(cn) {
 
 function setTempUnit(unit) {
   tempUnit = unit;
-  localStorage.setItem('bmg_temp_unit', unit);
-  document.getElementById('unit-f').classList.toggle('active', unit === 'F');
+  lsSet('bmg_temp_unit', unit);
+  document.getElementById('unit-f')?.classList.toggle('active', unit === 'F');
   document.getElementById('unit-c').classList.toggle('active', unit === 'C');
 
   // Update all visible temperature values
@@ -6985,13 +7003,18 @@ function initMobileSwipe() {
   // Keep body.panel-open in sync with #side-panel.open (used by mobile CSS to
   // auto-hide the control stack while the bottom info panel is up). One observer
   // beats threading a class toggle through all five open/close call sites.
+  // IMPORTANT: this callback must NEVER mutate `panel`'s class (the observed
+  // node) — doing so re-triggers the observer and can loop / freeze the page.
+  // It only touches document.body. Restore-tab hiding is handled by the explicit
+  // open paths (showRestoreTab/hideRestoreTab), not here.
+  let _syncing = false;
   const sync = () => {
+    if (_syncing) return;          // belt-and-suspenders re-entrancy guard
+    _syncing = true;
     const open = panel.classList.contains('open');
     document.body.classList.toggle('panel-open', open);
-    // Opening the panel collapses the control stack so they never overlap.
     if (open) document.body.classList.remove('controls-open');
-    // A freshly-opened panel supersedes any minimized one — drop the restore tab.
-    if (open) hideRestoreTab();
+    _syncing = false;
   };
   new MutationObserver(sync).observe(panel, { attributes: true, attributeFilter: ['class'] });
   sync();
@@ -7274,8 +7297,9 @@ let inatRectGroup     = null;       // L.layerGroup for obscured rectangles
 // Navigation state
 let inatNav = {
   mode:             null,   // 'species-sidebar'|'species-list'|'obs-list'|'obs-detail'
-  clusterLeaves:    null,   // all leaves in current cluster
+  clusterLeaves:    null,   // all leaves in current cluster (may be a capped sample)
   clusterLatlng:    null,
+  clusterTotal:     0,      // true point_count of the clicked cluster (>= leaves.length)
   speciesName:      null,   // currently drilled species within a cluster
   obsFeature:       null,   // currently viewed obs
   speciesTaxonId:   null,   // taxonId of species filter sidebar (for back nav)
@@ -7576,8 +7600,13 @@ function drawInatClusters(clusters, zoom) {
       const marker = L.marker([f.geometry.coordinates[1], f.geometry.coordinates[0]], { icon, zIndexOffset: 50 });
       marker.on('click', e => {
         L.DomEvent.stopPropagation(e);
+        // Big low-zoom clusters can hold 100k+ points. Pulling them ALL across
+        // the worker boundary (structured-clone) and rendering them froze the
+        // page. Cap how many leaves we materialise — the species list only needs
+        // a representative sample, and the obs list/gallery paginate anyway.
         inatNav.clusterLatlng = e.latlng;
-        inatWorker.postMessage({ type: 'getLeaves', clusterId: props.cluster_id });
+        inatNav.clusterTotal  = props.point_count;   // true size, for display
+        inatWorker.postMessage({ type: 'getLeaves', clusterId: props.cluster_id, limit: CLUSTER_LEAF_CAP });
       });
       inatClusterGroup.addLayer(marker);
 
@@ -7611,6 +7640,7 @@ function openObscuredCell(cell) {
   navClear();
   inatNav.clusterLatlng = L.latLng(cell.swLat + 0.1, cell.swLng + 0.1);
   inatNav.clusterLeaves = cell.feats;
+  inatNav.clusterTotal  = cell.feats.length;   // obscured cells are not capped
   openSidePanelForInat();
   renderInatSpeciesList(cell.feats);
 }
@@ -7686,6 +7716,7 @@ function openSidePanelForInat() {
     searchState = null;
     if (searchMarker) { map.removeLayer(searchMarker); searchMarker = null; }
   }
+  hideRestoreTab();   // a fresh view supersedes any minimized panel
   document.getElementById('side-panel').classList.add('open');
 }
 
@@ -7695,11 +7726,14 @@ function renderInatSpeciesList(leaves) {
   if (speciesPhenoChart)   { speciesPhenoChart.destroy();   speciesPhenoChart   = null; }
   openSidePanelForInat();
 
-  // Count by taxon name
+  // Single O(n) pass: count per taxon AND capture each taxon's genus inline
+  // (avoids an O(species × leaves) leaves.find() that froze on big clusters).
   const counts = {};
+  const genusByName = {};
   for (const lf of leaves) {
     const name = lf.properties.taxon_name || 'Unknown';
     counts[name] = (counts[name] || 0) + 1;
+    if (genusByName[name] === undefined) genusByName[name] = lf.properties.genus || '';
   }
   const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
@@ -7707,23 +7741,25 @@ function renderInatSpeciesList(leaves) {
     ? `${Math.abs(inatNav.clusterLatlng.lat).toFixed(2)}°${inatNav.clusterLatlng.lat>=0?'N':'S'}, ${Math.abs(inatNav.clusterLatlng.lng).toFixed(2)}°${inatNav.clusterLatlng.lng>=0?'E':'W'}`
     : '';
 
+  // If the cluster was bigger than the leaf cap, show the true total and note it.
+  const total  = inatNav.clusterTotal || leaves.length;
+  const capped = total > leaves.length;
+
   const rows = sorted.map(([name, cnt]) => {
-    const sample = leaves.find(lf => lf.properties.taxon_name === name);
-    const genus  = sample?.properties.genus || '';
-    const color  = INAT_GENUS_COLORS[genus] || '#aaa';
+    const color = INAT_GENUS_COLORS[genusByName[name]] || '#aaa';
     return `<div class="inat-species-row" data-species="${esc(name)}">
       <div class="inat-species-name">
         <span class="inat-genus-dot" style="background:${color}"></span>
         ${esc(name)}
       </div>
-      <span class="inat-species-count">${cnt}</span>
+      <span class="inat-species-count">${cnt.toLocaleString()}${capped ? '+' : ''}</span>
     </div>`;
   }).join('');
 
   document.getElementById('panel-content').innerHTML = `
     ${navBackBtnHtml()}
-    <div class="inat-cluster-title">${leaves.length.toLocaleString()} iNat sightings</div>
-    <div class="inat-cluster-sub">${coord} · ${sorted.length} species</div>
+    <div class="inat-cluster-title">${total.toLocaleString()} iNat sightings</div>
+    <div class="inat-cluster-sub">${coord} · ${sorted.length} species${capped ? ` · showing a sample of ${leaves.length.toLocaleString()}` : ''}</div>
     <div class="inat-species-list">${rows}</div>
   `;
   wireNavBackBtn();
@@ -7960,6 +7996,11 @@ function initGalleryLightbox() {
 // ── Side panel — observation list ────────────────────────
 
 const INAT_OBS_PAGE = 20;
+// Max leaves fetched from the worker for one cluster. Prevents the main thread
+// from freezing when a huge low-zoom cluster (100k+ points) is clicked — we only
+// need a representative sample for the species breakdown; obs list + gallery
+// paginate. The cluster's true point_count is shown via inatNav.clusterTotal.
+const CLUSTER_LEAF_CAP = 5000;
 
 function renderInatObsList(leaves, offset = 0) {
   inatNav.mode = 'obs-list';
