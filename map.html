@@ -7391,20 +7391,20 @@ function drawInatClusters(clusters, zoom) {
 
     if (props.cluster) {
       // ── Cluster circle ──────────────────────────────
-      // Design "E": neutral near-black disc with an accent-green ring + glow
-      // whose intensity scales with the count (instead of a green→red hue ramp).
-      // `t` is a 0–1 magnitude from the cluster size (log-scaled to match the
-      // marker sizing) and drives glow radius, ring brightness, and text colour.
+      // Design "E" (neutral grey): near-black disc with a light-grey ring +
+      // subtle white glow whose intensity scales with the count. Grey (not
+      // green) so the markers don't compete with the Köppen overlay colours.
+      // `t` is a 0–1 magnitude from the cluster size (log-scaled).
       const count = props.point_count;
       const size  = Math.max(28, Math.min(60, 20 + Math.log2(count) * 7));
       const t     = Math.max(0, Math.min(1, (Math.log2(count) - 3) / 9));   // ~8 → 4096+
-      const glow  = (6 + t * 18).toFixed(1);                 // 6 → 24 px blur
-      const glowA = (0.35 + t * 0.5).toFixed(2);             // 0.35 → 0.85 alpha
-      const ring  = `hsl(134, ${(45 + t * 25).toFixed(0)}%, ${(48 + t * 18).toFixed(0)}%)`; // brighter green w/ count
-      const txt   = t > 0.55 ? '#ffffff' : '#aff5b4';
+      const glow  = (4 + t * 8).toFixed(1);                  // 4 → 12 px blur (toned down)
+      const glowA = (0.20 + t * 0.25).toFixed(2);            // 0.20 → 0.45 alpha
+      const ring  = `hsl(210, 6%, ${(58 + t * 24).toFixed(0)}%)`;  // grey, brighter with count
+      const txt   = t > 0.55 ? '#ffffff' : '#c9d1d9';
       const icon  = L.divIcon({
         className: '',
-        html: `<div class="inat-cluster-icon" style="width:${size}px;height:${size}px;background:#161b22;border-color:${ring};color:${txt};font-size:${size < 36 ? 10 : 12}px;box-shadow:0 0 ${glow}px rgba(63,185,80,${glowA})">${count > 999 ? Math.round(count/1000)+'k' : count}</div>`,
+        html: `<div class="inat-cluster-icon" style="width:${size}px;height:${size}px;background:#161b22;border-color:${ring};color:${txt};font-size:${size < 36 ? 10 : 12}px;box-shadow:0 0 ${glow}px rgba(220,225,230,${glowA})">${count > 999 ? Math.round(count/1000)+'k' : count}</div>`,
         iconSize: [size, size],
         iconAnchor: [size/2, size/2],
       });
