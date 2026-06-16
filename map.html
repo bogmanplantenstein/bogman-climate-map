@@ -900,6 +900,7 @@ html, body {
   flex-shrink: 0;
 }
 .match-card-body { flex: 1; min-width: 0; }
+.match-card-toprow { display: flex; align-items: center; gap: 8px; }
 .match-card-name {
   font-size: 12px;
   font-style: italic;
@@ -908,7 +909,41 @@ html, body {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  flex: 1; min-width: 0;
 }
+/* 0–100 match score chip (colour set inline by score) */
+.match-score {
+  flex-shrink: 0;
+  font-size: 12px; font-weight: 700;
+  min-width: 26px; text-align: center;
+  padding: 1px 6px; border-radius: 10px;
+  border: 1px solid;
+  font-style: normal;
+}
+/* Cold/Heat pass-marginal-fail badges */
+.match-card-badges { display: flex; gap: 5px; margin-top: 4px; flex-wrap: wrap; }
+.match-badge {
+  font-size: 9.5px; font-weight: 600;
+  padding: 1px 6px; border-radius: 8px;
+  border: 1px solid; white-space: nowrap;
+}
+.match-badge-ok   { color: #7ee787; border-color: rgba(63,185,80,0.4);  background: rgba(63,185,80,0.10); }
+.match-badge-warn { color: #e3b341; border-color: rgba(210,153,34,0.4); background: rgba(210,153,34,0.10); }
+.match-badge-bad  { color: #f0857d; border-color: rgba(248,81,73,0.4);  background: rgba(248,81,73,0.10); }
+
+/* Per-species comparison view: sub-score list + chart legend */
+.cmp-sub-list {
+  display: flex; flex-direction: column; gap: 2px;
+  background: var(--bg-elevated); border: 1px solid var(--border);
+  border-radius: 8px; padding: 8px 10px;
+}
+.cmp-sub-row { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-primary); }
+.cmp-sub-row > span:first-child { flex: 0 0 130px; }
+.cmp-sub-row .match-score { font-size: 11px; min-width: 24px; }
+.cmp-sub-note { font-size: 10.5px; color: var(--text-muted); flex: 1; min-width: 0; }
+.cmp-chart-legend { font-size: 10px; color: var(--text-muted); margin: 2px 0 4px; display: flex; gap: 14px; }
+.cmp-leg-band::before { content: '▬'; color: rgba(255,255,255,0.25); margin-right: 4px; }
+.cmp-leg-you::before  { content: '▬'; color: rgba(255,255,255,0.9); margin-right: 4px; }
 .match-card-common {
   font-size: 10.5px;
   color: var(--text-muted);
@@ -5070,203 +5105,442 @@ async function sampleCellElevationRange(swLat, swLng, sizeDeg = 0.2) {
 
 // ─── Climate-match feature ─────────────────────────────────────────────
 // "Find species that grow in a similar native climate to this location."
-// Given the user's location normals and Köppen zone, score every species in
-// inatSpeciesData against the user's climate using:
-//   - Cold survival (critical): user's coldest-month mean min vs species'
-//     annual-min p10 (the cold extreme of the species' observed range).
-//     Strict mode: PASS if user >= p10; MARGINAL within 2°C; FAIL otherwise.
-//   - Heat tolerance (important): user's hottest-month mean max vs species'
-//     annual-max p90 (high tail). PASS if user <= p90 + 5°C; MARGINAL otherwise.
-//   - Köppen overlap (bonus): if user's Köppen zone is ≥5% of the species'
-//     occupied cells, treat as a strong "this just grows here" signal.
-//   - Envelope distance (ranking): |user_cold - species_p50| + |user_hot -
-//     species_p50|, normalized by 10°C.
 //
-// Tier assignment:
-//   excellent  — passes cold AND heat AND (Köppen match OR low distance)
-//   possible   — passes cold AND heat
-//   marginal   — marginal on cold OR heat
-//   unsuitable — fails cold (won't survive winter)
+// TWO-PART METHOD:
 //
-// Hemisphere is irrelevant for annual stats (coldest/hottest seasonal extreme
-// is the same idea regardless of which calendar months they fall in).
-function matchSpeciesToLocation(userNormals, userKoppen) {
+// 1. SURVIVAL GATES (pass / marginal / fail → badges, hides unsuitable).
+//    Extreme-based (extremes, not averages, decide survival):
+//    - Cold: user's coldest p10 daily-low extreme (min of tempMinLo) vs the
+//      species' coldLimit. pass if warmer; marginal within 2°C; fail beyond.
+//    - Heat: user's hottest p90 daily-high extreme (max of tempMaxHi) vs the
+//      species' hotLimit. pass if cooler; marginal up to +3°C; fail beyond.
+//
+// 2. MATCH SCORE 0–100 (for survivors; ranks them). Weighted blend of six
+//    per-attribute sub-scores, each 0–1 by how close the user's value sits to
+//    the species' typical p25–p75 band (inside band ≈ 1.0, falls off outside):
+//      low temp 20 · high temp 20 · monthly alignment 20 · sunlight/DLI 15 ·
+//      RH 15 · precip 10.   Sunlight contributes 0 until species DLI is present
+//      (next data-refresh) — remaining weights renormalise meanwhile.
+//
+// Hemisphere: the species' monthly_nh / monthly_sh are chosen / rotated so the
+// seasonal phase aligns with the user's location before comparing curves.
+const MATCH_WEIGHTS = { low: 20, high: 20, monthly: 20, sun: 15, rh: 15, precip: 10 };
+
+// Score how well `userVal` fits a species' [p25, p50, p75] band. Inside the
+// band → 1.0; outside → falls off over `tol` (the attribute's tolerance in its
+// own units). Symmetric. Returns 0–1, or null when data is missing.
+function bandFit(userVal, band, tol) {
+  if (userVal == null || !band) return null;
+  const [p25, p50, p75] = Array.isArray(band) ? band : [band, band, band];
+  if (p25 == null || p75 == null) return null;
+  let d = 0;
+  if (userVal < p25)      d = p25 - userVal;
+  else if (userVal > p75) d = userVal - p75;
+  return Math.max(0, 1 - d / tol);
+}
+
+// Pick the species monthly block whose seasons align with the user's hemisphere,
+// rotating the opposite hemisphere's data by 6 months if only it exists. Returns
+// a 12-element-array monthly object in the user's calendar.
+function speciesMonthlyForUser(species, userLat) {
+  const nh = species.monthly_nh, sh = species.monthly_sh;
+  const wantNH = userLat >= 0;
+  const have   = wantNH ? (nh || sh) : (sh || nh);
+  if (!have) return null;
+  const isOpposite = wantNH ? !nh : !sh;
+  if (!isOpposite) return have;
+  // Rotate every 12-element array by +6 months to map the opposite hemisphere's
+  // seasonal phase onto the user's calendar.
+  const out = {};
+  for (const k of Object.keys(have)) {
+    const arr = have[k];
+    out[k] = (Array.isArray(arr) && arr.length === 12)
+      ? arr.map((_, i) => arr[(i + 6) % 12]) : arr;
+  }
+  return out;
+}
+
+// Monthly temperature alignment: average per-month gap between the user's
+// high/low curves and the species' median high/low curves, mapped to 0–1 over
+// `tol`°C of average deviation. Rewards matching seasonal shape AND level.
+function monthlyAlignFit(userNormals, mon, tol = 8) {
+  if (!mon?.tempMax || !mon?.tempMin) return null;
+  const uHi = userNormals.tempMax, uLo = userNormals.tempMin;
+  if (!uHi || !uLo) return null;
+  let sum = 0, n = 0;
+  for (let m = 0; m < 12; m++) {
+    const sHi = mon.tempMax[m]?.[1], sLo = mon.tempMin[m]?.[1];   // species median
+    if (uHi[m] != null && sHi != null) { sum += Math.abs(uHi[m] - sHi); n++; }
+    if (uLo[m] != null && sLo != null) { sum += Math.abs(uLo[m] - sLo); n++; }
+  }
+  if (!n) return null;
+  return Math.max(0, 1 - (sum / n) / tol);
+}
+
+// Annual mean of a 12×[p25,p50,p75] monthly field → [p25,p50,p75] band.
+function annualBandFromMonthly(monthlyField) {
+  if (!monthlyField) return null;
+  const acc = [0, 0, 0], cnt = [0, 0, 0];
+  for (const mo of monthlyField) {
+    if (!mo) continue;
+    for (let i = 0; i < 3; i++) if (mo[i] != null) { acc[i] += mo[i]; cnt[i]++; }
+  }
+  if (!cnt[1]) return null;
+  return [0, 1, 2].map(i => cnt[i] ? acc[i] / cnt[i] : null);
+}
+
+function matchSpeciesToLocation(userNormals, userKoppen, userLat = 0) {
   if (!inatSpeciesData) return [];
-  const userTmin = userNormals.tempMin?.filter(v => v != null) || [];
-  const userTmax = userNormals.tempMax?.filter(v => v != null) || [];
-  if (!userTmin.length || !userTmax.length) return [];
-  const userColdMonth = Math.min(...userTmin);
-  const userHotMonth  = Math.max(...userTmax);
+  const uTmaxHi = (userNormals.tempMaxHi || []).filter(v => v != null);
+  const uTminLo = (userNormals.tempMinLo || []).filter(v => v != null);
+  const uTmin   = (userNormals.tempMin   || []).filter(v => v != null);
+  const uTmax   = (userNormals.tempMax   || []).filter(v => v != null);
+  if (!uTmin.length || !uTmax.length) return [];
+
+  // User extremes for the survival gates (fall back to monthly avg if the
+  // extreme arrays are absent for some reason).
+  const userColdExt = uTminLo.length ? Math.min(...uTminLo) : Math.min(...uTmin);
+  const userHotExt  = uTmaxHi.length ? Math.max(...uTmaxHi) : Math.max(...uTmax);
+  // User typical values for the scoring sub-scores.
+  const userColdMonth = Math.min(...uTmin);
+  const userHotMonth  = Math.max(...uTmax);
+  const uRH   = (userNormals.rhMean   || []).filter(v => v != null);
+  const uPrec = (userNormals.precipMm || []).filter(v => v != null);
+  const uDli  = (userNormals.dli      || []).filter(v => v != null);
+  const userRH     = uRH.length   ? uRH.reduce((a, b) => a + b, 0) / uRH.length : null;
+  const userPrecAn = uPrec.length ? uPrec.reduce((a, b) => a + b, 0) : null;        // annual mm
+  const userDliAvg = uDli.length  ? uDli.reduce((a, b) => a + b, 0) / uDli.length : null;
 
   const results = [];
   for (const [taxonIdStr, species] of Object.entries(inatSpeciesData)) {
     const stats = species.stats;
-    if (!stats?.tempMin || !stats?.tempMax) continue;
-    const spColdP10 = stats.tempMin.p10;
-    const spColdP50 = stats.tempMin.p50;
-    const spHotP90  = stats.tempMax.p90;
-    const spHotP50  = stats.tempMax.p50;
-    if (spColdP10 == null || spHotP90 == null) continue;
+    if (!stats) continue;
+    // Prefer the v4 extreme-based limits; fall back to legacy percentiles.
+    const spColdLimit = stats.coldLimit != null ? stats.coldLimit : stats.tempMin?.p10;
+    const spHotLimit  = stats.hotLimit  != null ? stats.hotLimit  : stats.tempMax?.p90;
+    if (spColdLimit == null || spHotLimit == null) continue;
 
-    // Cold survival check (strict: p10 of cold extreme + 2°C tolerance band)
+    // ── Survival gates (extreme vs limit) ──
     let coldTier;
-    if      (userColdMonth >= spColdP10)        coldTier = 'pass';
-    else if (userColdMonth >= spColdP10 - 2)    coldTier = 'marginal';
-    else                                         coldTier = 'fail';
+    if      (userColdExt >= spColdLimit)      coldTier = 'pass';
+    else if (userColdExt >= spColdLimit - 2)  coldTier = 'marginal';
+    else                                       coldTier = 'fail';
 
-    // Heat tolerance check (5°C buffer above p90)
-    const heatTier = userHotMonth <= spHotP90 + 5 ? 'pass' : 'marginal';
+    let heatTier;
+    if      (userHotExt <= spHotLimit)        heatTier = 'pass';
+    else if (userHotExt <= spHotLimit + 3)    heatTier = 'marginal';
+    else                                       heatTier = 'fail';
 
-    // Köppen overlap
-    const koppenList  = species.koppen || [];
-    const koppenTotal = koppenList.reduce((s, [, c]) => s + c, 0);
-    const found       = userKoppen ? koppenList.find(([z]) => z === userKoppen) : null;
-    const userKoppenPct = (found && koppenTotal) ? found[1] / koppenTotal : 0;
-    const koppenMatch   = userKoppenPct >= 0.05;
+    // ── Per-attribute sub-scores (0–1) for ranking survivors ──
+    const mon = speciesMonthlyForUser(species, userLat);
+    const sub = {};
+    sub.low     = bandFit(userColdMonth, stats.tempMin && [stats.tempMin.p25, stats.tempMin.p50, stats.tempMin.p75], 10);
+    sub.high    = bandFit(userHotMonth,  stats.tempMax && [stats.tempMax.p25, stats.tempMax.p50, stats.tempMax.p75], 10);
+    sub.monthly = monthlyAlignFit(userNormals, mon, 8);
+    sub.sun     = (userDliAvg != null && mon?.dli) ? bandFit(userDliAvg, annualBandFromMonthly(mon.dli), 12) : null;
+    sub.rh      = bandFit(userRH, stats.rhMean && [stats.rhMean.p25, stats.rhMean.p50, stats.rhMean.p75], 20);
+    sub.precip  = (userPrecAn != null && stats.precip)
+      ? bandFit(userPrecAn, [stats.precip.p25, stats.precip.p50, stats.precip.p75], 700) : null;
 
-    // Envelope distance (lower = better — used to rank within tiers)
-    const score = Math.abs(userColdMonth - spColdP50) / 10
-                + Math.abs(userHotMonth  - spHotP50)  / 10;
+    // Weighted blend; weights of missing sub-scores are dropped (renormalised).
+    let wSum = 0, sSum = 0;
+    for (const k of Object.keys(MATCH_WEIGHTS)) {
+      if (sub[k] == null) continue;
+      wSum += MATCH_WEIGHTS[k];
+      sSum += MATCH_WEIGHTS[k] * sub[k];
+    }
+    const score = wSum ? Math.round((sSum / wSum) * 100) : 0;
 
+    // Tier (kept for grouping; driven by the gates).
     let tier;
-    if      (coldTier === 'fail')                                   tier = 'unsuitable';
-    else if (coldTier === 'marginal' || heatTier === 'marginal')    tier = 'marginal';
-    else if (koppenMatch || score < 1.0)                            tier = 'excellent';
-    else                                                             tier = 'possible';
-
-    // Concise reason (1-2 chips per card)
-    const reasonParts = [];
-    if (coldTier === 'fail') {
-      reasonParts.push(`Too cold for outdoors: native limit ${spColdP10.toFixed(0)}°C, you reach ${userColdMonth.toFixed(0)}°C`);
-    } else if (coldTier === 'marginal') {
-      reasonParts.push(`Cold-marginal: provide winter protection`);
-    }
-    if (heatTier === 'marginal') {
-      reasonParts.push(`Heat-marginal: summer ${userHotMonth.toFixed(0)}°C exceeds ${spHotP90.toFixed(0)}°C native`);
-    }
-    if (koppenMatch && coldTier !== 'fail') {
-      reasonParts.push(`Same climate zone (${Math.round(userKoppenPct * 100)}% of native range)`);
-    }
-    if (!reasonParts.length && tier === 'excellent') {
-      reasonParts.push(`Climate matches native range (${spColdP50.toFixed(0)}–${spHotP50.toFixed(0)}°C typical)`);
-    } else if (!reasonParts.length && tier === 'possible') {
-      reasonParts.push(`Within climate envelope; not the typical range`);
-    }
+    if      (coldTier === 'fail')                                tier = 'unsuitable';
+    else if (heatTier === 'fail')                                tier = 'too-hot';
+    else if (coldTier === 'marginal' || heatTier === 'marginal') tier = 'marginal';
+    else if (score >= 70)                                        tier = 'excellent';
+    else                                                          tier = 'possible';
 
     results.push({
       taxonId: +taxonIdStr,
       species,
       tier,
       score,
-      reasonParts,
+      coldTier,
+      heatTier,
+      sub,
+      userColdExt, userHotExt, spColdLimit, spHotLimit,
     });
   }
 
-  const tierOrder = { excellent: 0, possible: 1, marginal: 2, unsuitable: 3 };
-  results.sort((a, b) => (tierOrder[a.tier] - tierOrder[b.tier]) || (a.score - b.score));
+  // Survivors ranked by score (best first); failures pushed to the end.
+  const survivable = t => (t !== 'unsuitable' && t !== 'too-hot');
+  results.sort((a, b) => {
+    const sa = survivable(a.tier), sb = survivable(b.tier);
+    if (sa !== sb) return sa ? -1 : 1;
+    return b.score - a.score;
+  });
   return results;
 }
 
-// Render the match results in the side panel. Replaces the location panel
-// content. Includes a back button to return to the location view, and each
-// species card opens its own sidebar on click.
+// Small coloured score chip (0–100) — green high, amber mid, grey low.
+function matchScoreChipHtml(score) {
+  const hue = score >= 75 ? 134 : score >= 50 ? 45 : 210;
+  const sat = score >= 50 ? 60 : 8;
+  return `<span class="match-score" style="color:hsl(${hue},${sat}%,72%);border-color:hsl(${hue},${sat}%,42%);background:hsla(${hue},${sat}%,40%,0.15)">${score}</span>`;
+}
+
+// Temperature pass/marginal/fail badges from the gate tiers.
+function matchTempBadgesHtml(m) {
+  const b = (label, tier) => {
+    const cls = tier === 'pass' ? 'ok' : tier === 'marginal' ? 'warn' : 'bad';
+    const mark = tier === 'pass' ? '✓' : tier === 'marginal' ? '⚠' : '✗';
+    return `<span class="match-badge match-badge-${cls}">${mark} ${label}</span>`;
+  };
+  return b('Cold', m.coldTier) + b('Heat', m.heatTier);
+}
+
+// Render the match results in the side panel. Survivors are ranked by score;
+// failures (too cold / too hot) are hidden behind a toggle.
 function renderSpeciesMatchPanel(state, matches) {
-  const { result, lat, lng } = state;
+  const { result } = state;
   const locName = result._name || result.display_name.split(',')[0];
 
-  const groups = {
-    excellent:  { label: 'Excellent fit',         items: [] },
-    possible:   { label: 'Possible',              items: [] },
-    marginal:   { label: 'Marginal',              items: [] },
-    unsuitable: { label: "Won't survive outdoors", items: [] },
-  };
-  for (const m of matches) groups[m.tier].items.push(m);
+  const survivable = m => (m.tier !== 'unsuitable' && m.tier !== 'too-hot');
+  const survivors  = matches.filter(survivable);
+  const failures   = matches.filter(m => !survivable(m));
 
   const cardHtml = (m) => {
     const s = m.species;
     const photo = s.photo_url || '';
     const common = s.common_name ? esc(s.common_name) : '';
-    const reason = m.reasonParts.length ? esc(m.reasonParts[0]) : '';
     return `
-      <div class="match-card" data-taxon-id="${m.taxonId}" data-taxon-name="${esc(s.scientific_name)}">
+      <div class="match-card" data-taxon-id="${m.taxonId}">
         ${photo ? `<img class="match-card-photo" src="${esc(photo)}" loading="lazy" onerror="this.style.background='var(--bg-elevated)';this.src='';">` : '<div class="match-card-photo"></div>'}
         <div class="match-card-body">
-          <div class="match-card-name">${esc(s.scientific_name)}</div>
+          <div class="match-card-toprow">
+            <div class="match-card-name">${esc(s.scientific_name)}</div>
+            ${matchScoreChipHtml(m.score)}
+          </div>
           ${common ? `<div class="match-card-common">${common}</div>` : ''}
-          ${reason ? `<div class="match-card-reason">${reason}</div>` : ''}
+          <div class="match-card-badges">${matchTempBadgesHtml(m)}</div>
         </div>
       </div>`;
   };
 
-  // Group items by genus within each tier; render genus subgroups
-  // collapsible so long lists are easy to scan.
-  const genusSubgroupHtml = (genus, items) => `
-    <details class="match-genus-group" open>
+  const failHtml = failures.length ? `
+    <details class="match-tier-group" id="match-failures">
       <summary>
-        <span class="match-genus-name">${esc(genus)}</span>
-        <span class="match-genus-count">${items.length}</span>
+        <span class="match-tier-dot" style="background:#d4534b"></span>
+        <span>Won't survive outdoors</span>
+        <span class="match-tier-count">${failures.length}</span>
       </summary>
-      <div class="match-card-list">${items.map(cardHtml).join('')}</div>
-    </details>`;
-
-  const groupHtml = (key, group, isOpen) => {
-    if (!group.items.length) return '';
-    // Bucket by genus (preserve within-genus score ordering — items are
-    // already sorted by score from matchSpeciesToLocation)
-    const byGenus = new Map();
-    for (const it of group.items) {
-      const g = it.species.genus || 'Unknown';
-      if (!byGenus.has(g)) byGenus.set(g, []);
-      byGenus.get(g).push(it);
-    }
-    // Sort genera alphabetically
-    const sortedGenera = [...byGenus.keys()].sort();
-    const subgroups = sortedGenera.map(g => genusSubgroupHtml(g, byGenus.get(g))).join('');
-    return `
-      <details class="match-tier-group match-tier-${key}"${isOpen ? ' open' : ''}>
-        <summary>
-          <span class="match-tier-dot"></span>
-          <span>${group.label}</span>
-          <span class="match-tier-count">${group.items.length}</span>
-        </summary>
-        <div class="match-genus-list">${subgroups}</div>
-      </details>`;
-  };
+      <div class="match-card-list">${failures.map(cardHtml).join('')}</div>
+    </details>` : '';
 
   document.getElementById('panel-content').innerHTML = `
     ${navBackBtnHtml()}
     <div class="match-panel-header">
-      <div class="p-species-name">Species matched to ${esc(locName)}</div>
+      <div class="p-species-name">Species suited to ${esc(locName)}</div>
       <div class="match-panel-subtitle">
-        ${matches.length} species ranked by climate suitability for year-round outdoor cultivation.
-        Cold-tolerance is the critical filter — heat is secondary.
+        ${survivors.length} species that can survive here, ranked by an overall climate-match
+        score (0–100). Tap a species to see how each factor compares.
       </div>
     </div>
     <div class="match-dormancy-note">
-      Temperate species may require winter dormancy, which can be provided artificially
-      (e.g. refrigeration) without directly matching the native climate.
+      <strong>These scores are a guide, not a guarantee.</strong> They estimate how closely your
+      climate resembles where each species grows wild, based on observation data. Many carnivorous
+      plants tolerate conditions beyond their native range with the right care (and temperate
+      species' winter dormancy can be provided artificially). Treat low scores as "needs more
+      attention," not "impossible."
     </div>
-    ${groupHtml('excellent',  groups.excellent,  true)}
-    ${groupHtml('possible',   groups.possible,   true)}
-    ${groupHtml('marginal',   groups.marginal,   false)}
-    ${groupHtml('unsuitable', groups.unsuitable, false)}
+    <div class="match-card-list">${survivors.map(cardHtml).join('')}</div>
+    ${failHtml}
   `;
 
   // Wire interactions
   wireNavBackBtn();
   document.querySelectorAll('.match-card').forEach(card => {
     card.addEventListener('click', () => {
-      const tid  = +card.dataset.taxonId;
-      const name = card.dataset.taxonName;
-      if (!tid || !name) return;
-      // Push the match panel as the back target so the species sidebar
-      // gets a "← Climate matches" back button.
+      const tid = +card.dataset.taxonId;
+      const m   = matches.find(x => x.taxonId === tid);
+      if (!m) return;
       navPush({
         label:   'Climate matches',
         restore: () => renderSpeciesMatchPanel(state, matches),
       });
-      openSpeciesSidebar(tid, name);
+      renderSpeciesComparePanel(state, m, matches);
     });
+  });
+}
+
+// ── Per-species comparison view ────────────────────────────────────────────
+// Overlays the species' native range (band + median) against the user's
+// location curve for each attribute, with the per-attribute sub-score shown.
+let matchCompareCharts = [];
+function destroyMatchCompareCharts() {
+  matchCompareCharts.forEach(c => { try { c.destroy(); } catch {} });
+  matchCompareCharts = [];
+}
+
+function renderSpeciesComparePanel(state, m, matches) {
+  destroyMatchCompareCharts();
+  const s   = m.species;
+  const mon = speciesMonthlyForUser(s, state.lat);
+  const n   = state.normals;
+
+  // Sub-score → 0–100 + colour
+  const pct = v => v == null ? null : Math.round(v * 100);
+  const subRow = (label, key, note) => {
+    const v = pct(m.sub[key]);
+    const chip = v == null
+      ? `<span class="match-score" style="color:var(--text-muted);border-color:var(--border);background:transparent">—</span>`
+      : matchScoreChipHtml(v);
+    return `<div class="cmp-sub-row"><span>${label}</span>${chip}<span class="cmp-sub-note">${note}</span></div>`;
+  };
+
+  const photo = s.photo_url || '';
+  document.getElementById('panel-content').innerHTML = `
+    ${navBackBtnHtml()}
+    <div class="sp-header">
+      ${photo ? `<img class="sp-photo" src="${esc(photo)}" loading="lazy" onerror="this.style.display='none'">` : '<div class="sp-photo-placeholder">🌿</div>'}
+      <div class="sp-header-text">
+        <div class="sp-scientific-name">${esc(s.scientific_name)}</div>
+        ${s.common_name ? `<div class="sp-common-name">${esc(s.common_name)}</div>` : ''}
+        <div class="sp-meta">Overall match ${matchScoreChipHtml(m.score)} to ${esc(state.result._name || state.result.display_name.split(',')[0])}</div>
+      </div>
+    </div>
+    <div class="match-card-badges" style="margin:6px 0 10px">${matchTempBadgesHtml(m)}</div>
+
+    <div class="cmp-sub-list">
+      ${subRow('Low temperature',   'low',     'coldest month vs native')}
+      ${subRow('High temperature',  'high',    'hottest month vs native')}
+      ${subRow('Monthly alignment', 'monthly', 'seasonal curve match')}
+      ${subRow('Sunlight (DLI)',    'sun',     m.sub.sun == null ? 'awaiting data refresh' : 'light levels vs native')}
+      ${subRow('Humidity',          'rh',      'RH vs native range')}
+      ${subRow('Rainfall',          'precip',  'annual precip vs native')}
+    </div>
+
+    <div class="section-label" style="margin-top:14px">Temperature — your location vs native range</div>
+    <div class="cmp-chart-legend"><span class="cmp-leg-band">native range</span> <span class="cmp-leg-you">your location</span></div>
+    <div class="chart-wrap"><canvas id="cmp-temp-chart"></canvas></div>
+
+    ${(n.dli && mon?.dli) ? `
+      <div class="section-label" style="margin-top:14px">Sunlight (DLI)</div>
+      <div class="chart-wrap" style="height:140px"><canvas id="cmp-dli-chart"></canvas></div>` : ''}
+
+    ${(n.rhMean && mon?.rh) ? `
+      <div class="section-label" style="margin-top:14px">Humidity (RH%)</div>
+      <div class="chart-wrap" style="height:140px"><canvas id="cmp-rh-chart"></canvas></div>` : ''}
+
+    ${(n.precipMm && mon?.precip) ? `
+      <div class="section-label" style="margin-top:14px">Rainfall (mm/month)</div>
+      <div class="chart-wrap" style="height:140px"><canvas id="cmp-precip-chart"></canvas></div>` : ''}
+
+    <button class="find-species-btn" id="cmp-open-species" style="margin-top:14px">
+      <span class="find-species-icon">${BMG_ICONS.leaf}</span> Full species details
+    </button>
+  `;
+  wireNavBackBtn();
+
+  // Month labels (user's calendar)
+  const labels = MONTHS;
+  const bandOf  = (mf, idx) => (mf || []).map(v => v ? v[idx] : null);   // [p25,p50,p75] → one series
+  const medOf   = mf => bandOf(mf, 1);
+
+  // Temperature: species hi/lo band (p25–p75) + median lines, user hi/lo lines.
+  matchCompareCharts.push(buildCompareChart('cmp-temp-chart', {
+    labels,
+    datasets: [
+      cmpBand(bandOf(mon.tempMax, 2), bandOf(mon.tempMax, 0), 'rgba(255,140,60,0.12)'),
+      cmpBand(bandOf(mon.tempMin, 2), bandOf(mon.tempMin, 0), 'rgba(100,180,255,0.12)'),
+      cmpLine('Native high', medOf(mon.tempMax), 'rgba(255,140,60,0.55)', true),
+      cmpLine('Native low',  medOf(mon.tempMin), 'rgba(100,180,255,0.55)', true),
+      cmpLine('Your high',   n.tempMax, 'rgba(255,140,60,1)', false),
+      cmpLine('Your low',    n.tempMin, 'rgba(100,180,255,1)', false),
+    ],
+    unit: '°C',
+  }));
+
+  if (n.dli && mon?.dli) matchCompareCharts.push(buildCompareChart('cmp-dli-chart', {
+    labels,
+    datasets: [
+      cmpBand(bandOf(mon.dli, 2), bandOf(mon.dli, 0), 'rgba(255,200,50,0.14)'),
+      cmpLine('Native', medOf(mon.dli), 'rgba(255,200,50,0.55)', true),
+      cmpLine('You', n.dli, 'rgba(255,200,50,1)', false),
+    ], unit: '',
+  }));
+
+  if (n.rhMean && mon?.rh) matchCompareCharts.push(buildCompareChart('cmp-rh-chart', {
+    labels,
+    datasets: [
+      cmpBand(bandOf(mon.rh, 2), bandOf(mon.rh, 0), 'rgba(120,200,160,0.14)'),
+      cmpLine('Native', medOf(mon.rh), 'rgba(120,200,160,0.55)', true),
+      cmpLine('You', n.rhMean, 'rgba(120,200,160,1)', false),
+    ], unit: '%',
+  }));
+
+  if (n.precipMm && mon?.precip) matchCompareCharts.push(buildCompareChart('cmp-precip-chart', {
+    labels,
+    datasets: [
+      cmpBand(bandOf(mon.precip, 2), bandOf(mon.precip, 0), 'rgba(80,160,240,0.14)'),
+      cmpLine('Native', medOf(mon.precip), 'rgba(80,160,240,0.55)', true),
+      cmpLine('You', n.precipMm, 'rgba(80,160,240,1)', false),
+    ], unit: 'mm',
+  }));
+
+  document.getElementById('cmp-open-species')?.addEventListener('click', () => {
+    navPush({ label: esc(s.scientific_name), restore: () => renderSpeciesComparePanel(state, m, matches) });
+    openSpeciesSidebar(m.taxonId, s.scientific_name);
+  });
+}
+
+// Dataset helpers for the comparison charts.
+function cmpBand(top, bottom, fillColor) {
+  return {           // top line fills DOWN to the next dataset (the bottom line)
+    type: 'line', label: '_band', data: top,
+    borderWidth: 0, backgroundColor: fillColor, fill: '+1',
+    tension: 0.35, pointRadius: 0, _bottom: bottom,
+  };
+}
+function cmpLine(label, data, color, dashed) {
+  return {
+    type: 'line', label, data,
+    borderColor: color, backgroundColor: 'transparent', fill: false,
+    borderDash: dashed ? [5, 3] : [], borderWidth: dashed ? 1.5 : 2.5,
+    tension: 0.35, pointRadius: 0, pointHoverRadius: 4,
+  };
+}
+function buildCompareChart(canvasId, cfg) {
+  const ctx = document.getElementById(canvasId);
+  if (!ctx) return null;
+  // Expand any band's hidden bottom line into a real dataset right after it.
+  const datasets = [];
+  for (const d of cfg.datasets) {
+    if (d._bottom) {
+      const bottom = d._bottom; delete d._bottom;
+      datasets.push(d);
+      datasets.push({ type: 'line', label: '_bandbot', data: bottom, borderWidth: 0,
+        backgroundColor: 'transparent', fill: false, tension: 0.35, pointRadius: 0 });
+    } else datasets.push(d);
+  }
+  return new Chart(ctx, {
+    data: { labels: cfg.labels, datasets },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: { labels: { color: 'rgba(255,255,255,0.55)', font: { size: 10 }, boxWidth: 10,
+          filter: i => !i.text.startsWith('_') } },
+        tooltip: { backgroundColor: '#161b22', borderColor: '#30363d', borderWidth: 1,
+          titleColor: '#e6edf3', bodyColor: '#8b949e',
+          callbacks: { label: c => c.dataset.label.startsWith('_') ? null
+            : `${c.dataset.label}: ${c.raw != null ? Math.round(c.raw) + (cfg.unit || '') : '—'}` } },
+      },
+      scales: {
+        y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.45)', font: { size: 10 },
+          callback: v => Math.round(v) + (cfg.unit || '') } },
+        x: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: 'rgba(255,255,255,0.45)', font: { size: 9 } } },
+      },
+    },
   });
 }
 
@@ -5291,7 +5565,7 @@ async function runSpeciesMatch(state) {
     return;
   }
   const userKoppen = getKoppenAt(state.lat, state.lng);
-  const matches    = matchSpeciesToLocation(state.normals, userKoppen);
+  const matches    = matchSpeciesToLocation(state.normals, userKoppen, state.lat);
   renderSpeciesMatchPanel(state, matches);
 }
 

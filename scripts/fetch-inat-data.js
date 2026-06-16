@@ -54,11 +54,13 @@ const ELEV_RATE_MS    = 1_000;  // 1 s between batches — OpenTopoData allows 1
 const ELEV_BACKOFF    = [5_000, 15_000, 30_000];  // retry delays on 429 / errors
 const ELEV_CACHE_PATH = join(ROOT, 'inat', 'elev-cache.json');   // persisted across runs
 const CLIM_CACHE_PATH = join(ROOT, 'inat', 'climate-cache.json'); // persisted across runs — avoids re-fetching 10k+ cells
-const CLIM_CACHE_VER  = 3;   // bump when climate API source or cache shape changes to force re-fetch
+const CLIM_CACHE_VER  = 4;   // bump when climate API source or cache shape changes to force re-fetch
                               // v1 = Open-Meteo ERA5 (deprecated)
                               // v2 = NASA POWER MERRA-2, monthly averages only
                               // v3 = NASA POWER MERRA-2 + per-cell monthly daily-extreme percentiles
                               //      (tempMaxHi p90 / tempMinLo p10) for species sidebar chart band
+                              // v4 = adds ALLSKY_SFC_SW_DWN → monthly DLI (mol/m²/day) for the
+                              //      climate-match sunlight factor
 
 // ── Soil constants ────────────────────────────────────────────────────────────
 // NOTE: WRB (soil type) is a *classification* property — it has its own endpoint.
@@ -565,7 +567,7 @@ async function fetchElevations(cellReps) {
  * We set rhHigh/rhLow to all-null in the cache to preserve schema shape.
  */
 async function fetchCellClimate(lat, lng) {
-  const url = `${POWER_API}?parameters=T2M_MAX,T2M_MIN,PRECTOTCORR,RH2M` +
+  const url = `${POWER_API}?parameters=T2M_MAX,T2M_MIN,PRECTOTCORR,RH2M,ALLSKY_SFC_SW_DWN` +
     `&community=AG` +
     `&latitude=${lat.toFixed(4)}&longitude=${lng.toFixed(4)}` +
     `&start=20190101&end=20231231` +
@@ -610,10 +612,11 @@ function parseClimateResponse(d) {
   const precSum = new Array(12).fill(0);
   const precYrs = Array.from({ length: 12 }, () => new Set());
   const rhSum   = new Array(12).fill(0), rhCnt   = new Array(12).fill(0);
+  const radSum  = new Array(12).fill(0), radCnt  = new Array(12).fill(0);
 
   // POWER returns each parameter as an object keyed by date string "YYYYMMDD".
-  // All four parameters share the same date keys, so we iterate T2M_MAX's keys
-  // and look up the other three by the same key.
+  // All parameters share the same date keys, so we iterate T2M_MAX's keys and
+  // look up the others by the same key.
   for (const dateKey of Object.keys(params.T2M_MAX)) {
     const m = parseInt(dateKey.substring(4, 6), 10) - 1;  // "YYYYMMDD" → month (0-11)
     const y = dateKey.substring(0, 4);
@@ -629,6 +632,9 @@ function parseClimateResponse(d) {
 
     const rh = params.RH2M?.[dateKey];
     if (isValid(rh)) { rhSum[m] += rh; rhCnt[m]++; }
+
+    const rad = params.ALLSKY_SFC_SW_DWN?.[dateKey];   // shortwave radiation MJ/m²/day
+    if (isValid(rad)) { radSum[m] += rad; radCnt[m]++; }
   }
 
   // Inline percentile helper — linear-interpolated.
@@ -653,6 +659,10 @@ function parseClimateResponse(d) {
     rhHigh:    new Array(12).fill(null),
     rhLow:     new Array(12).fill(null),
     rhMean:    rhSum.map((s, m) => rhCnt[m] ? s / rhCnt[m] : null),
+    // Monthly DLI (mol photons/m²/day) = mean shortwave radiation × 2.02
+    // (PAR fraction × photon conversion) — same formula the client uses for the
+    // user-location DLI, so species vs location is a true apples-to-apples match.
+    dli:       radSum.map((s, m) => radCnt[m] ? (s / radCnt[m]) * 2.02 : null),
   };
 }
 
@@ -1004,6 +1014,7 @@ async function computeSpeciesData(allTaxa, allObs) {
       tempMinLo: monthlyMedian(arr, 'tempMinLo'),
       precip:    monthlyPct(arr, 'precipMm'),
       rh:        monthlyPct(arr, 'rhMean'),
+      dli:       monthlyPct(arr, 'dli'),   // monthly DLI [p25,p50,p75] for the climate-match sunlight factor
     } : null;
 
     // Köppen zone distribution sorted by count
