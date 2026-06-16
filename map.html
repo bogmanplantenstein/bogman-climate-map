@@ -1314,15 +1314,14 @@ html, body {
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  border: 2px solid rgba(255,255,255,0.3);
+  border: 1.5px solid var(--accent);   /* ring colour set inline per-cluster */
   font-size: 11px;
   font-weight: 700;
   color: #fff;
   cursor: pointer;
-  box-shadow: 0 1px 6px rgba(0,0,0,0.5);
-  transition: transform 0.1s;
+  transition: transform 0.1s, box-shadow 0.15s;
 }
-.inat-cluster-icon:hover { transform: scale(1.1); }
+.inat-cluster-icon:hover { transform: scale(1.12); }
 .inat-obscured-rect {
   stroke-dasharray: 5, 4;
   fill-opacity: 0.08;
@@ -3298,66 +3297,10 @@ function buildMapControls() {
     }
   });
 
-  // CP filter panel toggle (moved from a static <button> in the top-left to
-  // the right-side "Sightings" group for consolidated control placement).
-  const FilterCtrl = L.Control.extend({
-    options: { position: 'topright' },
-    onAdd() {
-      const btn = L.DomUtil.create('button', 'map-btn');
-      btn.id        = 'filter-toggle';
-      btn.title     = 'Filters (genus, Köppen, elevation)';
-      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.sliders}</span>`;
-      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
-      L.DomEvent.on(btn, 'click', () => {
-        const panel = document.getElementById('filter-panel');
-        const open  = panel.classList.toggle('open');
-        btn.classList.toggle('active', open);
-        if (open) closeOtherSightingsPanels('filter-panel');
-      });
-      return btn;
-    }
-  });
-
-  // Unmapped-taxa toggle. The numeric count badge was removed — the map is
-  // primarily an iNat / climate / soil tool, so the gallery taxa count was
-  // visual noise. Users who want the count can still see it inside the panel.
-  const UnmappedCtrl = L.Control.extend({
-    options: { position: 'topright' },
-    onAdd() {
-      const btn = L.DomUtil.create('button', 'map-btn');
-      btn.id        = 'unmapped-toggle';
-      btn.title     = 'Unmapped taxa';
-      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.list}</span>`;
-      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
-      L.DomEvent.on(btn, 'click', () => {
-        const panel = document.getElementById('unmapped-panel');
-        const open  = panel.classList.toggle('open');
-        btn.classList.toggle('active', open);
-        if (open) closeOtherSightingsPanels('unmapped-panel');
-      });
-      return btn;
-    }
-  });
-
-  // Gallery-species toggle. Flips the visibility of all curated gallery pins
-  // (the map.json taxa, distinct from iNat observations) on/off. Defaults to
-  // OFF so the map opens uncluttered for iNat / climate / soil exploration.
-  // Pressed state mirrors gallerySpeciesVisible.
-  const GalleryCtrl = L.Control.extend({
-    options: { position: 'topright' },
-    onAdd() {
-      const btn = L.DomUtil.create('button', 'map-btn');
-      btn.id        = 'gallery-toggle';
-      btn.title     = 'Show gallery species pins';
-      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.pin}</span>`;
-      btn.classList.toggle('active', gallerySpeciesVisible);
-      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
-      L.DomEvent.on(btn, 'click', () => {
-        setGallerySpeciesVisible(!gallerySpeciesVisible);
-      });
-      return btn;
-    }
-  });
+  // The gallery-pin toggle (GalleryCtrl), gallery filter panel (FilterCtrl) and
+  // unmapped-taxa toggle (UnmappedCtrl) were removed when the climate map was
+  // decoupled from the Bogman gallery. The map no longer renders curated gallery
+  // pins, so these controls and their panels are gone.
 
   // Info / about toggle — opens the data-sources & methodology dialog from the
   // top-right toolbar. Mirrors the bottom-right floating "i" button, but stays
@@ -3397,11 +3340,6 @@ function buildMapControls() {
   //   [SPECIES] iNat panel
   //   [ABOUT]   data sources / methodology dialog
   // Within each group, controls are ordered by frequency of use.
-  //
-  // The gallery-pin toggle (GalleryCtrl) and unmapped-taxa toggle (UnmappedCtrl)
-  // are intentionally NOT added: the curated gallery taxa data is unfinished, so
-  // those pins are hidden for now. The control classes are kept defined above so
-  // they can be re-added in one line once the gallery data is refreshed.
   new (makeLabelCtrl('Layer'))().addTo(map);
   new TileCtrl().addTo(map);
   new KoppenCtrl().addTo(map);
@@ -6657,113 +6595,9 @@ function initSearch() {
   });
 }
 
-// ═══════════════════════════════════════════════════════════
-//  FILTERS
-// ═══════════════════════════════════════════════════════════
-
-function buildFilterUI() {
-  // Genus
-  const genusEl = document.getElementById('filter-genus');
-  genusEl.innerHTML = availableGenera.map(g => {
-    const n = allMapTaxa.filter(t => t.genus === g).length;
-    return `<label class="filter-label">
-      <input type="checkbox" data-ftype="genus" data-val="${esc(g)}" checked>
-      <span class="genus-dot" style="background:${genusColor(g)}"></span>
-      ${esc(g)} <span class="filter-count">${n}</span>
-    </label>`;
-  }).join('');
-
-  // Köppen groups
-  const koppenEl = document.getElementById('filter-koppen');
-  koppenEl.innerHTML = [
-    ['A','Tropical'],['B','Arid'],['C','Temperate'],
-    ['D','Continental'],['E','Polar / Highland'],['?','No zone data']
-  ].map(([k, label]) => `<label class="filter-label">
-    <input type="checkbox" data-ftype="koppen" data-val="${k}" checked>
-    ${label}
-  </label>`).join('');
-
-  // Elevation bands
-  const elevEl = document.getElementById('filter-elev');
-  elevEl.innerHTML = [...ELEV_BANDS, '?'].map(b => `<label class="filter-label">
-    <input type="checkbox" data-ftype="elev" data-val="${b}" checked>
-    ${b === '?' ? 'Not set' : b.charAt(0).toUpperCase()+b.slice(1)}
-  </label>`).join('');
-
-  document.querySelectorAll('#filter-panel input[type=checkbox]').forEach(cb =>
-    cb.addEventListener('change', applyFilters)
-  );
-  document.getElementById('filter-reset').addEventListener('click', resetFilters);
-}
-
-function applyFilters() {
-  const checkedGenera  = new Set([...document.querySelectorAll('[data-ftype=genus]:checked')].map(el => el.dataset.val));
-  const checkedKoppen  = new Set([...document.querySelectorAll('[data-ftype=koppen]:checked')].map(el => el.dataset.val));
-  const checkedElev    = new Set([...document.querySelectorAll('[data-ftype=elev]:checked')].map(el => el.dataset.val));
-
-  const allGenera  = availableGenera.length;
-  const isDefault  = checkedGenera.size === allGenera && checkedKoppen.size === 6 && checkedElev.size === ELEV_BANDS.length + 1;
-  // Optional chaining: the reset button only exists once buildFilterUI has
-  // run; the gallery toggle (in buildMapControls, which runs first) can race
-  // with that during a slow data load.
-  const resetBtn = document.getElementById('filter-reset');
-  if (resetBtn) resetBtn.style.display = isDefault ? 'none' : 'block';
-
-  markerStore.forEach(({ marker, circle, taxon }) => {
-    const genusOk  = checkedGenera.has(taxon.genus);
-    const kg       = koppenGroup(taxon.koppenZone);
-    const koppenOk = checkedKoppen.has(kg);
-    const eb       = getElevBand(taxon) || '?';
-    const elevOk   = checkedElev.has(eb) || (eb === '?' && checkedElev.has('?'));
-    // Global gallery toggle wins: when off, all gallery pins hide regardless
-    // of the filter checkbox state. The filter UI stays usable so users can
-    // dial in their preferred filter before flipping the gallery back on.
-    const show     = gallerySpeciesVisible && genusOk && koppenOk && elevOk;
-
-    show ? marker.addTo(map) : map.removeLayer(marker);
-    if (circle) show ? circle.addTo(map) : map.removeLayer(circle);
-  });
-}
-
-// Flip the global gallery-species visibility flag, persist it, refresh the
-// button's pressed state, and re-run filters so the markers actually update.
-// Safe to call before #filter-panel exists: applyFilters tolerates that.
-function setGallerySpeciesVisible(visible) {
-  gallerySpeciesVisible = !!visible;
-  try { localStorage.setItem('bmg_gallery_visible', String(gallerySpeciesVisible)); } catch {}
-  const btn = document.getElementById('gallery-toggle');
-  if (btn) btn.classList.toggle('active', gallerySpeciesVisible);
-  applyFilters();
-}
-
-function resetFilters() {
-  document.querySelectorAll('#filter-panel input[type=checkbox]').forEach(cb => { cb.checked = true; });
-  applyFilters();
-}
-
-// ═══════════════════════════════════════════════════════════
-//  UNMAPPED LIST
-// ═══════════════════════════════════════════════════════════
-
-function buildUnmappedList() {
-  const sorted = [...unmappedTaxa].sort((a, b) =>
-    (a.genus + a.species + a.displayName).localeCompare(b.genus + b.species + b.displayName)
-  );
-  // Count badge was removed from the toggle button — the panel header below
-  // already shows the items, so no badge update is needed here anymore.
-
-  document.getElementById('unmapped-list').innerHTML = sorted.map(t => {
-    const icons = [];
-    if (!t.mapPin?.lat)     icons.push(`<span class="unmapped-icon" title="No coordinates">📍</span>`);
-    if (!t.koppenZone)      icons.push(`<span class="unmapped-icon" title="No Köppen zone">🌡️</span>`);
-    if (!t.mapPin?.elevationM) icons.push(`<span class="unmapped-icon" title="No elevation">↕</span>`);
-    return `<div class="unmapped-row">
-      <div class="unmapped-name" title="${esc(t.displayName)}">${esc(t.displayName)}</div>
-      <div class="unmapped-country">${esc(t.country || '—')}</div>
-      <div class="unmapped-icons">${icons.join('')}</div>
-    </div>`;
-  }).join('');
-}
+// The gallery-pin filter UI (genus / Köppen / elevation) and the unmapped-taxa
+// list were removed when the climate map was decoupled from the Bogman gallery.
+// Those panels filtered curated gallery pins, which the map no longer renders.
 
 // ═══════════════════════════════════════════════════════════
 //  URL / DEEP LINK
@@ -6902,13 +6736,8 @@ function handleUrlParams() {
     }
   }
 
-  // Legacy gallery deep links.
-  const txnId = p.get('taxon');
-  const slug  = p.get('slug');
-  let taxon = null;
-  if (txnId)  taxon = allMapTaxa.find(t => t.id === txnId);
-  if (!taxon && slug) taxon = allMapTaxa.find(t => t.slug === slug);
-  if (taxon) { openPanel(taxon); flyToTaxon(taxon); }
+  // Legacy gallery deep links (?taxon= / ?slug=) were removed when the climate
+  // map was decoupled from the gallery — it no longer loads gallery taxa.
 }
 
 // Resolve a ?sp= link. Species pages key on the iNat taxon id (string). We have
@@ -7132,40 +6961,14 @@ async function init() {
 
   setProgress(22);
 
-  // Load species data
+  // The climate map is now independent of the Bogman gallery: it no longer
+  // fetches the gallery's data.json, loads gallery taxa, or renders curated
+  // gallery pins. Its data is iNaturalist observations + Köppen + soil only.
   try {
-    const res  = await fetch(DATA_URL);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const data = await res.json();
     setProgress(60);
-
-    // Habitats lookup
-    if (Array.isArray(data.habitats)) {
-      data.habitats.forEach(h => { habitatsMap[h.id] = h.name; });
-    }
-
-    const eligible  = (data.taxa || []).filter(isEligible);
-    allMapTaxa      = eligible.filter(hasCoords);
-    unmappedTaxa    = eligible.filter(t => !hasCoords(t));
-
-    // Collect genera present on map
-    const genSet = new Set(allMapTaxa.map(t => t.genus));
-    availableGenera = [...genSet].sort();
-    availableGenera.forEach(g => activeFilters.genera.add(g));
-
-    setProgress(75);
-    renderPins(allMapTaxa);   // honours gallerySpeciesVisible — no second pass needed
-    buildFilterUI();
-    buildUnmappedList();
-    setProgress(88);
-
     await loadKoppen();
-
-    // Ensure pins sit above Köppen layer
-    markerStore.forEach(({ marker }) => marker.bringToFront?.());
-
     setProgress(100);
-    handleUrlParams();
+    handleUrlParams();   // deep links: ?region= / ?obs= / ?sp= / ?at=
     buildInatFilterPanel();
     // Observations are the map's primary utility — show them on load instead
     // of waiting for the user to flip the "Show pins" toggle. enableInatLayer
@@ -7588,12 +7391,20 @@ function drawInatClusters(clusters, zoom) {
 
     if (props.cluster) {
       // ── Cluster circle ──────────────────────────────
+      // Design "E": neutral near-black disc with an accent-green ring + glow
+      // whose intensity scales with the count (instead of a green→red hue ramp).
+      // `t` is a 0–1 magnitude from the cluster size (log-scaled to match the
+      // marker sizing) and drives glow radius, ring brightness, and text colour.
       const count = props.point_count;
       const size  = Math.max(28, Math.min(60, 20 + Math.log2(count) * 7));
-      const hue   = Math.max(0, 120 - count / 50);  // green → orange → red
+      const t     = Math.max(0, Math.min(1, (Math.log2(count) - 3) / 9));   // ~8 → 4096+
+      const glow  = (6 + t * 18).toFixed(1);                 // 6 → 24 px blur
+      const glowA = (0.35 + t * 0.5).toFixed(2);             // 0.35 → 0.85 alpha
+      const ring  = `hsl(134, ${(45 + t * 25).toFixed(0)}%, ${(48 + t * 18).toFixed(0)}%)`; // brighter green w/ count
+      const txt   = t > 0.55 ? '#ffffff' : '#aff5b4';
       const icon  = L.divIcon({
         className: '',
-        html: `<div class="inat-cluster-icon" style="width:${size}px;height:${size}px;background:hsl(${hue},70%,40%);font-size:${size < 36 ? 10 : 12}px">${count > 999 ? Math.round(count/1000)+'k' : count}</div>`,
+        html: `<div class="inat-cluster-icon" style="width:${size}px;height:${size}px;background:#161b22;border-color:${ring};color:${txt};font-size:${size < 36 ? 10 : 12}px;box-shadow:0 0 ${glow}px rgba(63,185,80,${glowA})">${count > 999 ? Math.round(count/1000)+'k' : count}</div>`,
         iconSize: [size, size],
         iconAnchor: [size/2, size/2],
       });
