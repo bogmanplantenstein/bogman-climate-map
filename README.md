@@ -71,7 +71,7 @@ below.
 ```html
 <iframe
   id="bmg-map-frame"
-  src="https://cdn.jsdelivr.net/gh/bogmanplantenstein/bogman-climate-map@8fe5b59/map.html"
+  src="https://cdn.jsdelivr.net/gh/bogmanplantenstein/bogman-climate-map@563e362/map.html"
   style="width:100%;height:calc(100vh - 80px);border:none;display:block;"></iframe>
 
 <script>
