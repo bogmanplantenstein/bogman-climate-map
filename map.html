@@ -183,6 +183,22 @@ html, body {
   line-height: 1.3;
   margin-bottom: 3px;
 }
+.p-species-name-link {
+  cursor: pointer;
+  color: var(--accent);
+  text-decoration: underline;
+  text-decoration-color: rgba(63, 185, 80, 0.4);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 0.15s ease, opacity 0.15s ease;
+  border-radius: 3px;
+}
+.p-species-name-link:hover {
+  text-decoration-color: var(--accent);
+}
+.p-species-name-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .p-common-name {
   font-size: 13px;
   color: var(--text-muted);
@@ -7094,6 +7110,7 @@ async function openObsById(obsId) {
       properties: {
         obs_id:      o.id,
         lat, lng,
+        taxon_id:    o.taxon?.id || null,
         taxon_name:  o.taxon?.name || 'Unknown',
         common_name: o.taxon?.preferred_common_name || null,
         genus:       (o.taxon?.name || '').split(' ')[0],
@@ -7656,6 +7673,7 @@ function buildInatFeatures() {
         lat:         o[OBS_LAT],
         lng:         o[OBS_LNG],
         taxon_idx:   o[OBS_TI],
+        taxon_id:    taxon[0],
         date:        o[OBS_DATE],
         flags,
         photo_id:    o[OBS_PHOTO],
@@ -8257,7 +8275,9 @@ function openInatObsPanel(feature) {
 
   document.getElementById('panel-content').innerHTML = `
     ${navBackBtnHtml()}
-    <div class="p-species-name">${esc(p.taxon_name)}</div>
+    ${p.taxon_id
+      ? `<div class="p-species-name p-species-name-link" id="obs-species-link" role="link" tabindex="0" title="View climate & details for ${esc(p.taxon_name)}">${esc(p.taxon_name)}</div>`
+      : `<div class="p-species-name">${esc(p.taxon_name)}</div>`}
     ${p.common_name ? `<div class="p-common-name">${esc(p.common_name)}</div>` : ''}
     <div class="p-location" id="obs-location" title="${esc(coordStr)}">${coordStr}</div>
     <div class="badge-row" style="margin-top:8px;margin-bottom:8px">${qBadge}${obsBadge}${koppenBadge}</div>
@@ -8305,6 +8325,23 @@ function openInatObsPanel(feature) {
   wireNavBackBtn();
   wireCopyLinkButtons(document.getElementById('panel-content'));
   setDeepLink('obs', p.obs_id);
+
+  // Species name → open that species' info page. The current obs becomes the
+  // back-target so the user can return to the sighting they came from.
+  if (p.taxon_id) {
+    const speciesLink = document.getElementById('obs-species-link');
+    const openSpecies = () => {
+      navPush({
+        label:   'Sighting',
+        restore: () => openInatObsPanel(feature),
+      });
+      openSpeciesSidebar(p.taxon_id, p.taxon_name);
+    };
+    speciesLink?.addEventListener('click', openSpecies);
+    speciesLink?.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openSpecies(); }
+    });
+  }
 
   // Lazy-load climate data the first time that section is opened
   let climateLoaded = false;
