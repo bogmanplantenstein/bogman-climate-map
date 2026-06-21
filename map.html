@@ -5969,11 +5969,38 @@ function loadSpeciesData() {
   return inatSpeciesDataPromise;
 }
 
+// Filter the map's iNat pins down to a single species and frame its
+// observations. Called by every path that opens the species info panel
+// (search, deep links, climate-match results, an observation's species-name
+// link) so the map always reflects the species being viewed. The active filter
+// is mirrored into the search box, which doubles as the visible, clearable
+// filter indicator — clearing the search (or picking a place) removes it.
+function applySpeciesMapFilter(taxonName) {
+  if (!taxonName) return;
+  if (!inatVisible) enableInatLayer();
+  if (inatSpeciesFilter !== taxonName) {
+    inatSpeciesFilter = taxonName;
+    searchInatTaxa._counts = null;   // allow recount after filter change
+    rebuildInatIndex();
+  }
+  // Frame the species' observations.
+  const pts = [];
+  for (const o of inatObs) if (inatTaxa[o[OBS_TI]]?.[1] === taxonName) pts.push([o[OBS_LAT], o[OBS_LNG]]);
+  if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 9, animate: true });
+  // Mirror the filter into the search box so there's an obvious way to clear it.
+  const si = document.getElementById('search-input');
+  if (si) {
+    si.value = taxonName;
+    document.getElementById('search-clear')?.classList.add('visible');
+  }
+}
+
 async function openSpeciesSidebar(taxonId, taxonName) {
   inatNav.mode             = 'species-sidebar';
   inatNav.speciesTaxonId   = taxonId;
   inatNav.speciesTaxonName = taxonName;
   inatSpeciesSidebarId     = taxonId;
+  applySpeciesMapFilter(taxonName);   // show only this species' pins on the map
   speciesHemi              = 'nh';
   speciesShiftSH           = false;   // always start un-swapped for each species
   speciesPhenoMetric       = 'flowering';
@@ -6376,6 +6403,7 @@ function buildSpeciesSidebarContent(entry) {
           lat:         o[OBS_LAT],
           lng:         o[OBS_LNG],
           taxon_idx:   o[OBS_TI],
+          taxon_id:    taxon[0] || entry.taxon_id,
           taxon_name:  taxon[1] || entry.scientific_name,
           common_name: entry.common_name || null,
           date:        o[OBS_DATE],
@@ -6684,32 +6712,11 @@ function buildSpeciesClimateChart(monthly) {
 }
 
 function selectInatTaxon(result) {
-  const { taxonName, count } = result;
-  document.getElementById('search-input').value = taxonName;
-  document.getElementById('search-clear').classList.add('visible');
   document.getElementById('search-suggestions').classList.remove('open');
   searchCurrentSuggestions = [];
-
-  // Enable iNat layer if it's off
-  if (!inatVisible) enableInatLayer();
-
-  // Apply species filter and rebuild clusters
-  inatSpeciesFilter = taxonName;
-  searchInatTaxa._counts = null; // allow recount after filter change
-  rebuildInatIndex();
-
-  // Fit map to this species' observations
-  const pts = [];
-  const nameMatch = inatTaxa.findIndex(t => t[1] === taxonName);
-  for (const o of inatObs) {
-    if (inatTaxa[o[OBS_TI]]?.[1] === taxonName) pts.push([o[OBS_LAT], o[OBS_LNG]]);
-  }
-  if (pts.length) {
-    map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 9, animate: true, duration: 1.0 });
-  }
-
-  // Open species sidebar (async — loads species-data.json lazily)
-  openSpeciesSidebar(result.taxonId, taxonName);
+  // openSpeciesSidebar → applySpeciesMapFilter handles enabling the layer,
+  // filtering the pins, framing the obs, and mirroring the search box.
+  openSpeciesSidebar(result.taxonId, result.taxonName);
 }
 
 // ── Admin-region observation filter ───────────────────────────────────────
@@ -7078,13 +7085,8 @@ async function selectInatTaxonById(taxonId, taxonNameHint) {
   const entry = inatSpeciesData && inatSpeciesData[taxonId];
   const taxonName = entry?.scientific_name || taxonNameHint;
   if (!taxonName) return;
-  if (!inatVisible) enableInatLayer();
-  inatSpeciesFilter = taxonName;
-  searchInatTaxa._counts = null;
-  rebuildInatIndex();
-  const pts = [];
-  for (const o of inatObs) if (inatTaxa[o[OBS_TI]]?.[1] === taxonName) pts.push([o[OBS_LAT], o[OBS_LNG]]);
-  if (pts.length) map.fitBounds(L.latLngBounds(pts), { padding: [50, 50], maxZoom: 9, animate: true });
+  // openSpeciesSidebar → applySpeciesMapFilter enables the layer, filters the
+  // pins, and frames the species' observations.
   openSpeciesSidebar(taxonId, taxonName);
 }
 
