@@ -4746,6 +4746,10 @@ async function fetchNominatim(query) {
   } catch { return []; }
 }
 
+// ════════════════════════════════════════════════════════════
+//  POINT CLIMATE + ELEVATION  (live per-point fetch, lapse, daylight)
+// ════════════════════════════════════════════════════════════
+
 // Astronomical monthly average daylight hours from latitude (no API call needed).
 // Computed for the 15th of each month using standard solar declination formula.
 // Returns 12 monthly values. Handles polar day (24) and polar night (0).
@@ -5145,6 +5149,10 @@ async function sampleCellElevationRange(swLat, swLng, sizeDeg = 0.2) {
 // Hemisphere: the species' monthly_nh / monthly_sh are chosen / rotated so the
 // seasonal phase aligns with the user's location before comparing curves.
 const MATCH_WEIGHTS = { low: 20, high: 20, monthly: 20, sun: 15, rh: 15, precip: 10 };
+
+// ════════════════════════════════════════════════════════════
+//  CLIMATE MATCH  (species ↔ location scoring + compare UI)
+// ════════════════════════════════════════════════════════════
 
 // Score how well `userVal` fits a species' [p25, p50, p75] band. Inside the
 // band → 1.0; outside → falls off over `tol` (the attribute's tolerance in its
@@ -5589,6 +5597,10 @@ async function runSpeciesMatch(state) {
   renderSpeciesMatchPanel(state, matches);
 }
 
+// ════════════════════════════════════════════════════════════
+//  CLICKED-LOCATION PANEL  (search result / map click → climate panel)
+// ════════════════════════════════════════════════════════════
+
 function buildLocationPanel(state) {
   const { result, lat, lng, normals, loading, elevInfo } = state;
   const name = result._name || result.display_name.split(',')[0];
@@ -5821,6 +5833,10 @@ window.openClimateAt = async function(lat, lng) {
 let searchCurrentSuggestions = [];
 let searchHighlightedIdx = -1;
 
+// ════════════════════════════════════════════════════════════
+//  SEARCH RESULTS + ROUTING  (suggestions, taxon/region/place dispatch)
+// ════════════════════════════════════════════════════════════
+
 function renderSuggestions(results) {
   searchCurrentSuggestions = results;
   searchHighlightedIdx = -1;
@@ -5957,7 +5973,9 @@ function searchInatTaxa(q) {
   return [...top, ...rest].slice(0, 7);
 }
 
-// ── Species sidebar ───────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+//  SPECIES SIDEBAR  (data load, map filter, info panel, phenology + climate charts)
+// ════════════════════════════════════════════════════════════
 
 function loadSpeciesData() {
   if (!inatSpeciesDataPromise) {
@@ -6726,6 +6744,10 @@ function selectInatTaxon(result) {
 // ── Admin-region observation filter ───────────────────────────────────────
 // Selecting a state/province/country etc. fetches its boundary polygon and
 // restricts the visible observations to inside that border (precise PIP).
+
+// ════════════════════════════════════════════════════════════
+//  REGION FILTER + SEARCH INIT  (admin-boundary obs filter, search wiring)
+// ════════════════════════════════════════════════════════════
 
 // Convert a GeoJSON Polygon/MultiPolygon geometry to a flat array of rings
 // ([[ [lng,lat], ... ], ...]) for pointInRings.
