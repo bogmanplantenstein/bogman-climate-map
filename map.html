@@ -5960,6 +5960,18 @@ function selectSearchResult(result) {
   searchPanelOpen = true;
   buildLocationPanel(searchState);
 
+  // #5 — also restrict observations to this place's area, so nearby sightings show
+  // alongside the climate panel. Uses the result's bounding box (fast, no extra
+  // polygon fetch); the box naturally scales with the place's size. The chip's ×
+  // clears it independently of the climate panel.
+  if (result.boundingbox) {
+    const bb = result.boundingbox.map(Number);   // [south, north, west, east]
+    inatRegionFilter = { name, bbox: [bb[0], bb[1], bb[2], bb[3]], rings: null, osmRef: null };
+    if (!inatVisible) enableInatLayer();
+    rebuildInatIndex();
+    setRegionChip(name, countRegionObs(), false);
+  }
+
   Promise.all([fetchSearchClimateNormals(lat, lng), fetchRHNormals(lat, lng)])
     .then(([normals, rh]) => {
       if (!searchPanelOpen || !searchState || searchState.result !== result) return;
@@ -5981,13 +5993,25 @@ function searchInatTaxa(q) {
   }
   const counts = searchInatTaxa._counts;
 
+  // Dedicated scan for an exact name match (a genus/subgenus typed in full),
+  // so it's offered even when many binomials outrank it and the loop below caps out.
+  let exact = null;
+  for (let ti = 0; ti < inatTaxa.length; ti++) {
+    const t = inatTaxa[ti];
+    if (t[1].toLowerCase() === ql || (t[3] || '').toLowerCase() === ql) {
+      exact = { _type: 'inat-taxon', taxonId: t[0], taxonName: t[1], genus: t[2], commonName: t[3], count: counts.get(ti) || 0 };
+      break;
+    }
+  }
+
   const seen = new Set();
   const top = [], rest = [];
 
   for (let ti = 0; ti < inatTaxa.length; ti++) {
     const [taxonId, taxonName, genus, commonName] = inatTaxa[ti];
     if (seen.has(taxonName)) continue;
-    if (!isSpeciesRankName(taxonName)) continue;   // don't suggest genus/subgenus as a species
+    // Genus/subgenus/section taxa ARE searchable (their climate pages are useful);
+    // they're only excluded from the species climate-match (see matchSpeciesToLocation).
     const sciL  = taxonName.toLowerCase();
     const comL  = (commonName || '').toLowerCase();
     const matchSci = sciL.includes(ql);
@@ -5999,7 +6023,10 @@ function searchInatTaxa(q) {
     if (top.length + rest.length >= 12) break;
   }
 
-  return [...top, ...rest].slice(0, 7);
+  let out = [...top, ...rest].slice(0, 7);
+  // Guarantee the exact-name match (genus/subgenus) appears, at the front.
+  if (exact && !out.some(e => e.taxonName === exact.taxonName)) out = [exact, ...out].slice(0, 7);
+  return out;
 }
 
 // ════════════════════════════════════════════════════════════
@@ -7985,12 +8012,9 @@ function renderInatSpeciesList(leaves) {
     counts[name] = (counts[name] || 0) + 1;
     if (genusByName[name] === undefined) genusByName[name] = lf.properties.genus || '';
   }
-  // Only list true species (binomial+); genus/subgenus-level sightings stay on
-  // the map but aren't shown here as a "species" row. Total sightings count below
-  // is independent and still reflects everything at the cluster.
-  const sorted = Object.entries(counts)
-    .filter(([name]) => isSpeciesRankName(name))
-    .sort((a, b) => b[1] - a[1]);
+  // Genus/subgenus-level sightings are shown here as normal observation rows
+  // (they're real sightings); only the species climate-match page excludes them.
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
 
   const coord = inatNav.clusterLatlng
     ? `${Math.abs(inatNav.clusterLatlng.lat).toFixed(2)}°${inatNav.clusterLatlng.lat>=0?'N':'S'}, ${Math.abs(inatNav.clusterLatlng.lng).toFixed(2)}°${inatNav.clusterLatlng.lng>=0?'E':'W'}`
