@@ -1221,7 +1221,9 @@ html, body {
      last item clears the iPhone Chrome bottom bar. */
   #panel-scroll {
     max-height: none;
-    padding-bottom: max(28px, calc(env(safe-area-inset-bottom) + 16px));
+    /* Clear both the browser's bottom chrome (--app-vv-bottom) and the home
+       indicator, so the last item is always scrollable into view. */
+    padding-bottom: calc(var(--app-vv-bottom, 0px) + max(28px, env(safe-area-inset-bottom) + 16px));
     -webkit-overflow-scrolling: touch;
   }
 
@@ -1234,7 +1236,9 @@ html, body {
   #panel-restore-tab {
     top: auto; right: auto;
     left: 50%;
-    bottom: calc(env(safe-area-inset-bottom) + 12px);
+    /* Lift above the browser's bottom chrome (--app-vv-bottom, measured live)
+       plus the home-indicator safe area, so the tab is always reachable. */
+    bottom: calc(var(--app-vv-bottom, 0px) + max(12px, env(safe-area-inset-bottom)));
     transform: translateX(-50%);
     writing-mode: horizontal-tb;
     flex-direction: row;
@@ -7129,6 +7133,52 @@ async function openObsById(obsId) {
 }
 
 // ═══════════════════════════════════════════════════════════
+//  VIEWPORT METRICS (handles any screen / browser-chrome size)
+// ═══════════════════════════════════════════════════════════
+
+// CSS units like 100vh and env(safe-area-inset-bottom) are unreliable on mobile
+// browsers whose toolbars overlay the page: 100vh is the *large* viewport (bars
+// retracted) and safe-area insets only cover the home indicator, NOT a dynamic
+// URL/nav bar. So a bottom-anchored element (e.g. the minimized-panel restore
+// tab) can sit behind the browser's bottom bar and be unreachable.
+//
+// The visualViewport API reports the *actually visible* region on every device
+// and chrome state. We turn that into two CSS custom properties used for layout:
+//   --app-vh        : the visible viewport height (px)
+//   --app-vv-bottom : px of the app shell hidden behind bottom browser chrome
+// Measuring the app shell's real pixel height (its box is the 100vh containing
+// block for our absolutely-positioned UI) avoids the vh-vs-layout-viewport
+// ambiguity entirely, so the math is correct whether the top bar, bottom bar,
+// both, or neither are showing.
+let _vvRaf = 0;
+function syncViewportMetrics() {
+  _vvRaf = 0;
+  const app = document.getElementById('bmg-map-app');
+  if (!app) return;
+  const vv     = window.visualViewport;
+  const appH   = app.getBoundingClientRect().height;          // the 100vh box, in px
+  const visH   = vv ? vv.height    : appH;                    // visible region height
+  const offTop = vv ? vv.offsetTop : 0;                       // visual-vp offset within layout vp
+  const bottomInset = Math.max(0, Math.round(appH - visH - offTop));
+  const s = document.documentElement.style;
+  s.setProperty('--app-vh', Math.round(visH) + 'px');
+  s.setProperty('--app-vv-bottom', bottomInset + 'px');
+}
+function scheduleViewportSync() {
+  if (_vvRaf) return;
+  _vvRaf = requestAnimationFrame(syncViewportMetrics);
+}
+function initViewportMetrics() {
+  syncViewportMetrics();
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', scheduleViewportSync);
+    window.visualViewport.addEventListener('scroll', scheduleViewportSync);
+  }
+  window.addEventListener('resize', scheduleViewportSync);
+  window.addEventListener('orientationchange', () => setTimeout(syncViewportMetrics, 250));
+}
+
+// ═══════════════════════════════════════════════════════════
 //  MOBILE SWIPE TO DISMISS
 // ═══════════════════════════════════════════════════════════
 
@@ -7254,6 +7304,7 @@ async function init() {
   setProgress(10);
   initMap();
   buildMapControls();
+  initViewportMetrics();
   initMobileSwipe();
   initMobileControlsToggle();
   initGalleryLightbox();
