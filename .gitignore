@@ -3,6 +3,12 @@ scripts/node_modules/
 .DS_Store
 Thumbs.db
 
+# Local editor / dev-server config
+.claude/
+
+# Pipeline run logs (transient — written next to the data during a fetch)
+inat/*.log
+
 # Exclude all koppen GeoTIFFs except the 0.1-degree file used by the map
 koppen_geiger_tif/**
 !koppen_geiger_tif/
