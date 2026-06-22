@@ -958,6 +958,8 @@ html, body {
 .cmp-sub-row .match-score { font-size: 11px; min-width: 24px; }
 .cmp-sub-note { font-size: 10.5px; color: var(--text-muted); flex: 1; min-width: 0; }
 .cmp-chart-legend { font-size: 10px; color: var(--text-muted); margin: 2px 0 4px; display: flex; gap: 14px; }
+.cmp-shift-note { font-size: 10.5px; line-height: 1.5; color: var(--text-muted); margin: 6px 0 2px; padding: 7px 9px; background: rgba(255,200,50,0.06); border: 1px solid rgba(255,200,50,0.22); border-radius: 6px; }
+.cmp-shift-note b { color: var(--text-primary); font-weight: 600; }
 .cmp-leg-band::before { content: '▬'; color: rgba(255,255,255,0.25); margin-right: 4px; }
 .cmp-leg-you::before  { content: '▬'; color: rgba(255,255,255,0.9); margin-right: 4px; }
 .match-card-common {
@@ -5211,6 +5213,64 @@ function monthlyAlignFit(userNormals, mon, tol = 8) {
   return Math.max(0, 1 - (sum / n) / tol);
 }
 
+// Linear-interpolate 12 monthly values (placed at month midpoints) to 52 weekly
+// values, cyclically. Lets us test fine-grained seasonal phase shifts even though
+// the source data is monthly. Nulls fall back to whichever neighbour is present.
+function monthlyToWeekly(m12) {
+  if (!m12 || m12.length !== 12) return null;
+  const wk = new Array(52);
+  for (let w = 0; w < 52; w++) {
+    const monthPos = (w / 52) * 12 - 0.5;     // continuous month index at week w (midpoint-aligned)
+    let m0 = Math.floor(monthPos);
+    const frac = monthPos - m0;
+    m0 = ((m0 % 12) + 12) % 12;
+    const m1 = (m0 + 1) % 12;
+    const a = m12[m0], b = m12[m1];
+    wk[w] = (a == null && b == null) ? null : a == null ? b : b == null ? a : a + (b - a) * frac;
+  }
+  return wk;
+}
+
+// Find the cyclic weekly shift that best aligns a species' weekly hi/lo temperature
+// curves to the user's. Plants respond to the *sequence* of warm/cool, not the
+// calendar month, so the best-fit shift estimates how well the location's seasonal
+// pattern could support the species if its growth cycle were phase-shifted (e.g.
+// the +6-month hemisphere flip emerges naturally). Returns fits in 0..1.
+//   calendarFit = alignment with no extra shift (same-calendar / hemisphere-aware)
+//   bestFit     = alignment at the optimal shift
+//   shiftWeeks  = that optimal shift (0..51)
+function bestSeasonalShift(userNormals, mon, tol = 8) {
+  if (!mon?.tempMax || !mon?.tempMin || !userNormals?.tempMax || !userNormals?.tempMin) return null;
+  const uHi = monthlyToWeekly(userNormals.tempMax);
+  const uLo = monthlyToWeekly(userNormals.tempMin);
+  const sHi = monthlyToWeekly(mon.tempMax.map(x => (x ? x[1] : null)));   // species median
+  const sLo = monthlyToWeekly(mon.tempMin.map(x => (x ? x[1] : null)));
+  if (!uHi || !uLo || !sHi || !sLo) return null;
+  const devAt = s => {
+    let sum = 0, n = 0;
+    for (let w = 0; w < 52; w++) {
+      const i = (w + s) % 52;
+      if (uHi[w] != null && sHi[i] != null) { sum += Math.abs(uHi[w] - sHi[i]); n++; }
+      if (uLo[w] != null && sLo[i] != null) { sum += Math.abs(uLo[w] - sLo[i]); n++; }
+    }
+    return n ? sum / n : null;
+  };
+  const fit = d => (d == null ? null : Math.max(0, 1 - d / tol));
+  const calDev = devAt(0);
+  let bestS = 0, bestDev = calDev;
+  for (let s = 1; s < 52; s++) {
+    const d = devAt(s);
+    if (d != null && (bestDev == null || d < bestDev)) { bestDev = d; bestS = s; }
+  }
+  // Only treat it as a real shift if it meaningfully improves alignment (>=0.5°C
+  // avg) — avoids reporting trivial 1-week jitter for same-calendar species.
+  const improved = calDev != null && bestDev != null && (calDev - bestDev) >= 0.5;
+  if (!improved) { bestS = 0; bestDev = calDev; }
+  // Report the minimal signed magnitude (−26..+26) so we never say "+51 weeks".
+  const signedWeeks = bestS > 26 ? bestS - 52 : bestS;
+  return { shiftWeeks: signedWeeks, calendarFit: fit(calDev), bestFit: fit(bestDev) };
+}
+
 // Annual mean of a 12×[p25,p50,p75] monthly field → [p25,p50,p75] band.
 function annualBandFromMonthly(monthlyField) {
   if (!monthlyField) return null;
@@ -5280,7 +5340,11 @@ function matchSpeciesToLocation(userNormals, userKoppen, userLat = 0) {
     const sub = {};
     sub.low     = bandFit(userColdMonth, stats.tempMin && [stats.tempMin.p25, stats.tempMin.p50, stats.tempMin.p75], 10);
     sub.high    = bandFit(userHotMonth,  stats.tempMax && [stats.tempMax.p25, stats.tempMax.p50, stats.tempMax.p75], 10);
-    sub.monthly = monthlyAlignFit(userNormals, mon, 8);
+    // Monthly alignment: best-fit over all 52 weekly seasonal shifts (the score the
+    // plant could experience if its cycle were phase-shifted). The unshifted
+    // "calendar" fit and the optimal shift are kept for the compare view.
+    const seas  = bestSeasonalShift(userNormals, mon, 8);
+    sub.monthly = seas ? seas.bestFit : monthlyAlignFit(userNormals, mon, 8);
     sub.sun     = (userDliAvg != null && mon?.dli) ? bandFit(userDliAvg, annualBandFromMonthly(mon.dli), 12) : null;
     sub.rh      = bandFit(userRH, stats.rhMean && [stats.rhMean.p25, stats.rhMean.p50, stats.rhMean.p75], 20);
     sub.precip  = (userPrecAn != null && stats.precip)
@@ -5311,6 +5375,8 @@ function matchSpeciesToLocation(userNormals, userKoppen, userLat = 0) {
       coldTier,
       heatTier,
       sub,
+      monthlyCal: seas ? seas.calendarFit : sub.monthly,   // unshifted alignment
+      shiftWeeks: seas ? seas.shiftWeeks : 0,               // optimal seasonal shift
       userColdExt, userHotExt, spColdLimit, spHotLimit,
     });
   }
@@ -5433,6 +5499,13 @@ function renderSpeciesComparePanel(state, m, matches) {
   const mon = speciesMonthlyForUser(s, state.lat);
   const n   = state.normals;
 
+  // Best-fit seasonal shift (signed weeks → months). shiftMoSigned is for display;
+  // shiftMo (0..11) is the cyclic rotation applied to the monthly chart.
+  const shiftWk = m.shiftWeeks || 0;
+  const shiftMoSigned = Math.round(shiftWk * 12 / 52);
+  const shiftMo = ((shiftMoSigned % 12) + 12) % 12;
+  const shiftLbl = `${shiftWk > 0 ? '+' : ''}${shiftWk} wk (~${shiftMoSigned > 0 ? '+' : ''}${shiftMoSigned} mo)`;
+
   // Sub-score → 0–100 + colour
   const pct = v => v == null ? null : Math.round(v * 100);
   const subRow = (label, key, note) => {
@@ -5459,15 +5532,25 @@ function renderSpeciesComparePanel(state, m, matches) {
     <div class="cmp-sub-list">
       ${subRow('Low temperature',   'low',     'coldest month vs native')}
       ${subRow('High temperature',  'high',    'hottest month vs native')}
-      ${subRow('Monthly alignment', 'monthly', 'seasonal curve match')}
+      ${(() => {
+        const best = pct(m.sub.monthly), cal = pct(m.monthlyCal);
+        const chip = best == null
+          ? `<span class="match-score" style="color:var(--text-muted);border-color:var(--border);background:transparent">—</span>`
+          : matchScoreChipHtml(best);
+        const note = shiftWk === 0
+          ? 'seasonal curve match (no shift needed)'
+          : `best fit at ${shiftLbl} · calendar ${cal == null ? '—' : cal}`;
+        return `<div class="cmp-sub-row"><span>Monthly alignment</span>${chip}<span class="cmp-sub-note">${note}</span></div>`;
+      })()}
       ${subRow('Sunlight (DLI)',    'sun',     m.sub.sun == null ? 'awaiting data refresh' : 'light levels vs native')}
       ${subRow('Humidity',          'rh',      'RH vs native range')}
       ${subRow('Rainfall',          'precip',  'annual precip vs native')}
     </div>
 
-    <div class="section-label" style="margin-top:14px">Temperature — your location vs native range</div>
+    <div class="section-label" style="margin-top:14px">Temperature — your location vs native range${shiftWk ? ' (season-shifted)' : ''}</div>
     <div class="cmp-chart-legend"><span class="cmp-leg-band">native range</span> <span class="cmp-leg-you">your location</span></div>
     <div class="chart-wrap"><canvas id="cmp-temp-chart"></canvas></div>
+    ${shiftWk ? `<div class="cmp-shift-note">↻ Native temperature curve shifted <b>${shiftLbl}</b> to best-align the seasonal pattern with your location. Alignment improves from ${pct(m.monthlyCal) == null ? '—' : pct(m.monthlyCal)} to ${pct(m.sub.monthly)} this way. ⚠ This shifts <i>temperature</i> only — day length / photoperiod at your latitude still follows the real calendar, so the Sunlight match is not shifted and light timing may not line up with the shifted seasons.</div>` : ''}
 
     ${(n.dli && mon?.dli) ? `
       <div class="section-label" style="margin-top:14px">Sunlight (DLI)</div>
@@ -5491,6 +5574,11 @@ function renderSpeciesComparePanel(state, m, matches) {
   const labels = MONTHS;
   const bandOf  = (mf, idx) => (mf || []).map(v => v ? v[idx] : null);   // [p25,p50,p75] → one series
   const medOf   = mf => bandOf(mf, 1);
+  // Rotate a native monthly series by the best-fit shift so it overlays on the
+  // user's calendar at the best-aligned phase. Only the NATIVE temperature curves
+  // are shifted (the user's curve and the light/precip/RH panels stay on the real
+  // calendar — see the photoperiod caveat note).
+  const rot = arr => (shiftMo ? arr.map((_, i) => arr[(i + shiftMo) % 12]) : arr);
 
   // Temperature: species hi/lo band (p25–p75) + median lines, user hi/lo lines.
   // Data is stored in °C; convert to the active unit so the chart tracks the
@@ -5500,10 +5588,10 @@ function renderSpeciesComparePanel(state, m, matches) {
   matchCompareCharts.push(buildCompareChart('cmp-temp-chart', {
     labels,
     datasets: [
-      cmpBand(cvArr(bandOf(mon.tempMax, 2)), cvArr(bandOf(mon.tempMax, 0)), 'rgba(255,140,60,0.12)'),
-      cmpBand(cvArr(bandOf(mon.tempMin, 2)), cvArr(bandOf(mon.tempMin, 0)), 'rgba(100,180,255,0.12)'),
-      cmpLine('Native high', cvArr(medOf(mon.tempMax)), 'rgba(255,140,60,0.55)', true),
-      cmpLine('Native low',  cvArr(medOf(mon.tempMin)), 'rgba(100,180,255,0.55)', true),
+      cmpBand(cvArr(rot(bandOf(mon.tempMax, 2))), cvArr(rot(bandOf(mon.tempMax, 0))), 'rgba(255,140,60,0.12)'),
+      cmpBand(cvArr(rot(bandOf(mon.tempMin, 2))), cvArr(rot(bandOf(mon.tempMin, 0))), 'rgba(100,180,255,0.12)'),
+      cmpLine('Native high', cvArr(rot(medOf(mon.tempMax))), 'rgba(255,140,60,0.55)', true),
+      cmpLine('Native low',  cvArr(rot(medOf(mon.tempMin))), 'rgba(100,180,255,0.55)', true),
       cmpLine('Your high',   cvArr(n.tempMax), 'rgba(255,140,60,1)', false),
       cmpLine('Your low',    cvArr(n.tempMin), 'rgba(100,180,255,1)', false),
     ],
