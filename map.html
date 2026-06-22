@@ -5223,6 +5223,15 @@ function annualBandFromMonthly(monthlyField) {
   return [0, 1, 2].map(i => cnt[i] ? acc[i] / cnt[i] : null);
 }
 
+// A real species (or finer: subspecies/variety/hybrid) name is binomial — it has
+// a space. Genus / subgenus / section identifications are a single word; iNat
+// returns those when an observation isn't pinned to a species. We don't present
+// them as "species" in search, climate-match, or the cluster species list (their
+// observations still appear on the map under their genus).
+function isSpeciesRankName(name) {
+  return !!name && name.trim().includes(' ');
+}
+
 function matchSpeciesToLocation(userNormals, userKoppen, userLat = 0) {
   if (!inatSpeciesData) return [];
   const uTmaxHi = (userNormals.tempMaxHi || []).filter(v => v != null);
@@ -5249,6 +5258,7 @@ function matchSpeciesToLocation(userNormals, userKoppen, userLat = 0) {
   for (const [taxonIdStr, species] of Object.entries(inatSpeciesData)) {
     const stats = species.stats;
     if (!stats) continue;
+    if (!isSpeciesRankName(species.scientific_name)) continue;  // skip genus/subgenus pages
     // Prefer the v4 extreme-based limits; fall back to legacy percentiles.
     const spColdLimit = stats.coldLimit != null ? stats.coldLimit : stats.tempMin?.p10;
     const spHotLimit  = stats.hotLimit  != null ? stats.hotLimit  : stats.tempMax?.p90;
@@ -5977,6 +5987,7 @@ function searchInatTaxa(q) {
   for (let ti = 0; ti < inatTaxa.length; ti++) {
     const [taxonId, taxonName, genus, commonName] = inatTaxa[ti];
     if (seen.has(taxonName)) continue;
+    if (!isSpeciesRankName(taxonName)) continue;   // don't suggest genus/subgenus as a species
     const sciL  = taxonName.toLowerCase();
     const comL  = (commonName || '').toLowerCase();
     const matchSci = sciL.includes(ql);
@@ -7974,7 +7985,12 @@ function renderInatSpeciesList(leaves) {
     counts[name] = (counts[name] || 0) + 1;
     if (genusByName[name] === undefined) genusByName[name] = lf.properties.genus || '';
   }
-  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  // Only list true species (binomial+); genus/subgenus-level sightings stay on
+  // the map but aren't shown here as a "species" row. Total sightings count below
+  // is independent and still reflects everything at the cluster.
+  const sorted = Object.entries(counts)
+    .filter(([name]) => isSpeciesRankName(name))
+    .sort((a, b) => b[1] - a[1]);
 
   const coord = inatNav.clusterLatlng
     ? `${Math.abs(inatNav.clusterLatlng.lat).toFixed(2)}°${inatNav.clusterLatlng.lat>=0?'N':'S'}, ${Math.abs(inatNav.clusterLatlng.lng).toFixed(2)}°${inatNav.clusterLatlng.lng>=0?'E':'W'}`
