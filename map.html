@@ -981,7 +981,11 @@ html, body {
 .cmp-weights-note { margin: 14px 0 4px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 10.5px; line-height: 1.5; color: var(--text-muted); }
 .home-chip { display: none; align-items: center; gap: 5px; margin-top: 6px; max-width: 100%; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px; padding: 5px 12px; font-size: 12px; color: var(--text-primary); cursor: pointer; }
 .home-chip:hover { border-color: var(--accent); color: var(--accent); }
-.home-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.home-chip span:not(.btn-icon) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-icon { display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px; flex-shrink: 0; }
+.btn-icon svg { width: 100%; height: 100%; }
+.sp-photo-placeholder svg { width: 34px; height: 34px; color: var(--text-muted); opacity: 0.55; }
+.inat-obs-thumb-placeholder svg { width: 22px; height: 22px; color: var(--text-muted); opacity: 0.55; }
 .loc-set-home { display: inline-flex; align-items: center; gap: 5px; margin: 8px 0 4px; background: transparent; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 12px; color: var(--text-muted); cursor: pointer; }
 .loc-set-home:hover { border-color: var(--accent); color: var(--accent); }
 .loc-set-home.is-home { border-color: var(--accent); color: var(--accent); cursor: default; }
@@ -2568,7 +2572,7 @@ body.bmg-onboarding #search-container { z-index: 9100; }
         <input id="search-input" type="text" placeholder="Search species, location, or region…" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="none">
         <button id="search-clear" title="Clear search">×</button>
       </div>
-      <button id="home-chip" class="home-chip" title="Open your saved home location's climate">🏠 <span id="home-chip-name"></span></button>
+      <button id="home-chip" class="home-chip" title="Open your saved home location's climate"><span class="btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span><span id="home-chip-name"></span></button>
       <div id="search-suggestions"></div>
     </div>
 
@@ -5645,7 +5649,7 @@ function renderSpeciesComparePanel(state, m, matches) {
   document.getElementById('panel-content').innerHTML = `
     ${navBackBtnHtml()}
     <div class="sp-header">
-      ${photo ? `<img class="sp-photo" src="${esc(photo)}" loading="lazy" onerror="this.style.display='none'">` : '<div class="sp-photo-placeholder">🌿</div>'}
+      ${photo ? `<img class="sp-photo" src="${esc(photo)}" loading="lazy" onerror="this.style.display='none'">` : `<div class="sp-photo-placeholder">${BMG_ICONS.leaf}</div>`}
       <div class="sp-header-text">
         <div class="sp-scientific-name">${esc(s.scientific_name)}</div>
         ${s.common_name ? `<div class="sp-common-name">${esc(s.common_name)}</div>` : ''}
@@ -5777,9 +5781,9 @@ function openRateLocationModal(entry) {
   body.innerHTML = `
     <h2 class="bmg-modal-title">Will <i>${esc(entry.scientific_name)}</i> grow where you are?</h2>
     <p class="bmg-modal-text">Compare your local <b>outdoor</b> climate to this species' native range. (Greenhouse/terrarium conditions will differ.)</p>
-    ${(() => { const h = getHomeLocation(); return h ? `<button class="find-species-btn" id="rate-home" style="width:100%;justify-content:center;margin-bottom:8px"><span class="find-species-icon">🏠</span> Rate at my home (${esc(h.name)})</button>` : ''; })()}
+    ${(() => { const h = getHomeLocation(); return h ? `<button class="find-species-btn" id="rate-home" style="width:100%;justify-content:center;margin-bottom:8px"><span class="find-species-icon">${BMG_ICONS.pin}</span> Rate at my home (${esc(h.name)})</button>` : ''; })()}
     <button class="find-species-btn" id="rate-geolocate" style="width:100%;justify-content:center">
-      <span class="find-species-icon">📍</span> Use my location
+      <span class="find-species-icon">${BMG_ICONS.pin}</span> Use my location
     </button>
     <div class="rate-or">— or search a place —</div>
     <div class="rate-search-row">
@@ -6031,7 +6035,7 @@ function buildLocationPanel(state) {
     ${subLabel ? `<div class="p-common-name">${esc(subLabel)}</div>` : ''}
     <div class="p-location">${lat.toFixed(4)}, ${lng.toFixed(4)}</div>
     ${copyLinkBtnHtml('at', `${lat.toFixed(4)},${lng.toFixed(4)},${Math.round(map.getZoom())}`, 'loc-copy-link')}
-    <button class="loc-set-home" id="loc-set-home" title="Save this place to reuse for climate comparisons">🏠 Set as home</button>
+    <button class="loc-set-home" id="loc-set-home" title="Save this place to reuse for climate comparisons"><span class="btn-icon">${BMG_ICONS.pin}</span> Set as home</button>
     ${koppenBadgeHtml}
     <div class="section-divider"></div>
     <div class="section-label">Climate (2014–2023 avg)</div>
@@ -6052,10 +6056,10 @@ function buildLocationPanel(state) {
   if (setHomeBtn) {
     const home = getHomeLocation();
     const isHome = home && Math.abs(home.lat - lat) < 0.01 && Math.abs(home.lng - lng) < 0.01;
-    if (isHome) { setHomeBtn.textContent = '🏠 This is your home'; setHomeBtn.classList.add('is-home'); }
+    if (isHome) { setHomeBtn.innerHTML = `<span class="btn-icon">${BMG_ICONS.pin}</span> This is your home`; setHomeBtn.classList.add('is-home'); }
     setHomeBtn.addEventListener('click', () => {
       setHomeLocation({ lat, lng, name });
-      setHomeBtn.textContent = '✓ Saved as home';
+      setHomeBtn.innerHTML = `<span class="btn-icon">${BMG_ICONS.check}</span> Saved as home`;
       setHomeBtn.classList.add('is-home');
     });
   }
@@ -6466,7 +6470,7 @@ function buildSpeciesSidebarContent(entry) {
 
   const photoHtml = entry.photo_url
     ? `<img class="sp-photo" src="${esc(entry.photo_url)}" loading="lazy" onerror="this.style.display='none'">`
-    : `<div class="sp-photo-placeholder">🌿</div>`;
+    : `<div class="sp-photo-placeholder">${BMG_ICONS.leaf}</div>`;
 
   // Headline climate stats
   const s       = entry.stats || {};
@@ -6639,7 +6643,7 @@ function buildSpeciesSidebarContent(entry) {
     const truncated = wiki.length > preview.length + 10;
     wikiHtml = `
       <details class="inat-section">
-        <summary>📖 About this species</summary>
+        <summary><span class="bmg-section-icon">${BMG_ICONS.info}</span>About this species</summary>
         <div class="inat-section-body">
           <div class="sp-wiki-text" id="sp-wiki-text">${esc(preview)}${truncated ? '…' : ''}</div>
           ${truncated ? `<button class="sp-expand-btn" id="sp-wiki-expand" style="margin-top:8px">Read more ↓</button>` : ''}
@@ -6747,7 +6751,7 @@ function buildSpeciesSidebarContent(entry) {
       const hasPhoto = !!(o[OBS_FLAGS] & F_PHOTO);
       const photoEl  = hasPhoto && o[OBS_PHOTO]
         ? inatThumbImg(o[OBS_PHOTO], 'inat-obs-thumb')
-        : `<div class="inat-obs-thumb-placeholder">🌿</div>`;
+        : `<div class="inat-obs-thumb-placeholder">${BMG_ICONS.leaf}</div>`;
       const qBadge = (o[OBS_FLAGS] & F_NEEDSID)
         ? `<span class="inat-badge inat-badge-nid">Needs ID</span>`
         : `<span class="inat-badge inat-badge-rg">Research</span>`;
@@ -8705,7 +8709,7 @@ function obsCard(lf, idx = 0) {
   const hasPhoto = !!(p.flags & F_PHOTO);
   const photoEl  = hasPhoto && p.photo_id
     ? inatThumbImg(p.photo_id, 'inat-obs-thumb')
-    : `<div class="inat-obs-thumb-placeholder">🌿</div>`;
+    : `<div class="inat-obs-thumb-placeholder">${BMG_ICONS.leaf}</div>`;
   const qBadge   = (p.flags & F_NEEDSID)
     ? `<span class="inat-badge inat-badge-nid">Needs ID</span>`
     : `<span class="inat-badge inat-badge-rg">Research</span>`;
