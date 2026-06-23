@@ -966,6 +966,16 @@ html, body {
 .match-filter-row label { flex-shrink: 0; }
 .match-genus-filter { flex: 1; min-width: 0; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: inherit; cursor: pointer; }
 .match-genus-filter:focus { outline: none; border-color: var(--accent); }
+.match-temp-toggle { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12px; color: var(--text-muted); cursor: pointer; user-select: none; white-space: nowrap; }
+.match-temp-toggle input { accent-color: var(--accent); cursor: pointer; }
+.cmp-sub-row.cmp-sub-muted { opacity: 0.4; }
+.rate-or { text-align: center; font-size: 11px; color: var(--text-muted); margin: 14px 0 10px; }
+.rate-search-row { display: flex; gap: 8px; }
+.rate-search-input { flex: 1; min-width: 0; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 14px; font-family: inherit; }
+.rate-search-input:focus { outline: none; border-color: var(--accent); }
+.rate-search-go { flex-shrink: 0; background: var(--accent-dim, rgba(63,185,80,0.15)); color: var(--accent); border: 1px solid var(--accent); border-radius: 8px; padding: 0 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
+.rate-search-go:hover { background: var(--accent); color: #0d1117; }
+.rate-status { font-size: 12px; color: var(--text-muted); margin-top: 10px; min-height: 16px; }
 .cmp-leg-band::before { content: '▬'; color: rgba(255,255,255,0.25); margin-right: 4px; }
 .cmp-leg-you::before  { content: '▬'; color: rgba(255,255,255,0.9); margin-right: 4px; }
 .match-card-common {
@@ -5307,93 +5317,107 @@ function isSpeciesRankName(name) {
   return !!name && name.trim().includes(' ');
 }
 
-function matchSpeciesToLocation(userNormals, userKoppen, userLat = 0) {
-  if (!inatSpeciesData) return [];
+// Temperature-only score uses just these three sub-scores; the rest (sun/rh/precip)
+// are dropped when the "Temperatures only" toggle is on.
+const MATCH_TEMP_KEYS = ['low', 'high', 'monthly'];
+
+// Blend the sub-scores into a 0–100 number. Missing factors are dropped and the
+// weights renormalised. When tempOnly, only the temperature factors count.
+function blendMatchScore(sub, tempOnly = false) {
+  let wSum = 0, sSum = 0;
+  for (const k of Object.keys(MATCH_WEIGHTS)) {
+    if (tempOnly && !MATCH_TEMP_KEYS.includes(k)) continue;
+    if (sub[k] == null) continue;
+    wSum += MATCH_WEIGHTS[k];
+    sSum += MATCH_WEIGHTS[k] * sub[k];
+  }
+  return wSum ? Math.round((sSum / wSum) * 100) : 0;
+}
+
+// Precompute the user-location aggregates the scorer needs (extremes for the
+// survival gates + typical values for the sub-scores). Returns null if the
+// location lacks usable monthly temperatures.
+function buildUserMatchCtx(userNormals) {
   const uTmaxHi = (userNormals.tempMaxHi || []).filter(v => v != null);
   const uTminLo = (userNormals.tempMinLo || []).filter(v => v != null);
   const uTmin   = (userNormals.tempMin   || []).filter(v => v != null);
   const uTmax   = (userNormals.tempMax   || []).filter(v => v != null);
-  if (!uTmin.length || !uTmax.length) return [];
-
-  // User extremes for the survival gates (fall back to monthly avg if the
-  // extreme arrays are absent for some reason).
-  const userColdExt = uTminLo.length ? Math.min(...uTminLo) : Math.min(...uTmin);
-  const userHotExt  = uTmaxHi.length ? Math.max(...uTmaxHi) : Math.max(...uTmax);
-  // User typical values for the scoring sub-scores.
-  const userColdMonth = Math.min(...uTmin);
-  const userHotMonth  = Math.max(...uTmax);
+  if (!uTmin.length || !uTmax.length) return null;
   const uRH   = (userNormals.rhMean   || []).filter(v => v != null);
   const uPrec = (userNormals.precipMm || []).filter(v => v != null);
   const uDli  = (userNormals.dli      || []).filter(v => v != null);
-  const userRH     = uRH.length   ? uRH.reduce((a, b) => a + b, 0) / uRH.length : null;
-  const userPrecAn = uPrec.length ? uPrec.reduce((a, b) => a + b, 0) : null;        // annual mm
-  const userDliAvg = uDli.length  ? uDli.reduce((a, b) => a + b, 0) / uDli.length : null;
+  return {
+    userNormals,
+    userColdExt:   uTminLo.length ? Math.min(...uTminLo) : Math.min(...uTmin),  // gate extremes
+    userHotExt:    uTmaxHi.length ? Math.max(...uTmaxHi) : Math.max(...uTmax),
+    userColdMonth: Math.min(...uTmin),
+    userHotMonth:  Math.max(...uTmax),
+    userRH:     uRH.length   ? uRH.reduce((a, b) => a + b, 0) / uRH.length : null,
+    userPrecAn: uPrec.length ? uPrec.reduce((a, b) => a + b, 0) : null,        // annual mm
+    userDliAvg: uDli.length  ? uDli.reduce((a, b) => a + b, 0) / uDli.length : null,
+  };
+}
+
+// Score ONE species against a user location (ctx from buildUserMatchCtx). Returns
+// the match result object, or null if the species lacks usable limits. Used by the
+// bulk match and the single-species "rate my location" (reverse) flow.
+function scoreSpeciesAtLocation(species, u, userLat = 0) {
+  const stats = species.stats;
+  if (!stats) return null;
+  if (!isSpeciesRankName(species.scientific_name)) return null;  // skip genus/subgenus pages
+  const spColdLimit = stats.coldLimit != null ? stats.coldLimit : stats.tempMin?.p10;
+  const spHotLimit  = stats.hotLimit  != null ? stats.hotLimit  : stats.tempMax?.p90;
+  if (spColdLimit == null || spHotLimit == null) return null;
+
+  // ── Survival gates (extreme vs limit) ──
+  let coldTier;
+  if      (u.userColdExt >= spColdLimit)      coldTier = 'pass';
+  else if (u.userColdExt >= spColdLimit - 2)  coldTier = 'marginal';
+  else                                         coldTier = 'fail';
+  let heatTier;
+  if      (u.userHotExt <= spHotLimit)        heatTier = 'pass';
+  else if (u.userHotExt <= spHotLimit + 3)    heatTier = 'marginal';
+  else                                         heatTier = 'fail';
+
+  // ── Per-attribute sub-scores (0–1) ──
+  const mon = speciesMonthlyRaw(species, userLat);
+  const sub = {};
+  sub.low     = bandFit(u.userColdMonth, stats.tempMin && [stats.tempMin.p25, stats.tempMin.p50, stats.tempMin.p75], 10);
+  sub.high    = bandFit(u.userHotMonth,  stats.tempMax && [stats.tempMax.p25, stats.tempMax.p50, stats.tempMax.p75], 10);
+  const seas  = bestSeasonalShift(u.userNormals, mon, 8);   // best-fit over 52 weekly shifts
+  sub.monthly = seas ? seas.bestFit : monthlyAlignFit(u.userNormals, mon, 8);
+  sub.sun     = (u.userDliAvg != null && mon?.dli) ? bandFit(u.userDliAvg, annualBandFromMonthly(mon.dli), 12) : null;
+  sub.rh      = bandFit(u.userRH, stats.rhMean && [stats.rhMean.p25, stats.rhMean.p50, stats.rhMean.p75], 20);
+  sub.precip  = (u.userPrecAn != null && stats.precip)
+    ? bandFit(u.userPrecAn, [stats.precip.p25, stats.precip.p50, stats.precip.p75], 700) : null;
+
+  const score = blendMatchScore(sub, false);
+
+  let tier;
+  if      (coldTier === 'fail')                                tier = 'unsuitable';
+  else if (heatTier === 'fail')                                tier = 'too-hot';
+  else if (coldTier === 'marginal' || heatTier === 'marginal') tier = 'marginal';
+  else if (score >= 70)                                        tier = 'excellent';
+  else                                                          tier = 'possible';
+
+  return {
+    taxonId: +species.taxon_id || +species.taxonId || 0,
+    species, tier, score, coldTier, heatTier, sub,
+    monthlyCal: seas ? seas.calendarFit : sub.monthly,
+    shiftWeeks: seas ? seas.shiftWeeks : 0,
+    userColdExt: u.userColdExt, userHotExt: u.userHotExt, spColdLimit, spHotLimit,
+  };
+}
+
+function matchSpeciesToLocation(userNormals, userKoppen, userLat = 0) {
+  if (!inatSpeciesData) return [];
+  const u = buildUserMatchCtx(userNormals);
+  if (!u) return [];
 
   const results = [];
   for (const [taxonIdStr, species] of Object.entries(inatSpeciesData)) {
-    const stats = species.stats;
-    if (!stats) continue;
-    if (!isSpeciesRankName(species.scientific_name)) continue;  // skip genus/subgenus pages
-    // Prefer the v4 extreme-based limits; fall back to legacy percentiles.
-    const spColdLimit = stats.coldLimit != null ? stats.coldLimit : stats.tempMin?.p10;
-    const spHotLimit  = stats.hotLimit  != null ? stats.hotLimit  : stats.tempMax?.p90;
-    if (spColdLimit == null || spHotLimit == null) continue;
-
-    // ── Survival gates (extreme vs limit) ──
-    let coldTier;
-    if      (userColdExt >= spColdLimit)      coldTier = 'pass';
-    else if (userColdExt >= spColdLimit - 2)  coldTier = 'marginal';
-    else                                       coldTier = 'fail';
-
-    let heatTier;
-    if      (userHotExt <= spHotLimit)        heatTier = 'pass';
-    else if (userHotExt <= spHotLimit + 3)    heatTier = 'marginal';
-    else                                       heatTier = 'fail';
-
-    // ── Per-attribute sub-scores (0–1) for ranking survivors ──
-    const mon = speciesMonthlyRaw(species, userLat);
-    const sub = {};
-    sub.low     = bandFit(userColdMonth, stats.tempMin && [stats.tempMin.p25, stats.tempMin.p50, stats.tempMin.p75], 10);
-    sub.high    = bandFit(userHotMonth,  stats.tempMax && [stats.tempMax.p25, stats.tempMax.p50, stats.tempMax.p75], 10);
-    // Monthly alignment: best-fit over all 52 weekly seasonal shifts (the score the
-    // plant could experience if its cycle were phase-shifted). The unshifted
-    // "calendar" fit and the optimal shift are kept for the compare view.
-    const seas  = bestSeasonalShift(userNormals, mon, 8);
-    sub.monthly = seas ? seas.bestFit : monthlyAlignFit(userNormals, mon, 8);
-    sub.sun     = (userDliAvg != null && mon?.dli) ? bandFit(userDliAvg, annualBandFromMonthly(mon.dli), 12) : null;
-    sub.rh      = bandFit(userRH, stats.rhMean && [stats.rhMean.p25, stats.rhMean.p50, stats.rhMean.p75], 20);
-    sub.precip  = (userPrecAn != null && stats.precip)
-      ? bandFit(userPrecAn, [stats.precip.p25, stats.precip.p50, stats.precip.p75], 700) : null;
-
-    // Weighted blend; weights of missing sub-scores are dropped (renormalised).
-    let wSum = 0, sSum = 0;
-    for (const k of Object.keys(MATCH_WEIGHTS)) {
-      if (sub[k] == null) continue;
-      wSum += MATCH_WEIGHTS[k];
-      sSum += MATCH_WEIGHTS[k] * sub[k];
-    }
-    const score = wSum ? Math.round((sSum / wSum) * 100) : 0;
-
-    // Tier (kept for grouping; driven by the gates).
-    let tier;
-    if      (coldTier === 'fail')                                tier = 'unsuitable';
-    else if (heatTier === 'fail')                                tier = 'too-hot';
-    else if (coldTier === 'marginal' || heatTier === 'marginal') tier = 'marginal';
-    else if (score >= 70)                                        tier = 'excellent';
-    else                                                          tier = 'possible';
-
-    results.push({
-      taxonId: +taxonIdStr,
-      species,
-      tier,
-      score,
-      coldTier,
-      heatTier,
-      sub,
-      monthlyCal: seas ? seas.calendarFit : sub.monthly,   // unshifted alignment
-      shiftWeeks: seas ? seas.shiftWeeks : 0,               // optimal seasonal shift
-      userColdExt, userHotExt, spColdLimit, spHotLimit,
-    });
+    const r = scoreSpeciesAtLocation(species, u, userLat);
+    if (r) { r.taxonId = +taxonIdStr; results.push(r); }   // key is the authoritative id
   }
 
   // Survivors ranked by score (best first); failures pushed to the end.
@@ -5444,7 +5468,10 @@ function renderSpeciesMatchPanel(state, matches) {
   for (const m of survivors) genusCounts[genusOf(m)] = (genusCounts[genusOf(m)] || 0) + 1;
   const genera = Object.entries(genusCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   const inGenus = m => !matchGenusFilter || genusOf(m) === matchGenusFilter;
-  const shownSurvivors = survivors.filter(inGenus);
+  // Effective score honours the "Temperatures only" toggle; re-rank survivors by it.
+  const effScore = m => blendMatchScore(m.sub, matchTempOnly);
+  let shownSurvivors = survivors.filter(inGenus);
+  if (matchTempOnly) shownSurvivors = [...shownSurvivors].sort((a, b) => effScore(b) - effScore(a));
   const shownFailures  = failures.filter(inGenus);
 
   const cardHtml = (m) => {
@@ -5457,7 +5484,7 @@ function renderSpeciesMatchPanel(state, matches) {
         <div class="match-card-body">
           <div class="match-card-toprow">
             <div class="match-card-name">${esc(s.scientific_name)}</div>
-            ${matchScoreChipHtml(m.score)}
+            ${matchScoreChipHtml(effScore(m))}
           </div>
           ${common ? `<div class="match-card-common">${common}</div>` : ''}
           <div class="match-card-badges">${matchTempBadgesHtml(m)}</div>
@@ -5475,14 +5502,15 @@ function renderSpeciesMatchPanel(state, matches) {
       <div class="match-card-list">${shownFailures.map(cardHtml).join('')}</div>
     </details>` : '';
 
-  const genusFilterHtml = genera.length > 1 ? `
+  const filterRowHtml = `
     <div class="match-filter-row">
-      <label for="match-genus-filter">Genus</label>
+      ${genera.length > 1 ? `<label for="match-genus-filter">Genus</label>
       <select id="match-genus-filter" class="match-genus-filter">
         <option value="">All genera (${survivors.length})</option>
         ${genera.map(([g, c]) => `<option value="${esc(g)}" ${matchGenusFilter === g ? 'selected' : ''}>${esc(g)} (${c})</option>`).join('')}
-      </select>
-    </div>` : '';
+      </select>` : '<span style="flex:1"></span>'}
+      <label class="match-temp-toggle" title="Score on temperature factors only — Low temp, High temp, Monthly alignment"><input type="checkbox" id="match-temp-only" ${matchTempOnly ? 'checked' : ''}> Temp only</label>
+    </div>`;
 
   document.getElementById('panel-content').innerHTML = `
     ${navBackBtnHtml()}
@@ -5500,7 +5528,7 @@ function renderSpeciesMatchPanel(state, matches) {
       species' winter dormancy can be provided artificially). Treat low scores as "needs more
       attention," not "impossible."
     </div>
-    ${genusFilterHtml}
+    ${filterRowHtml}
     <div class="match-card-list">${shownSurvivors.map(cardHtml).join('')}</div>
     ${failHtml}
   `;
@@ -5509,6 +5537,10 @@ function renderSpeciesMatchPanel(state, matches) {
   wireNavBackBtn();
   document.getElementById('match-genus-filter')?.addEventListener('change', e => {
     matchGenusFilter = e.target.value || null;
+    renderSpeciesMatchPanel(state, matches);
+  });
+  document.getElementById('match-temp-only')?.addEventListener('change', e => {
+    matchTempOnly = e.target.checked;
     renderSpeciesMatchPanel(state, matches);
   });
   document.querySelectorAll('.match-card').forEach(card => {
@@ -5532,6 +5564,7 @@ let matchCompareCharts = [];
 let speciesCompareCtx  = null;   // {state, m, matches} — lets the °F/°C toggle re-render
 let matchCompareShiftAll = false; // compare view: shift ALL graphs by the seasonal shift, not just temp
 let matchGenusFilter = null;      // match results: show only this genus (null = all)
+let matchTempOnly = false;        // match: score on temperature factors only (Low/High/Monthly)
 function destroyMatchCompareCharts() {
   matchCompareCharts.forEach(c => { try { c.destroy(); } catch {} });
   matchCompareCharts = [];
@@ -5554,11 +5587,12 @@ function renderSpeciesComparePanel(state, m, matches) {
   // Sub-score → 0–100 + colour
   const pct = v => v == null ? null : Math.round(v * 100);
   const subRow = (label, key, note) => {
+    const counted = !matchTempOnly || MATCH_TEMP_KEYS.includes(key);
     const v = pct(m.sub[key]);
     const chip = v == null
       ? `<span class="match-score" style="color:var(--text-muted);border-color:var(--border);background:transparent">—</span>`
       : matchScoreChipHtml(v);
-    return `<div class="cmp-sub-row"><span>${label}</span>${chip}<span class="cmp-sub-note">${note}</span></div>`;
+    return `<div class="cmp-sub-row${counted ? '' : ' cmp-sub-muted'}"><span>${label}</span>${chip}<span class="cmp-sub-note">${counted ? note : 'not counted (temp-only)'}</span></div>`;
   };
 
   const photo = s.photo_url || '';
@@ -5569,7 +5603,7 @@ function renderSpeciesComparePanel(state, m, matches) {
       <div class="sp-header-text">
         <div class="sp-scientific-name">${esc(s.scientific_name)}</div>
         ${s.common_name ? `<div class="sp-common-name">${esc(s.common_name)}</div>` : ''}
-        <div class="sp-meta">Overall match ${matchScoreChipHtml(m.score)} to ${esc(state.result._name || state.result.display_name.split(',')[0])}</div>
+        <div class="sp-meta">Overall match ${matchScoreChipHtml(blendMatchScore(m.sub, matchTempOnly))}${matchTempOnly ? ' <span style="opacity:0.7">(temp only)</span>' : ''} to ${esc(state.result._name || state.result.display_name.split(',')[0])}</div>
       </div>
     </div>
     <div class="match-card-badges" style="margin:6px 0 10px">${matchTempBadgesHtml(m)}</div>
@@ -5684,6 +5718,75 @@ function renderSpeciesComparePanel(state, m, matches) {
     navPush({ label: esc(s.scientific_name), restore: () => renderSpeciesComparePanel(state, m, matches) });
     openSpeciesSidebar(m.taxonId, s.scientific_name);
   });
+}
+
+// ── Reverse match: "Will it grow at my location?" (species → one location) ──────
+// Opens a small modal to pick a location (geolocate or search), then scores THIS
+// species at that location and shows the per-species comparison view.
+function openRateLocationModal(entry) {
+  bmgModalMode = 'rate';
+  const body = document.getElementById('bmg-modal-body');
+  body.innerHTML = `
+    <h2 class="bmg-modal-title">Will <i>${esc(entry.scientific_name)}</i> grow where you are?</h2>
+    <p class="bmg-modal-text">Compare your local <b>outdoor</b> climate to this species' native range. (Greenhouse/terrarium conditions will differ.)</p>
+    <button class="find-species-btn" id="rate-geolocate" style="width:100%;justify-content:center">
+      <span class="find-species-icon">📍</span> Use my location
+    </button>
+    <div class="rate-or">— or search a place —</div>
+    <div class="rate-search-row">
+      <input type="text" id="rate-search-input" class="rate-search-input" placeholder="City, region, or place…" autocomplete="off">
+      <button class="rate-search-go" id="rate-search-go">Go</button>
+    </div>
+    <div class="rate-status" id="rate-status"></div>
+  `;
+  document.getElementById('bmg-modal-overlay').classList.remove('hidden');
+  const status = document.getElementById('rate-status');
+
+  document.getElementById('rate-geolocate').addEventListener('click', () => {
+    if (!navigator.geolocation) { status.textContent = 'Geolocation unavailable — search a place instead.'; return; }
+    status.textContent = 'Locating…';
+    navigator.geolocation.getCurrentPosition(
+      pos => runReverseMatch(entry, pos.coords.latitude, pos.coords.longitude, 'Your location'),
+      err => { status.textContent = `Couldn't get your location (${err.code === 1 ? 'permission denied' : 'unavailable'}). Search a place instead.`; },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }
+    );
+  });
+
+  const doSearch = async () => {
+    const q = document.getElementById('rate-search-input').value.trim();
+    if (q.length < 2) return;
+    status.textContent = 'Searching…';
+    const results = await fetchNominatim(q).catch(() => []);
+    const place = results && results[0];
+    if (!place) { status.textContent = `No place found for "${q}". Try another.`; return; }
+    runReverseMatch(entry, parseFloat(place.lat), parseFloat(place.lon), place.display_name.split(',')[0]);
+  };
+  document.getElementById('rate-search-go').addEventListener('click', doSearch);
+  const input = document.getElementById('rate-search-input');
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
+  input.focus();
+}
+
+async function runReverseMatch(entry, lat, lng, placeName) {
+  const status = document.getElementById('rate-status');
+  if (status) status.textContent = `Fetching climate for ${placeName}…`;
+  const [normals, rh] = await Promise.all([
+    fetchSearchClimateNormals(lat, lng).catch(() => null),
+    fetchRHNormals(lat, lng).catch(() => null),
+  ]);
+  const merged = normals ? { ...normals, ...(rh || {}) } : null;
+  const u = merged ? buildUserMatchCtx(merged) : null;
+  if (!u) { if (status) status.textContent = 'Climate data unavailable for that location.'; return; }
+  const m = scoreSpeciesAtLocation(entry, u, lat);
+  if (!m) { if (status) status.textContent = "Couldn't score this species here."; return; }
+  m.taxonId = entry.taxon_id;
+
+  bmgCloseModal();
+  const state = { lat, lng, result: { _name: placeName, display_name: placeName }, normals: merged };
+  // Back from the comparison returns to this species' page.
+  navPush({ label: esc(entry.scientific_name), restore: () => openSpeciesSidebar(entry.taxon_id, entry.scientific_name) });
+  openSidePanelForInat();
+  renderSpeciesComparePanel(state, m, [m]);
 }
 
 // Dataset helpers for the comparison charts.
@@ -6504,6 +6607,9 @@ function buildSpeciesSidebarContent(entry) {
       </div>
     </div>
     ${copyLinkBtnHtml('sp', entry.taxon_id, 'sp-copy-link')}
+    <button class="find-species-btn" id="sp-rate-location" title="Compare your local outdoor climate to this species' native range">
+      <span class="find-species-icon">${BMG_ICONS.leaf}</span> Will it grow at my location?
+    </button>
     ${statsHtml}
     ${chartHtml}
     ${speciesMethodologyHtml(entry)}
@@ -6517,6 +6623,7 @@ function buildSpeciesSidebarContent(entry) {
   wireNavBackBtn();
   wireCopyLinkButtons(document.getElementById('panel-content'));
   if (entry.taxon_id != null) setDeepLink('sp', entry.taxon_id);
+  document.getElementById('sp-rate-location')?.addEventListener('click', () => openRateLocationModal(entry));
 
   // ── Wire All-Observations section ──
   // Lazy-render: filter the per-species obs (already computed above) and

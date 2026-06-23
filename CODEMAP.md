@@ -5,561 +5,571 @@
 > Line numbers drift between regenerations — the **section titles are stable grep anchors**
 > (e.g. `grep -n "CLIMATE MATCH" map.html`).
 
-Source: `map.html` · 9417 lines · 34 sections · 205 top-level functions · generated 2026-06-23
+Source: `map.html` · 9524 lines · 34 sections · 210 top-level functions · generated 2026-06-23
 
 ## Sections
 
-- **L2686** — SAFE STORAGE  (must come first — used throughout)
-- **L2700** — CONSTANTS
-- **L2890** — STATE
-- **L3003** — LOADING BAR
-- **L3013** — UTILITIES
-- **L3054** — PIN ICONS
-- **L3081** — MAP INIT
-- **L3148** — MAP CONTROLS (tile toggle, Köppen toggle)
-- **L3463** — KÖPPEN OVERLAY
-- **L3510** — SOIL LAYER — WMS + LEGEND + POINT DATA
-- **L4016** — PIN RENDERING
-- **L4051** — OVERLAP DETECTION
-- **L4107** — REGION HIGHLIGHT
-- **L4153** — SIDE PANEL — OPEN / CLOSE
-- **L4233** — SIDE PANEL — RENDER
-- **L4345** — CLIMATE TABLE
-- **L4467** — CLIMATE CHART
-- **L4597** — LIGHT CHART + TABLE
-- **L4701** — TEMPERATURE UNIT TOGGLE
-- **L4737** — LOCATION SEARCH
-- **L4764** — POINT CLIMATE + ELEVATION  (live per-point fetch, lapse, daylight)
-- **L5168** — CLIMATE MATCH  (species ↔ location scoring + compare UI)
-- **L5766** — CLICKED-LOCATION PANEL  (search result / map click → climate panel)
-- **L6002** — SEARCH RESULTS + ROUTING  (suggestions, taxon/region/place dispatch)
-- **L6176** — SPECIES SIDEBAR  (data load, map filter, info panel, phenology + climate charts)
-- **L6948** — REGION FILTER + SEARCH INIT  (admin-boundary obs filter, search wiring)
-- **L7166** — URL / DEEP LINK
-- **L7357** — VIEWPORT METRICS (handles any screen / browser-chrome size)
-- **L7403** — MOBILE SWIPE TO DISMISS
-- **L7508** — ELIGIBILITY
-- **L7521** — MAIN INIT
-- **L7605** — iNATURALIST INTEGRATION
-- **L8204** — PHOTO GALLERY (grid + browsable lightbox)
-- **L9100** — WELCOME + INFO DIALOG
+- **L2696** — SAFE STORAGE  (must come first — used throughout)
+- **L2710** — CONSTANTS
+- **L2900** — STATE
+- **L3013** — LOADING BAR
+- **L3023** — UTILITIES
+- **L3064** — PIN ICONS
+- **L3091** — MAP INIT
+- **L3158** — MAP CONTROLS (tile toggle, Köppen toggle)
+- **L3473** — KÖPPEN OVERLAY
+- **L3520** — SOIL LAYER — WMS + LEGEND + POINT DATA
+- **L4026** — PIN RENDERING
+- **L4061** — OVERLAP DETECTION
+- **L4117** — REGION HIGHLIGHT
+- **L4163** — SIDE PANEL — OPEN / CLOSE
+- **L4243** — SIDE PANEL — RENDER
+- **L4355** — CLIMATE TABLE
+- **L4477** — CLIMATE CHART
+- **L4607** — LIGHT CHART + TABLE
+- **L4711** — TEMPERATURE UNIT TOGGLE
+- **L4747** — LOCATION SEARCH
+- **L4774** — POINT CLIMATE + ELEVATION  (live per-point fetch, lapse, daylight)
+- **L5178** — CLIMATE MATCH  (species ↔ location scoring + compare UI)
+- **L5869** — CLICKED-LOCATION PANEL  (search result / map click → climate panel)
+- **L6105** — SEARCH RESULTS + ROUTING  (suggestions, taxon/region/place dispatch)
+- **L6279** — SPECIES SIDEBAR  (data load, map filter, info panel, phenology + climate charts)
+- **L7055** — REGION FILTER + SEARCH INIT  (admin-boundary obs filter, search wiring)
+- **L7273** — URL / DEEP LINK
+- **L7464** — VIEWPORT METRICS (handles any screen / browser-chrome size)
+- **L7510** — MOBILE SWIPE TO DISMISS
+- **L7615** — ELIGIBILITY
+- **L7628** — MAIN INIT
+- **L7712** — iNATURALIST INTEGRATION
+- **L8311** — PHOTO GALLERY (grid + browsable lightbox)
+- **L9207** — WELCOME + INFO DIALOG
 
 ## Functions by section
 
-### L2686 — SAFE STORAGE  (must come first — used throughout)
+### L2696 — SAFE STORAGE  (must come first — used throughout)
 
 _(no top-level functions — CSS/HTML/constants)_
 
-### L2700 — CONSTANTS
+### L2710 — CONSTANTS
 
 _(no top-level functions — CSS/HTML/constants)_
 
-### L2890 — STATE
+### L2900 — STATE
 
-- `navPush` — L2928
-- `navGoBack` — L2929
-- `navClear` — L2930
-- `navBackBtnHtml` — L2931
-- `wireNavBackBtn` — L2935
-- `persistKoppenFilter` — L2939
-- `toggleKoppenFilter` — L2941
-- `clearKoppenFilter` — L2947
-- `applyLegendFilters` — L2953
+- `navPush` — L2938
+- `navGoBack` — L2939
+- `navClear` — L2940
+- `navBackBtnHtml` — L2941
+- `wireNavBackBtn` — L2945
+- `persistKoppenFilter` — L2949
+- `toggleKoppenFilter` — L2951
+- `clearKoppenFilter` — L2957
+- `applyLegendFilters` — L2963
 
-### L3003 — LOADING BAR
+### L3013 — LOADING BAR
 
-- `setProgress` — L3007
+- `setProgress` — L3017
 
-### L3013 — UTILITIES
+### L3023 — UTILITIES
 
-- `genusColor` — L3016
-- `toDisplay` — L3020
-- `toNum` — L3028
-- `toDisplayRange` — L3033
-- `koppenGroup` — L3039
-- `getElevBand` — L3045
-- `esc` — L3049
+- `genusColor` — L3026
+- `toDisplay` — L3030
+- `toNum` — L3038
+- `toDisplayRange` — L3043
+- `koppenGroup` — L3049
+- `getElevBand` — L3055
+- `esc` — L3059
 
-### L3054 — PIN ICONS
+### L3064 — PIN ICONS
 
-- `pinHtml` — L3057
-- `makeIcon` — L3069
+- `pinHtml` — L3067
+- `makeIcon` — L3079
 
-### L3081 — MAP INIT
+### L3091 — MAP INIT
 
-- `updateKoppenBlur` — L3084
-- `initMap` — L3095
+- `updateKoppenBlur` — L3094
+- `initMap` — L3105
 
-### L3148 — MAP CONTROLS (tile toggle, Köppen toggle)
+### L3158 — MAP CONTROLS (tile toggle, Köppen toggle)
 
-- `buildMapControls` — L3151
-- `render` — L3233
-- `closeOtherSightingsPanels` — L3343
-- `makeLabelCtrl` — L3429
+- `buildMapControls` — L3161
+- `render` — L3243
+- `closeOtherSightingsPanels` — L3353
+- `makeLabelCtrl` — L3439
 
-### L3463 — KÖPPEN OVERLAY
+### L3473 — KÖPPEN OVERLAY
 
-- `koppenCodeFromProps` — L3466
-- `koppenColorFn` — L3479
-- `loadKoppen` — L3493
+- `koppenCodeFromProps` — L3476
+- `koppenColorFn` — L3489
+- `loadKoppen` — L3503
 
-### L3510 — SOIL LAYER — WMS + LEGEND + POINT DATA
+### L3520 — SOIL LAYER — WMS + LEGEND + POINT DATA
 
-- `setSoilLayer` — L3513
-- `updateSoilLegend` — L3549
-- `fetchSoilData` — L3616
-- `renderSoilBody` — L3666
-- `getGridKey` — L3713
-- `lsSoilGet` — L3717
-- `lsSoilSet` — L3725
-- `loadSoilCache` — L3729
-- `loadSpeciesSoilData` — L3748
-- `getSoilForLocation` — L3763
-- `renderSpeciesSoilBody` — L3784
-- `loadAndRenderSoilSection` — L3831
-- `loadSpeciesSoilSection` — L3843
-- `isSpeciesTropical` — L3882
-- `buildSoilSectionHtml` — L3902
-- `getKoppenAt` — L3911
-- `showKoppenPopup` — L3920
-- `fetchExactPointSoil` — L3947
-- `showSoilPopup` — L3963
+- `setSoilLayer` — L3523
+- `updateSoilLegend` — L3559
+- `fetchSoilData` — L3626
+- `renderSoilBody` — L3676
+- `getGridKey` — L3723
+- `lsSoilGet` — L3727
+- `lsSoilSet` — L3735
+- `loadSoilCache` — L3739
+- `loadSpeciesSoilData` — L3758
+- `getSoilForLocation` — L3773
+- `renderSpeciesSoilBody` — L3794
+- `loadAndRenderSoilSection` — L3841
+- `loadSpeciesSoilSection` — L3853
+- `isSpeciesTropical` — L3892
+- `buildSoilSectionHtml` — L3912
+- `getKoppenAt` — L3921
+- `showKoppenPopup` — L3930
+- `fetchExactPointSoil` — L3957
+- `showSoilPopup` — L3973
 
-### L4016 — PIN RENDERING
+### L4026 — PIN RENDERING
 
-- `renderPins` — L4019
+- `renderPins` — L4029
 
-### L4051 — OVERLAP DETECTION
+### L4061 — OVERLAP DETECTION
 
-- `handlePinClick` — L4054
-- `showOverlapPopup` — L4073
-- `flyToTaxon` — L4100
+- `handlePinClick` — L4064
+- `showOverlapPopup` — L4083
+- `flyToTaxon` — L4110
 
-### L4107 — REGION HIGHLIGHT
+### L4117 — REGION HIGHLIGHT
 
-- `clearRegionHighlight` — L4110
-- `highlightRegion` — L4114
+- `clearRegionHighlight` — L4120
+- `highlightRegion` — L4124
 
-### L4153 — SIDE PANEL — OPEN / CLOSE
+### L4163 — SIDE PANEL — OPEN / CLOSE
 
-- `openPanel` — L4156
-- `closePanel` — L4172
-- `minimizePanel` — L4192
-- `restorePanel` — L4201
-- `showRestoreTab` — L4208
-- `hideRestoreTab` — L4221
+- `openPanel` — L4166
+- `closePanel` — L4182
+- `minimizePanel` — L4202
+- `restorePanel` — L4211
+- `showRestoreTab` — L4218
+- `hideRestoreTab` — L4231
 
-### L4233 — SIDE PANEL — RENDER
+### L4243 — SIDE PANEL — RENDER
 
-- `renderPanel` — L4236
+- `renderPanel` — L4246
 
-### L4345 — CLIMATE TABLE
+### L4355 — CLIMATE TABLE
 
-- `extremeBoxVals` — L4352
-- `climateMethodologyHtml` — L4364
-- `speciesMethodologyHtml` — L4385
-- `buildClimateTable` — L4402
+- `extremeBoxVals` — L4362
+- `climateMethodologyHtml` — L4374
+- `speciesMethodologyHtml` — L4395
+- `buildClimateTable` — L4412
 
-### L4467 — CLIMATE CHART
+### L4477 — CLIMATE CHART
 
-- `buildClimateChart` — L4470
+- `buildClimateChart` — L4480
 
-### L4597 — LIGHT CHART + TABLE
+### L4607 — LIGHT CHART + TABLE
 
-- `buildLightChart` — L4600
-- `buildLightTable` — L4669
+- `buildLightChart` — L4610
+- `buildLightTable` — L4679
 
-### L4701 — TEMPERATURE UNIT TOGGLE
+### L4711 — TEMPERATURE UNIT TOGGLE
 
-- `setTempUnit` — L4704
+- `setTempUnit` — L4714
 
-### L4737 — LOCATION SEARCH
+### L4747 — LOCATION SEARCH
 
-- `debounce` — L4740
-- `nominatimZoom` — L4745
-- `fetchNominatim` — L4755
+- `debounce` — L4750
+- `nominatimZoom` — L4755
+- `fetchNominatim` — L4765
 
-### L4764 — POINT CLIMATE + ELEVATION  (live per-point fetch, lapse, daylight)
+### L4774 — POINT CLIMATE + ELEVATION  (live per-point fetch, lapse, daylight)
 
-- `computeMonthlyDaylightHours` — L4770
-- `fetchSearchClimateNormals` — L4782
-- `toUSDAZone` — L4938
-- `fetchRHNormals` — L4947
-- `_retired_fetchRHNormals_oldOpenMeteo` — L4951
-- `fetchTerrainElevation` — L4996
-- `lapseRateCkm` — L5015
-- `applyHumidityLapse` — L5035
-- `meanLapseRate` — L5055
-- `applyLapseRateCorrection` — L5067
-- `fetchElevationBatch` — L5076
-- `sampleCellElevationRange` — L5092
+- `computeMonthlyDaylightHours` — L4780
+- `fetchSearchClimateNormals` — L4792
+- `toUSDAZone` — L4948
+- `fetchRHNormals` — L4957
+- `_retired_fetchRHNormals_oldOpenMeteo` — L4961
+- `fetchTerrainElevation` — L5006
+- `lapseRateCkm` — L5025
+- `applyHumidityLapse` — L5045
+- `meanLapseRate` — L5065
+- `applyLapseRateCorrection` — L5077
+- `fetchElevationBatch` — L5086
+- `sampleCellElevationRange` — L5102
 
-### L5168 — CLIMATE MATCH  (species ↔ location scoring + compare UI)
+### L5178 — CLIMATE MATCH  (species ↔ location scoring + compare UI)
 
-- `bandFit` — L5174
-- `speciesMonthlyForUser` — L5187
-- `speciesMonthlyRaw` — L5209
-- `monthlyAlignFit` — L5217
-- `monthlyToWeekly` — L5234
-- `bestSeasonalShift` — L5257
-- `annualBandFromMonthly` — L5290
-- `isSpeciesRankName` — L5306
-- `matchSpeciesToLocation` — L5310
-- `matchScoreChipHtml` — L5410
-- `matchTempBadgesHtml` — L5417
-- `renderSpeciesMatchPanel` — L5428
-- `destroyMatchCompareCharts` — L5535
-- `renderSpeciesComparePanel` — L5540
-- `cmpBand` — L5690
-- `cmpLine` — L5697
-- `buildCompareChart` — L5705
-- `runSpeciesMatch` — L5743
+- `bandFit` — L5184
+- `speciesMonthlyForUser` — L5197
+- `speciesMonthlyRaw` — L5219
+- `monthlyAlignFit` — L5227
+- `monthlyToWeekly` — L5244
+- `bestSeasonalShift` — L5267
+- `annualBandFromMonthly` — L5300
+- `isSpeciesRankName` — L5316
+- `blendMatchScore` — L5326
+- `buildUserMatchCtx` — L5340
+- `scoreSpeciesAtLocation` — L5364
+- `matchSpeciesToLocation` — L5412
+- `matchScoreChipHtml` — L5434
+- `matchTempBadgesHtml` — L5441
+- `renderSpeciesMatchPanel` — L5452
+- `destroyMatchCompareCharts` — L5568
+- `renderSpeciesComparePanel` — L5573
+- `openRateLocationModal` — L5726
+- `runReverseMatch` — L5770
+- `cmpBand` — L5793
+- `cmpLine` — L5800
+- `buildCompareChart` — L5808
+- `runSpeciesMatch` — L5846
 
-### L5766 — CLICKED-LOCATION PANEL  (search result / map click → climate panel)
+### L5869 — CLICKED-LOCATION PANEL  (search result / map click → climate panel)
 
-- `buildLocationPanel` — L5769
-- `closeLocationPanel` — L5907
+- `buildLocationPanel` — L5872
+- `closeLocationPanel` — L6010
 
-### L6002 — SEARCH RESULTS + ROUTING  (suggestions, taxon/region/place dispatch)
+### L6105 — SEARCH RESULTS + ROUTING  (suggestions, taxon/region/place dispatch)
 
-- `renderSuggestions` — L6005
-- `isAdminRegionResult` — L6049
-- `selectSearchResult` — L6062
-- `searchInatTaxa` — L6127
+- `renderSuggestions` — L6108
+- `isAdminRegionResult` — L6152
+- `selectSearchResult` — L6165
+- `searchInatTaxa` — L6230
 
-### L6176 — SPECIES SIDEBAR  (data load, map filter, info panel, phenology + climate charts)
+### L6279 — SPECIES SIDEBAR  (data load, map filter, info panel, phenology + climate charts)
 
-- `loadSpeciesData` — L6179
-- `applySpeciesMapFilter` — L6199
-- `openSpeciesSidebar` — L6219
-- `buildSpeciesSidebarContent` — L6264
-- `sortSpeciesObsBy` — L6529
-- `speciesObsCard` — L6543
-- `renderSpeciesObsCards` — L6571
-- `bindChartActionHandlers` — L6665
-- `renderKoppenItems` — L6692
-- `buildSpeciesPhenologySection` — L6732
-- `buildSpeciesPhenoChart` — L6756
-- `buildSpeciesClimateChart` — L6810
-- `selectInatTaxon` — L6935
+- `loadSpeciesData` — L6282
+- `applySpeciesMapFilter` — L6302
+- `openSpeciesSidebar` — L6322
+- `buildSpeciesSidebarContent` — L6367
+- `sortSpeciesObsBy` — L6636
+- `speciesObsCard` — L6650
+- `renderSpeciesObsCards` — L6678
+- `bindChartActionHandlers` — L6772
+- `renderKoppenItems` — L6799
+- `buildSpeciesPhenologySection` — L6839
+- `buildSpeciesPhenoChart` — L6863
+- `buildSpeciesClimateChart` — L6917
+- `selectInatTaxon` — L7042
 
-### L6948 — REGION FILTER + SEARCH INIT  (admin-boundary obs filter, search wiring)
+### L7055 — REGION FILTER + SEARCH INIT  (admin-boundary obs filter, search wiring)
 
-- `geomToRings` — L6953
-- `selectRegionResult` — L6960
-- `applyRegionFromOsmRef` — L7010
-- `whenInatObsReady` — L7034
-- `countRegionObs` — L7045
-- `clearRegionFilter` — L7057
-- `setRegionChip` — L7066
-- `initSearch` — L7079
-- `updateHighlight` — L7104
+- `geomToRings` — L7060
+- `selectRegionResult` — L7067
+- `applyRegionFromOsmRef` — L7117
+- `whenInatObsReady` — L7141
+- `countRegionObs` — L7152
+- `clearRegionFilter` — L7164
+- `setRegionChip` — L7173
+- `initSearch` — L7186
+- `updateHighlight` — L7211
 
-### L7166 — URL / DEEP LINK
+### L7273 — URL / DEEP LINK
 
-- `setUrlParam` — L7176
-- `setDeepLink` — L7186
-- `buildShareUrl` — L7203
-- `copyLinkBtnHtml` — L7211
-- `copyToClipboard` — L7217
-- `showCopyToast` — L7240
-- `wireCopyLinkButtons` — L7252
-- `handleUrlParams` — L7268
-- `selectInatTaxonById` — L7308
-- `openObsById` — L7319
+- `setUrlParam` — L7283
+- `setDeepLink` — L7293
+- `buildShareUrl` — L7310
+- `copyLinkBtnHtml` — L7318
+- `copyToClipboard` — L7324
+- `showCopyToast` — L7347
+- `wireCopyLinkButtons` — L7359
+- `handleUrlParams` — L7375
+- `selectInatTaxonById` — L7415
+- `openObsById` — L7426
 
-### L7357 — VIEWPORT METRICS (handles any screen / browser-chrome size)
+### L7464 — VIEWPORT METRICS (handles any screen / browser-chrome size)
 
-- `syncViewportMetrics` — L7375
-- `scheduleViewportSync` — L7388
-- `initViewportMetrics` — L7392
+- `syncViewportMetrics` — L7482
+- `scheduleViewportSync` — L7495
+- `initViewportMetrics` — L7499
 
-### L7403 — MOBILE SWIPE TO DISMISS
+### L7510 — MOBILE SWIPE TO DISMISS
 
-- `initMobileSwipe` — L7406
-- `onStart` — L7412
-- `onMove` — L7417
-- `onEnd` — L7422
-- `initPanelSwipeBack` — L7467
-- `initMobileControlsToggle` — L7492
+- `initMobileSwipe` — L7513
+- `onStart` — L7519
+- `onMove` — L7524
+- `onEnd` — L7529
+- `initPanelSwipeBack` — L7574
+- `initMobileControlsToggle` — L7599
 
-### L7508 — ELIGIBILITY
+### L7615 — ELIGIBILITY
 
-- `isEligible` — L7511
-- `hasCoords` — L7516
+- `isEligible` — L7618
+- `hasCoords` — L7623
 
-### L7521 — MAIN INIT
+### L7628 — MAIN INIT
 
-- `init` — L7524
+- `init` — L7631
 
-### L7605 — iNATURALIST INTEGRATION
+### L7712 — iNATURALIST INTEGRATION
 
-- `inatPhotoCandidates` — L7646
-- `inatThumbImg` — L7656
-- `_persistObsLocCache` — L7747
-- `_formatObsLocation` — L7760
-- `fetchObsLocationName` — L7771
-- `initInatWorker` — L7814
-- `handleWorkerMessage` — L7823
-- `inatDataUrl` — L7844
-- `loadInatAll` — L7848
-- `loadInatGenus` — L7865
-- `pointInRings` — L7902
-- `passesRegionFilter` — L7917
-- `buildInatFeatures` — L7925
-- `rebuildInatIndex` — L7974
-- `renderInatClusters` — L7984
-- `drawInatClusters` — L7995
-- `openObscuredCell` — L8057
-- `drawObscuredBoxes` — L8068
-- `openSidePanelForInat` — L8121
-- `renderInatSpeciesList` — L8143
+- `inatPhotoCandidates` — L7753
+- `inatThumbImg` — L7763
+- `_persistObsLocCache` — L7854
+- `_formatObsLocation` — L7867
+- `fetchObsLocationName` — L7878
+- `initInatWorker` — L7921
+- `handleWorkerMessage` — L7930
+- `inatDataUrl` — L7951
+- `loadInatAll` — L7955
+- `loadInatGenus` — L7972
+- `pointInRings` — L8009
+- `passesRegionFilter` — L8024
+- `buildInatFeatures` — L8032
+- `rebuildInatIndex` — L8081
+- `renderInatClusters` — L8091
+- `drawInatClusters` — L8102
+- `openObscuredCell` — L8164
+- `drawObscuredBoxes` — L8175
+- `openSidePanelForInat` — L8228
+- `renderInatSpeciesList` — L8250
 
-### L8204 — PHOTO GALLERY (grid + browsable lightbox)
+### L8311 — PHOTO GALLERY (grid + browsable lightbox)
 
-- `galleryDescFromFeature` — L8218
-- `galleryDescFromObs` — L8224
-- `galleryPhotoObsCount` — L8232
-- `openPhotoGallery` — L8244
-- `loadMoreGalleryPhotos` — L8269
-- `renderGalleryGrid` — L8324
-- `openGalleryLightbox` — L8343
-- `closeGalleryLightbox` — L8349
-- `galleryStep` — L8353
-- `renderGalleryLightbox` — L8358
-- `initGalleryLightbox` — L8392
-- `renderInatObsList` — L8427
-- `obsCard` — L8498
-- `openInatObsPanel` — L8520
-- `fetchInatObsDetail` — L8658
-- `loadNepenthesElev` — L8726
-- `lookupNepenthesBand` — L8736
-- `loadInatClimateSection` — L8746
-- `loadInatSoilSection` — L8931
-- `buildInatFilterPanel` — L8944
-- `applyInatFilters` — L9012
-- `refreshRegionChipCount` — L9037
-- `enableInatLayer` — L9043
-- `disableInatLayer` — L9071
-- `setInatStatus` — L9080
-- `enableInatDefault` — L9092
+- `galleryDescFromFeature` — L8325
+- `galleryDescFromObs` — L8331
+- `galleryPhotoObsCount` — L8339
+- `openPhotoGallery` — L8351
+- `loadMoreGalleryPhotos` — L8376
+- `renderGalleryGrid` — L8431
+- `openGalleryLightbox` — L8450
+- `closeGalleryLightbox` — L8456
+- `galleryStep` — L8460
+- `renderGalleryLightbox` — L8465
+- `initGalleryLightbox` — L8499
+- `renderInatObsList` — L8534
+- `obsCard` — L8605
+- `openInatObsPanel` — L8627
+- `fetchInatObsDetail` — L8765
+- `loadNepenthesElev` — L8833
+- `lookupNepenthesBand` — L8843
+- `loadInatClimateSection` — L8853
+- `loadInatSoilSection` — L9038
+- `buildInatFilterPanel` — L9051
+- `applyInatFilters` — L9119
+- `refreshRegionChipCount` — L9144
+- `enableInatLayer` — L9150
+- `disableInatLayer` — L9178
+- `setInatStatus` — L9187
+- `enableInatDefault` — L9199
 
-### L9100 — WELCOME + INFO DIALOG
+### L9207 — WELCOME + INFO DIALOG
 
-- `getWelcomeHtml` — L9134
-- `getInfoHtml` — L9179
-- `bmgOpenWelcome` — L9257
-- `bmgOpenInfo` — L9267
-- `bmgCloseModal` — L9275
-- `clearOnboardingArrows` — L9294
-- `drawOnboardingArrows` — L9301
-- `bmgSetupModalHandlers` — L9376
+- `getWelcomeHtml` — L9241
+- `getInfoHtml` — L9286
+- `bmgOpenWelcome` — L9364
+- `bmgOpenInfo` — L9374
+- `bmgCloseModal` — L9382
+- `clearOnboardingArrows` — L9401
+- `drawOnboardingArrows` — L9408
+- `bmgSetupModalHandlers` — L9483
 
 ## All functions (A→Z)
 
-- `_formatObsLocation` — L7760
-- `_persistObsLocCache` — L7747
-- `_retired_fetchRHNormals_oldOpenMeteo` — L4951
-- `annualBandFromMonthly` — L5290
-- `applyHumidityLapse` — L5035
-- `applyInatFilters` — L9012
-- `applyLapseRateCorrection` — L5067
-- `applyLegendFilters` — L2953
-- `applyRegionFromOsmRef` — L7010
-- `applySpeciesMapFilter` — L6199
-- `bandFit` — L5174
-- `bestSeasonalShift` — L5257
-- `bindChartActionHandlers` — L6665
-- `bmgCloseModal` — L9275
-- `bmgOpenInfo` — L9267
-- `bmgOpenWelcome` — L9257
-- `bmgSetupModalHandlers` — L9376
-- `buildClimateChart` — L4470
-- `buildClimateTable` — L4402
-- `buildCompareChart` — L5705
-- `buildInatFeatures` — L7925
-- `buildInatFilterPanel` — L8944
-- `buildLightChart` — L4600
-- `buildLightTable` — L4669
-- `buildLocationPanel` — L5769
-- `buildMapControls` — L3151
-- `buildShareUrl` — L7203
-- `buildSoilSectionHtml` — L3902
-- `buildSpeciesClimateChart` — L6810
-- `buildSpeciesPhenoChart` — L6756
-- `buildSpeciesPhenologySection` — L6732
-- `buildSpeciesSidebarContent` — L6264
-- `clearKoppenFilter` — L2947
-- `clearOnboardingArrows` — L9294
-- `clearRegionFilter` — L7057
-- `clearRegionHighlight` — L4110
-- `climateMethodologyHtml` — L4364
-- `closeGalleryLightbox` — L8349
-- `closeLocationPanel` — L5907
-- `closeOtherSightingsPanels` — L3343
-- `closePanel` — L4172
-- `cmpBand` — L5690
-- `cmpLine` — L5697
-- `computeMonthlyDaylightHours` — L4770
-- `copyLinkBtnHtml` — L7211
-- `copyToClipboard` — L7217
-- `countRegionObs` — L7045
-- `debounce` — L4740
-- `destroyMatchCompareCharts` — L5535
-- `disableInatLayer` — L9071
-- `drawInatClusters` — L7995
-- `drawObscuredBoxes` — L8068
-- `drawOnboardingArrows` — L9301
-- `enableInatDefault` — L9092
-- `enableInatLayer` — L9043
-- `esc` — L3049
-- `extremeBoxVals` — L4352
-- `fetchElevationBatch` — L5076
-- `fetchExactPointSoil` — L3947
-- `fetchInatObsDetail` — L8658
-- `fetchNominatim` — L4755
-- `fetchObsLocationName` — L7771
-- `fetchRHNormals` — L4947
-- `fetchSearchClimateNormals` — L4782
-- `fetchSoilData` — L3616
-- `fetchTerrainElevation` — L4996
-- `flyToTaxon` — L4100
-- `galleryDescFromFeature` — L8218
-- `galleryDescFromObs` — L8224
-- `galleryPhotoObsCount` — L8232
-- `galleryStep` — L8353
-- `genusColor` — L3016
-- `geomToRings` — L6953
-- `getElevBand` — L3045
-- `getGridKey` — L3713
-- `getInfoHtml` — L9179
-- `getKoppenAt` — L3911
-- `getSoilForLocation` — L3763
-- `getWelcomeHtml` — L9134
-- `handlePinClick` — L4054
-- `handleUrlParams` — L7268
-- `handleWorkerMessage` — L7823
-- `hasCoords` — L7516
-- `hideRestoreTab` — L4221
-- `highlightRegion` — L4114
-- `inatDataUrl` — L7844
-- `inatPhotoCandidates` — L7646
-- `inatThumbImg` — L7656
-- `init` — L7524
-- `initGalleryLightbox` — L8392
-- `initInatWorker` — L7814
-- `initMap` — L3095
-- `initMobileControlsToggle` — L7492
-- `initMobileSwipe` — L7406
-- `initPanelSwipeBack` — L7467
-- `initSearch` — L7079
-- `initViewportMetrics` — L7392
-- `isAdminRegionResult` — L6049
-- `isEligible` — L7511
-- `isSpeciesRankName` — L5306
-- `isSpeciesTropical` — L3882
-- `koppenCodeFromProps` — L3466
-- `koppenColorFn` — L3479
-- `koppenGroup` — L3039
-- `lapseRateCkm` — L5015
-- `loadAndRenderSoilSection` — L3831
-- `loadInatAll` — L7848
-- `loadInatClimateSection` — L8746
-- `loadInatGenus` — L7865
-- `loadInatSoilSection` — L8931
-- `loadKoppen` — L3493
-- `loadMoreGalleryPhotos` — L8269
-- `loadNepenthesElev` — L8726
-- `loadSoilCache` — L3729
-- `loadSpeciesData` — L6179
-- `loadSpeciesSoilData` — L3748
-- `loadSpeciesSoilSection` — L3843
-- `lookupNepenthesBand` — L8736
-- `lsSoilGet` — L3717
-- `lsSoilSet` — L3725
-- `makeIcon` — L3069
-- `makeLabelCtrl` — L3429
-- `matchScoreChipHtml` — L5410
-- `matchSpeciesToLocation` — L5310
-- `matchTempBadgesHtml` — L5417
-- `meanLapseRate` — L5055
-- `minimizePanel` — L4192
-- `monthlyAlignFit` — L5217
-- `monthlyToWeekly` — L5234
-- `navBackBtnHtml` — L2931
-- `navClear` — L2930
-- `navGoBack` — L2929
-- `navPush` — L2928
-- `nominatimZoom` — L4745
-- `obsCard` — L8498
-- `onEnd` — L7422
-- `onMove` — L7417
-- `onStart` — L7412
-- `openGalleryLightbox` — L8343
-- `openInatObsPanel` — L8520
-- `openObsById` — L7319
-- `openObscuredCell` — L8057
-- `openPanel` — L4156
-- `openPhotoGallery` — L8244
-- `openSidePanelForInat` — L8121
-- `openSpeciesSidebar` — L6219
-- `passesRegionFilter` — L7917
-- `persistKoppenFilter` — L2939
-- `pinHtml` — L3057
-- `pointInRings` — L7902
-- `rebuildInatIndex` — L7974
-- `refreshRegionChipCount` — L9037
-- `render` — L3233
-- `renderGalleryGrid` — L8324
-- `renderGalleryLightbox` — L8358
-- `renderInatClusters` — L7984
-- `renderInatObsList` — L8427
-- `renderInatSpeciesList` — L8143
-- `renderKoppenItems` — L6692
-- `renderPanel` — L4236
-- `renderPins` — L4019
-- `renderSoilBody` — L3666
-- `renderSpeciesComparePanel` — L5540
-- `renderSpeciesMatchPanel` — L5428
-- `renderSpeciesObsCards` — L6571
-- `renderSpeciesSoilBody` — L3784
-- `renderSuggestions` — L6005
-- `restorePanel` — L4201
-- `runSpeciesMatch` — L5743
-- `sampleCellElevationRange` — L5092
-- `scheduleViewportSync` — L7388
-- `searchInatTaxa` — L6127
-- `selectInatTaxon` — L6935
-- `selectInatTaxonById` — L7308
-- `selectRegionResult` — L6960
-- `selectSearchResult` — L6062
-- `setDeepLink` — L7186
-- `setInatStatus` — L9080
-- `setProgress` — L3007
-- `setRegionChip` — L7066
-- `setSoilLayer` — L3513
-- `setTempUnit` — L4704
-- `setUrlParam` — L7176
-- `showCopyToast` — L7240
-- `showKoppenPopup` — L3920
-- `showOverlapPopup` — L4073
-- `showRestoreTab` — L4208
-- `showSoilPopup` — L3963
-- `sortSpeciesObsBy` — L6529
-- `speciesMethodologyHtml` — L4385
-- `speciesMonthlyForUser` — L5187
-- `speciesMonthlyRaw` — L5209
-- `speciesObsCard` — L6543
-- `syncViewportMetrics` — L7375
-- `toDisplay` — L3020
-- `toDisplayRange` — L3033
-- `toggleKoppenFilter` — L2941
-- `toNum` — L3028
-- `toUSDAZone` — L4938
-- `updateHighlight` — L7104
-- `updateKoppenBlur` — L3084
-- `updateSoilLegend` — L3549
-- `whenInatObsReady` — L7034
-- `wireCopyLinkButtons` — L7252
-- `wireNavBackBtn` — L2935
+- `_formatObsLocation` — L7867
+- `_persistObsLocCache` — L7854
+- `_retired_fetchRHNormals_oldOpenMeteo` — L4961
+- `annualBandFromMonthly` — L5300
+- `applyHumidityLapse` — L5045
+- `applyInatFilters` — L9119
+- `applyLapseRateCorrection` — L5077
+- `applyLegendFilters` — L2963
+- `applyRegionFromOsmRef` — L7117
+- `applySpeciesMapFilter` — L6302
+- `bandFit` — L5184
+- `bestSeasonalShift` — L5267
+- `bindChartActionHandlers` — L6772
+- `blendMatchScore` — L5326
+- `bmgCloseModal` — L9382
+- `bmgOpenInfo` — L9374
+- `bmgOpenWelcome` — L9364
+- `bmgSetupModalHandlers` — L9483
+- `buildClimateChart` — L4480
+- `buildClimateTable` — L4412
+- `buildCompareChart` — L5808
+- `buildInatFeatures` — L8032
+- `buildInatFilterPanel` — L9051
+- `buildLightChart` — L4610
+- `buildLightTable` — L4679
+- `buildLocationPanel` — L5872
+- `buildMapControls` — L3161
+- `buildShareUrl` — L7310
+- `buildSoilSectionHtml` — L3912
+- `buildSpeciesClimateChart` — L6917
+- `buildSpeciesPhenoChart` — L6863
+- `buildSpeciesPhenologySection` — L6839
+- `buildSpeciesSidebarContent` — L6367
+- `buildUserMatchCtx` — L5340
+- `clearKoppenFilter` — L2957
+- `clearOnboardingArrows` — L9401
+- `clearRegionFilter` — L7164
+- `clearRegionHighlight` — L4120
+- `climateMethodologyHtml` — L4374
+- `closeGalleryLightbox` — L8456
+- `closeLocationPanel` — L6010
+- `closeOtherSightingsPanels` — L3353
+- `closePanel` — L4182
+- `cmpBand` — L5793
+- `cmpLine` — L5800
+- `computeMonthlyDaylightHours` — L4780
+- `copyLinkBtnHtml` — L7318
+- `copyToClipboard` — L7324
+- `countRegionObs` — L7152
+- `debounce` — L4750
+- `destroyMatchCompareCharts` — L5568
+- `disableInatLayer` — L9178
+- `drawInatClusters` — L8102
+- `drawObscuredBoxes` — L8175
+- `drawOnboardingArrows` — L9408
+- `enableInatDefault` — L9199
+- `enableInatLayer` — L9150
+- `esc` — L3059
+- `extremeBoxVals` — L4362
+- `fetchElevationBatch` — L5086
+- `fetchExactPointSoil` — L3957
+- `fetchInatObsDetail` — L8765
+- `fetchNominatim` — L4765
+- `fetchObsLocationName` — L7878
+- `fetchRHNormals` — L4957
+- `fetchSearchClimateNormals` — L4792
+- `fetchSoilData` — L3626
+- `fetchTerrainElevation` — L5006
+- `flyToTaxon` — L4110
+- `galleryDescFromFeature` — L8325
+- `galleryDescFromObs` — L8331
+- `galleryPhotoObsCount` — L8339
+- `galleryStep` — L8460
+- `genusColor` — L3026
+- `geomToRings` — L7060
+- `getElevBand` — L3055
+- `getGridKey` — L3723
+- `getInfoHtml` — L9286
+- `getKoppenAt` — L3921
+- `getSoilForLocation` — L3773
+- `getWelcomeHtml` — L9241
+- `handlePinClick` — L4064
+- `handleUrlParams` — L7375
+- `handleWorkerMessage` — L7930
+- `hasCoords` — L7623
+- `hideRestoreTab` — L4231
+- `highlightRegion` — L4124
+- `inatDataUrl` — L7951
+- `inatPhotoCandidates` — L7753
+- `inatThumbImg` — L7763
+- `init` — L7631
+- `initGalleryLightbox` — L8499
+- `initInatWorker` — L7921
+- `initMap` — L3105
+- `initMobileControlsToggle` — L7599
+- `initMobileSwipe` — L7513
+- `initPanelSwipeBack` — L7574
+- `initSearch` — L7186
+- `initViewportMetrics` — L7499
+- `isAdminRegionResult` — L6152
+- `isEligible` — L7618
+- `isSpeciesRankName` — L5316
+- `isSpeciesTropical` — L3892
+- `koppenCodeFromProps` — L3476
+- `koppenColorFn` — L3489
+- `koppenGroup` — L3049
+- `lapseRateCkm` — L5025
+- `loadAndRenderSoilSection` — L3841
+- `loadInatAll` — L7955
+- `loadInatClimateSection` — L8853
+- `loadInatGenus` — L7972
+- `loadInatSoilSection` — L9038
+- `loadKoppen` — L3503
+- `loadMoreGalleryPhotos` — L8376
+- `loadNepenthesElev` — L8833
+- `loadSoilCache` — L3739
+- `loadSpeciesData` — L6282
+- `loadSpeciesSoilData` — L3758
+- `loadSpeciesSoilSection` — L3853
+- `lookupNepenthesBand` — L8843
+- `lsSoilGet` — L3727
+- `lsSoilSet` — L3735
+- `makeIcon` — L3079
+- `makeLabelCtrl` — L3439
+- `matchScoreChipHtml` — L5434
+- `matchSpeciesToLocation` — L5412
+- `matchTempBadgesHtml` — L5441
+- `meanLapseRate` — L5065
+- `minimizePanel` — L4202
+- `monthlyAlignFit` — L5227
+- `monthlyToWeekly` — L5244
+- `navBackBtnHtml` — L2941
+- `navClear` — L2940
+- `navGoBack` — L2939
+- `navPush` — L2938
+- `nominatimZoom` — L4755
+- `obsCard` — L8605
+- `onEnd` — L7529
+- `onMove` — L7524
+- `onStart` — L7519
+- `openGalleryLightbox` — L8450
+- `openInatObsPanel` — L8627
+- `openObsById` — L7426
+- `openObscuredCell` — L8164
+- `openPanel` — L4166
+- `openPhotoGallery` — L8351
+- `openRateLocationModal` — L5726
+- `openSidePanelForInat` — L8228
+- `openSpeciesSidebar` — L6322
+- `passesRegionFilter` — L8024
+- `persistKoppenFilter` — L2949
+- `pinHtml` — L3067
+- `pointInRings` — L8009
+- `rebuildInatIndex` — L8081
+- `refreshRegionChipCount` — L9144
+- `render` — L3243
+- `renderGalleryGrid` — L8431
+- `renderGalleryLightbox` — L8465
+- `renderInatClusters` — L8091
+- `renderInatObsList` — L8534
+- `renderInatSpeciesList` — L8250
+- `renderKoppenItems` — L6799
+- `renderPanel` — L4246
+- `renderPins` — L4029
+- `renderSoilBody` — L3676
+- `renderSpeciesComparePanel` — L5573
+- `renderSpeciesMatchPanel` — L5452
+- `renderSpeciesObsCards` — L6678
+- `renderSpeciesSoilBody` — L3794
+- `renderSuggestions` — L6108
+- `restorePanel` — L4211
+- `runReverseMatch` — L5770
+- `runSpeciesMatch` — L5846
+- `sampleCellElevationRange` — L5102
+- `scheduleViewportSync` — L7495
+- `scoreSpeciesAtLocation` — L5364
+- `searchInatTaxa` — L6230
+- `selectInatTaxon` — L7042
+- `selectInatTaxonById` — L7415
+- `selectRegionResult` — L7067
+- `selectSearchResult` — L6165
+- `setDeepLink` — L7293
+- `setInatStatus` — L9187
+- `setProgress` — L3017
+- `setRegionChip` — L7173
+- `setSoilLayer` — L3523
+- `setTempUnit` — L4714
+- `setUrlParam` — L7283
+- `showCopyToast` — L7347
+- `showKoppenPopup` — L3930
+- `showOverlapPopup` — L4083
+- `showRestoreTab` — L4218
+- `showSoilPopup` — L3973
+- `sortSpeciesObsBy` — L6636
+- `speciesMethodologyHtml` — L4395
+- `speciesMonthlyForUser` — L5197
+- `speciesMonthlyRaw` — L5219
+- `speciesObsCard` — L6650
+- `syncViewportMetrics` — L7482
+- `toDisplay` — L3030
+- `toDisplayRange` — L3043
+- `toggleKoppenFilter` — L2951
+- `toNum` — L3038
+- `toUSDAZone` — L4948
+- `updateHighlight` — L7211
+- `updateKoppenBlur` — L3094
+- `updateSoilLegend` — L3559
+- `whenInatObsReady` — L7141
+- `wireCopyLinkButtons` — L7359
+- `wireNavBackBtn` — L2945
 
