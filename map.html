@@ -960,6 +960,12 @@ html, body {
 .cmp-chart-legend { font-size: 10px; color: var(--text-muted); margin: 2px 0 4px; display: flex; gap: 14px; }
 .cmp-shift-note { font-size: 10.5px; line-height: 1.5; color: var(--text-muted); margin: 6px 0 2px; padding: 7px 9px; background: rgba(255,200,50,0.06); border: 1px solid rgba(255,200,50,0.22); border-radius: 6px; }
 .cmp-shift-note b { color: var(--text-primary); font-weight: 600; }
+.cmp-shift-toggle { display: flex; align-items: center; gap: 7px; font-size: 11px; color: var(--text-muted); margin: 6px 0 2px; cursor: pointer; user-select: none; }
+.cmp-shift-toggle input { accent-color: var(--accent); cursor: pointer; }
+.match-filter-row { display: flex; align-items: center; gap: 8px; margin: 4px 0 10px; font-size: 12px; color: var(--text-muted); }
+.match-filter-row label { flex-shrink: 0; }
+.match-genus-filter { flex: 1; min-width: 0; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px; font-family: inherit; cursor: pointer; }
+.match-genus-filter:focus { outline: none; border-color: var(--accent); }
 .cmp-leg-band::before { content: '▬'; color: rgba(255,255,255,0.25); margin-right: 4px; }
 .cmp-leg-you::before  { content: '▬'; color: rgba(255,255,255,0.9); margin-right: 4px; }
 .match-card-common {
@@ -5427,6 +5433,20 @@ function renderSpeciesMatchPanel(state, matches) {
   const survivors  = matches.filter(survivable);
   const failures   = matches.filter(m => !survivable(m));
 
+  // Reset the genus filter when a fresh match runs (new matches array); keep it
+  // when navigating back to the same results.
+  if (renderSpeciesMatchPanel._lastMatches !== matches) {
+    matchGenusFilter = null;
+    renderSpeciesMatchPanel._lastMatches = matches;
+  }
+  const genusOf = m => m.species.genus || '—';
+  const genusCounts = {};
+  for (const m of survivors) genusCounts[genusOf(m)] = (genusCounts[genusOf(m)] || 0) + 1;
+  const genera = Object.entries(genusCounts).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  const inGenus = m => !matchGenusFilter || genusOf(m) === matchGenusFilter;
+  const shownSurvivors = survivors.filter(inGenus);
+  const shownFailures  = failures.filter(inGenus);
+
   const cardHtml = (m) => {
     const s = m.species;
     const photo = s.photo_url || '';
@@ -5445,15 +5465,24 @@ function renderSpeciesMatchPanel(state, matches) {
       </div>`;
   };
 
-  const failHtml = failures.length ? `
+  const failHtml = shownFailures.length ? `
     <details class="match-tier-group" id="match-failures">
       <summary>
         <span class="match-tier-dot" style="background:#d4534b"></span>
         <span>Won't survive outdoors</span>
-        <span class="match-tier-count">${failures.length}</span>
+        <span class="match-tier-count">${shownFailures.length}</span>
       </summary>
-      <div class="match-card-list">${failures.map(cardHtml).join('')}</div>
+      <div class="match-card-list">${shownFailures.map(cardHtml).join('')}</div>
     </details>` : '';
+
+  const genusFilterHtml = genera.length > 1 ? `
+    <div class="match-filter-row">
+      <label for="match-genus-filter">Genus</label>
+      <select id="match-genus-filter" class="match-genus-filter">
+        <option value="">All genera (${survivors.length})</option>
+        ${genera.map(([g, c]) => `<option value="${esc(g)}" ${matchGenusFilter === g ? 'selected' : ''}>${esc(g)} (${c})</option>`).join('')}
+      </select>
+    </div>` : '';
 
   document.getElementById('panel-content').innerHTML = `
     ${navBackBtnHtml()}
@@ -5471,12 +5500,17 @@ function renderSpeciesMatchPanel(state, matches) {
       species' winter dormancy can be provided artificially). Treat low scores as "needs more
       attention," not "impossible."
     </div>
-    <div class="match-card-list">${survivors.map(cardHtml).join('')}</div>
+    ${genusFilterHtml}
+    <div class="match-card-list">${shownSurvivors.map(cardHtml).join('')}</div>
     ${failHtml}
   `;
 
   // Wire interactions
   wireNavBackBtn();
+  document.getElementById('match-genus-filter')?.addEventListener('change', e => {
+    matchGenusFilter = e.target.value || null;
+    renderSpeciesMatchPanel(state, matches);
+  });
   document.querySelectorAll('.match-card').forEach(card => {
     card.addEventListener('click', () => {
       const tid = +card.dataset.taxonId;
@@ -5496,6 +5530,8 @@ function renderSpeciesMatchPanel(state, matches) {
 // location curve for each attribute, with the per-attribute sub-score shown.
 let matchCompareCharts = [];
 let speciesCompareCtx  = null;   // {state, m, matches} — lets the °F/°C toggle re-render
+let matchCompareShiftAll = false; // compare view: shift ALL graphs by the seasonal shift, not just temp
+let matchGenusFilter = null;      // match results: show only this genus (null = all)
 function destroyMatchCompareCharts() {
   matchCompareCharts.forEach(c => { try { c.destroy(); } catch {} });
   matchCompareCharts = [];
@@ -5559,7 +5595,12 @@ function renderSpeciesComparePanel(state, m, matches) {
     <div class="section-label" style="margin-top:14px">Temperature — your location vs native range${shiftWk ? ' (season-shifted)' : ''}</div>
     <div class="cmp-chart-legend"><span class="cmp-leg-band">native range</span> <span class="cmp-leg-you">your location</span></div>
     <div class="chart-wrap"><canvas id="cmp-temp-chart"></canvas></div>
-    ${shiftWk ? `<div class="cmp-shift-note">↻ Native temperature curve shifted <b>${shiftLbl}</b> to best-align the seasonal pattern with your location. Alignment improves from ${pct(m.monthlyCal) == null ? '—' : pct(m.monthlyCal)} to ${pct(m.sub.monthly)} this way. ⚠ This shifts <i>temperature</i> only — day length / photoperiod at your latitude still follows the real calendar, so the Sunlight match is not shifted and light timing may not line up with the shifted seasons.</div>` : ''}
+    ${shiftWk ? `
+      <div class="cmp-shift-note">${matchCompareShiftAll
+        ? `↻ <b>All</b> native climate curves shifted <b>${shiftLbl}</b> to show the species' whole native climate aligned to your seasons. ⚠ Your location's actual day length still follows the real calendar, so light timing won't truly line up — this view is for comparing the climate shapes.`
+        : `↻ Native <i>temperature</i> curve shifted <b>${shiftLbl}</b> to best-align the seasonal pattern with your location (alignment ${pct(m.monthlyCal) == null ? '—' : pct(m.monthlyCal)} → ${pct(m.sub.monthly)}). Light, humidity &amp; rainfall stay on the real calendar.`}</div>
+      <label class="cmp-shift-toggle"><input type="checkbox" id="cmp-shift-all" ${matchCompareShiftAll ? 'checked' : ''}> Shift all graphs by ${shiftLbl} (visualize the aligned climate)</label>
+    ` : ''}
 
     ${(n.dli && mon?.dli) ? `
       <div class="section-label" style="margin-top:14px">Sunlight (DLI)</div>
@@ -5578,16 +5619,21 @@ function renderSpeciesComparePanel(state, m, matches) {
     </button>
   `;
   wireNavBackBtn();
+  document.getElementById('cmp-shift-all')?.addEventListener('change', e => {
+    matchCompareShiftAll = e.target.checked;
+    renderSpeciesComparePanel(state, m, matches);   // re-render with all graphs shifted/unshifted
+  });
 
   // Month labels (user's calendar)
   const labels = MONTHS;
   const bandOf  = (mf, idx) => (mf || []).map(v => v ? v[idx] : null);   // [p25,p50,p75] → one series
   const medOf   = mf => bandOf(mf, 1);
   // Rotate a native monthly series by the best-fit shift so it overlays on the
-  // user's calendar at the best-aligned phase. Only the NATIVE temperature curves
-  // are shifted (the user's curve and the light/precip/RH panels stay on the real
-  // calendar — see the photoperiod caveat note).
-  const rot = arr => (shiftMo ? arr.map((_, i) => arr[(i + shiftMo) % 12]) : arr);
+  // user's calendar at the best-aligned phase. Temperature is always shifted;
+  // light/humidity/rainfall shift too only when "shift all" is on (rotOther) —
+  // showing the species' whole native climate repositioned on the user's calendar.
+  const rot      = arr => (shiftMo ? arr.map((_, i) => arr[(i + shiftMo) % 12]) : arr);
+  const rotOther = (matchCompareShiftAll && shiftMo) ? rot : (arr => arr);
 
   // Temperature: species hi/lo band (p25–p75) + median lines, user hi/lo lines.
   // Data is stored in °C; convert to the active unit so the chart tracks the
@@ -5610,8 +5656,8 @@ function renderSpeciesComparePanel(state, m, matches) {
   if (n.dli && mon?.dli) matchCompareCharts.push(buildCompareChart('cmp-dli-chart', {
     labels,
     datasets: [
-      cmpBand(bandOf(mon.dli, 2), bandOf(mon.dli, 0), 'rgba(255,200,50,0.14)'),
-      cmpLine('Native', medOf(mon.dli), 'rgba(255,200,50,0.55)', true),
+      cmpBand(rotOther(bandOf(mon.dli, 2)), rotOther(bandOf(mon.dli, 0)), 'rgba(255,200,50,0.14)'),
+      cmpLine('Native', rotOther(medOf(mon.dli)), 'rgba(255,200,50,0.55)', true),
       cmpLine('You', n.dli, 'rgba(255,200,50,1)', false),
     ], unit: '',
   }));
@@ -5619,8 +5665,8 @@ function renderSpeciesComparePanel(state, m, matches) {
   if (n.rhMean && mon?.rh) matchCompareCharts.push(buildCompareChart('cmp-rh-chart', {
     labels,
     datasets: [
-      cmpBand(bandOf(mon.rh, 2), bandOf(mon.rh, 0), 'rgba(120,200,160,0.14)'),
-      cmpLine('Native', medOf(mon.rh), 'rgba(120,200,160,0.55)', true),
+      cmpBand(rotOther(bandOf(mon.rh, 2)), rotOther(bandOf(mon.rh, 0)), 'rgba(120,200,160,0.14)'),
+      cmpLine('Native', rotOther(medOf(mon.rh)), 'rgba(120,200,160,0.55)', true),
       cmpLine('You', n.rhMean, 'rgba(120,200,160,1)', false),
     ], unit: '%',
   }));
@@ -5628,8 +5674,8 @@ function renderSpeciesComparePanel(state, m, matches) {
   if (n.precipMm && mon?.precip) matchCompareCharts.push(buildCompareChart('cmp-precip-chart', {
     labels,
     datasets: [
-      cmpBand(bandOf(mon.precip, 2), bandOf(mon.precip, 0), 'rgba(80,160,240,0.14)'),
-      cmpLine('Native', medOf(mon.precip), 'rgba(80,160,240,0.55)', true),
+      cmpBand(rotOther(bandOf(mon.precip, 2)), rotOther(bandOf(mon.precip, 0)), 'rgba(80,160,240,0.14)'),
+      cmpLine('Native', rotOther(medOf(mon.precip)), 'rgba(80,160,240,0.55)', true),
       cmpLine('You', n.precipMm, 'rgba(80,160,240,1)', false),
     ], unit: 'mm',
   }));
