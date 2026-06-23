@@ -5196,6 +5196,15 @@ function speciesMonthlyForUser(species, userLat) {
   return out;
 }
 
+// Like speciesMonthlyForUser but WITHOUT the +6 hemisphere rotation — returns the
+// species' monthly block on its OWN native calendar. The climate-match uses this so
+// the best-fit shift search can discover (and report) the full seasonal offset,
+// including the ~+6-month hemisphere flip, instead of having it pre-applied/hidden.
+function speciesMonthlyRaw(species, userLat) {
+  const nh = species.monthly_nh, sh = species.monthly_sh;
+  return (userLat >= 0 ? (nh || sh) : (sh || nh)) || null;
+}
+
 // Monthly temperature alignment: average per-month gap between the user's
 // high/low curves and the species' median high/low curves, mapped to 0–1 over
 // `tol`°C of average deviation. Rewards matching seasonal shape AND level.
@@ -5336,7 +5345,7 @@ function matchSpeciesToLocation(userNormals, userKoppen, userLat = 0) {
     else                                       heatTier = 'fail';
 
     // ── Per-attribute sub-scores (0–1) for ranking survivors ──
-    const mon = speciesMonthlyForUser(species, userLat);
+    const mon = speciesMonthlyRaw(species, userLat);
     const sub = {};
     sub.low     = bandFit(userColdMonth, stats.tempMin && [stats.tempMin.p25, stats.tempMin.p50, stats.tempMin.p75], 10);
     sub.high    = bandFit(userHotMonth,  stats.tempMax && [stats.tempMax.p25, stats.tempMax.p50, stats.tempMax.p75], 10);
@@ -5496,7 +5505,7 @@ function renderSpeciesComparePanel(state, m, matches) {
   destroyMatchCompareCharts();
   speciesCompareCtx = { state, m, matches };   // so the °F/°C toggle can re-render
   const s   = m.species;
-  const mon = speciesMonthlyForUser(s, state.lat);
+  const mon = speciesMonthlyRaw(s, state.lat);
   const n   = state.normals;
 
   // Best-fit seasonal shift (signed weeks → months). shiftMoSigned is for display;
