@@ -2572,7 +2572,7 @@ body.bmg-onboarding #search-container { z-index: 9100; }
         <input id="search-input" type="text" placeholder="Search species, location, or region…" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="none">
         <button id="search-clear" title="Clear search">×</button>
       </div>
-      <button id="home-chip" class="home-chip" title="Open your saved home location's climate"><span class="btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span><span id="home-chip-name"></span></button>
+      <button id="home-chip" class="home-chip" title="Find species suited to your home climate"><span class="btn-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg></span><span id="home-chip-name"></span></button>
       <div id="search-suggestions"></div>
     </div>
 
@@ -5479,12 +5479,12 @@ function matchBadgeLegendHtml() {
         <ul>
           <li><b>✓ Cold</b> — your coldest extreme is at or above the species' cold limit.</li>
           <li><b>⚠ Cold</b> — within 2&nbsp;°C below the limit (borderline; winter protection helps).</li>
-          <li><b>✗ Cold</b> — colder than it can survive outdoors.</li>
+          <li><b>✗ Cold</b> — colder than it experiences in the wild.</li>
           <li><b>✓ Heat</b> — your hottest extreme is at or below its heat limit.</li>
           <li><b>⚠ Heat</b> — within 3&nbsp;°C above the limit.</li>
-          <li><b>✗ Heat</b> — hotter than it tolerates.</li>
+          <li><b>✗ Heat</b> — hotter than it experiences in the wild.</li>
         </ul>
-        <p>A ✗ on either gate means <b>"won't survive outdoors."</b> The 0–100 <b>score</b> then ranks the survivors by overall climate similarity — <span style="color:hsl(134,60%,72%)">green ≥75</span>, <span style="color:hsl(45,60%,72%)">amber ≥50</span>, grey below.</p>
+        <p>A ✗ on either gate means <b>your extremes exceed its native heat/cold range.</b> The 0–100 <b>score</b> then ranks the survivors by overall climate similarity — <span style="color:hsl(134,60%,72%)">green ≥75</span>, <span style="color:hsl(45,60%,72%)">amber ≥50</span>, grey below.</p>
       </div>
     </details>`;
 }
@@ -5565,6 +5565,7 @@ function renderSpeciesMatchPanel(state, matches) {
     ${navBackBtnHtml()}
     <div class="match-panel-header">
       <div class="p-species-name">Species suited to ${esc(locName)}</div>
+      <button class="loc-set-home" id="match-change-loc" title="Compare against a different location"><span class="btn-icon">${BMG_ICONS.pin}</span> Change location</button>
       <div class="match-panel-subtitle">
         ${survivors.length} species that can survive here, ranked by an overall climate-match
         score (0–100). Tap a species to see how each factor compares.
@@ -5593,6 +5594,7 @@ function renderSpeciesMatchPanel(state, matches) {
     matchTempOnly = e.target.checked;
     renderSpeciesMatchPanel(state, matches);
   });
+  document.getElementById('match-change-loc')?.addEventListener('click', openMatchLocationModal);
   document.querySelectorAll('.match-card').forEach(card => {
     card.addEventListener('click', () => {
       const tid = +card.dataset.taxonId;
@@ -5775,58 +5777,96 @@ function renderSpeciesComparePanel(state, m, matches) {
 // ── Reverse match: "Will it grow at my location?" (species → one location) ──────
 // Opens a small modal to pick a location (geolocate or search), then scores THIS
 // species at that location and shows the per-species comparison view.
-function openRateLocationModal(entry) {
+// Shared location-picker modal: home (if set, first) / geolocate / search.
+// `onPick(lat, lng, name, statusEl)` runs whatever action the caller wants.
+function openLocationPickerModal({ title, intro, onPick }) {
   bmgModalMode = 'rate';
-  const body = document.getElementById('bmg-modal-body');
-  body.innerHTML = `
-    <h2 class="bmg-modal-title">Will <i>${esc(entry.scientific_name)}</i> grow where you are?</h2>
-    <p class="bmg-modal-text">Compare your local <b>outdoor</b> climate to this species' native range. (Greenhouse/terrarium conditions will differ.)</p>
-    ${(() => { const h = getHomeLocation(); return h ? `<button class="find-species-btn" id="rate-home" style="width:100%;justify-content:center;margin-bottom:8px"><span class="find-species-icon">${BMG_ICONS.pin}</span> Rate at my home (${esc(h.name)})</button>` : ''; })()}
-    <button class="find-species-btn" id="rate-geolocate" style="width:100%;justify-content:center">
-      <span class="find-species-icon">${BMG_ICONS.pin}</span> Use my location
+  const h = getHomeLocation();
+  document.getElementById('bmg-modal-body').innerHTML = `
+    <h2 class="bmg-modal-title">${title}</h2>
+    <p class="bmg-modal-text">${intro}</p>
+    ${h ? `<button class="find-species-btn" id="pick-home" style="width:100%;justify-content:center;margin-bottom:8px"><span class="find-species-icon">${BMG_ICONS.pin}</span> Use my home (${esc(h.name)})</button>` : ''}
+    <button class="find-species-btn" id="pick-geolocate" style="width:100%;justify-content:center">
+      <span class="find-species-icon">${BMG_ICONS.pin}</span> Use my current location
     </button>
     <div class="rate-or">— or search a place —</div>
     <div class="rate-search-row">
-      <input type="text" id="rate-search-input" class="rate-search-input" placeholder="City, region, or place…" autocomplete="off">
-      <button class="rate-search-go" id="rate-search-go">Go</button>
+      <input type="text" id="pick-search-input" class="rate-search-input" placeholder="City, region, or place…" autocomplete="off">
+      <button class="rate-search-go" id="pick-search-go">Go</button>
     </div>
-    <div class="rate-status" id="rate-status"></div>
+    <div class="rate-status" id="pick-status"></div>
   `;
   document.getElementById('bmg-modal-overlay').classList.remove('hidden');
-  const status = document.getElementById('rate-status');
+  const status = document.getElementById('pick-status');
 
-  document.getElementById('rate-home')?.addEventListener('click', () => {
-    const h = getHomeLocation();
-    if (h) runReverseMatch(entry, h.lat, h.lng, h.name);
+  document.getElementById('pick-home')?.addEventListener('click', () => {
+    const hh = getHomeLocation();
+    if (hh) onPick(hh.lat, hh.lng, hh.name, status);
   });
-
-  document.getElementById('rate-geolocate').addEventListener('click', () => {
+  document.getElementById('pick-geolocate').addEventListener('click', () => {
     if (!navigator.geolocation) { status.textContent = 'Geolocation unavailable — search a place instead.'; return; }
     status.textContent = 'Locating…';
     navigator.geolocation.getCurrentPosition(
-      pos => runReverseMatch(entry, pos.coords.latitude, pos.coords.longitude, 'Your location'),
+      pos => onPick(pos.coords.latitude, pos.coords.longitude, 'Your location', status),
       err => { status.textContent = `Couldn't get your location (${err.code === 1 ? 'permission denied' : 'unavailable'}). Search a place instead.`; },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 600000 }
     );
   });
-
   const doSearch = async () => {
-    const q = document.getElementById('rate-search-input').value.trim();
+    const q = document.getElementById('pick-search-input').value.trim();
     if (q.length < 2) return;
     status.textContent = 'Searching…';
     const results = await fetchNominatim(q).catch(() => []);
     const place = results && results[0];
     if (!place) { status.textContent = `No place found for "${q}". Try another.`; return; }
-    runReverseMatch(entry, parseFloat(place.lat), parseFloat(place.lon), place.display_name.split(',')[0]);
+    onPick(parseFloat(place.lat), parseFloat(place.lon), place.display_name.split(',')[0], status);
   };
-  document.getElementById('rate-search-go').addEventListener('click', doSearch);
-  const input = document.getElementById('rate-search-input');
+  document.getElementById('pick-search-go').addEventListener('click', doSearch);
+  const input = document.getElementById('pick-search-input');
   input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doSearch(); } });
   input.focus();
 }
 
-async function runReverseMatch(entry, lat, lng, placeName) {
-  const status = document.getElementById('rate-status');
+// Reverse match: "will THIS species grow at a location I pick?"
+function openRateLocationModal(entry) {
+  openLocationPickerModal({
+    title: `Will <i>${esc(entry.scientific_name)}</i> grow where you are?`,
+    intro: `Compare your local <b>outdoor</b> climate to this species' native range. (Greenhouse/terrarium conditions will differ.)`,
+    onPick: (lat, lng, name, status) => runReverseMatch(entry, lat, lng, name, status),
+  });
+}
+
+// Forward match: "find species suited to a location I pick" (used by the home
+// chip and the match panel's Change-location button).
+function openMatchLocationModal() {
+  openLocationPickerModal({
+    title: 'Find species suited to a climate',
+    intro: 'Pick a location and see which carnivorous plants could grow there outdoors.',
+    onPick: (lat, lng, name, status) => runMatchForLocation(lat, lng, name, status),
+  });
+}
+
+async function runMatchForLocation(lat, lng, name, status) {
+  if (status) status.textContent = `Fetching climate for ${name}…`;
+  else { openSidePanelForInat(); document.getElementById('panel-content').innerHTML = `<div class="climate-pending" style="margin-top:18px">Fetching climate for ${esc(name)}…</div>`; }
+  const [normals, rh] = await Promise.all([
+    fetchSearchClimateNormals(lat, lng).catch(() => null),
+    fetchRHNormals(lat, lng).catch(() => null),
+  ]);
+  const merged = normals ? { ...normals, ...(rh || {}) } : null;
+  if (!merged) {
+    const msg = 'Climate data unavailable for that location.';
+    if (status) status.textContent = msg;
+    else { const p = document.getElementById('panel-content'); if (p) p.innerHTML = `<div class="climate-pending">${msg}</div>`; }
+    return;
+  }
+  bmgCloseModal();
+  openSidePanelForInat();
+  runSpeciesMatch({ lat, lng, result: { _name: name, display_name: name }, normals: merged });
+}
+
+async function runReverseMatch(entry, lat, lng, placeName, statusEl) {
+  const status = statusEl || document.getElementById('pick-status');
   if (status) status.textContent = `Fetching climate for ${placeName}…`;
   const [normals, rh] = await Promise.all([
     fetchSearchClimateNormals(lat, lng).catch(() => null),
@@ -6253,13 +6293,6 @@ function refreshHomeChip() {
   } else {
     chip.style.display = 'none';
   }
-}
-// Open the climate panel for the saved home (which offers "Find species suited
-// to this climate"). Reuses the normal place-pick path.
-function openHomeLocation() {
-  const home = getHomeLocation();
-  if (!home) return;
-  selectSearchResult({ display_name: home.name, _name: home.name, lat: String(home.lat), lon: String(home.lng), place_rank: 30, address: {} });
 }
 
 function selectSearchResult(result) {
@@ -7738,7 +7771,10 @@ async function init() {
   initGalleryLightbox();
   initSearch();
   refreshHomeChip();
-  document.getElementById('home-chip')?.addEventListener('click', openHomeLocation);
+  document.getElementById('home-chip')?.addEventListener('click', () => {
+    const h = getHomeLocation();
+    if (h) runMatchForLocation(h.lat, h.lng, h.name);   // default the match to home
+  });
 
   // UI wiring. Use optional chaining so one missing element can never throw and
   // halt init() (which would leave the whole map blank). Defensive against a
