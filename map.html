@@ -969,6 +969,22 @@ html, body {
 .match-temp-toggle { display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 12px; color: var(--text-muted); cursor: pointer; user-select: none; white-space: nowrap; }
 .match-temp-toggle input { accent-color: var(--accent); cursor: pointer; }
 .cmp-sub-row.cmp-sub-muted { opacity: 0.4; }
+.match-legend { margin: 8px 0 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-elevated); }
+.match-legend > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--text-secondary, var(--text-muted)); padding: 9px 12px; list-style: none; user-select: none; }
+.match-legend > summary::-webkit-details-marker { display: none; }
+.match-legend > summary::before { content: '▸ '; color: var(--accent); }
+.match-legend[open] > summary::before { content: '▾ '; }
+.match-legend-body { padding: 0 12px 10px; font-size: 11.5px; line-height: 1.55; color: var(--text-muted); }
+.match-legend-body p { margin: 4px 0 6px; }
+.match-legend-body ul { margin: 4px 0 6px; padding-left: 4px; list-style: none; }
+.match-legend-body li { margin: 2px 0; }
+.cmp-weights-note { margin: 14px 0 4px; padding-top: 10px; border-top: 1px solid var(--border); font-size: 10.5px; line-height: 1.5; color: var(--text-muted); }
+.home-chip { display: none; align-items: center; gap: 5px; margin-top: 6px; max-width: 100%; background: var(--bg-panel); border: 1px solid var(--border); border-radius: 14px; padding: 5px 12px; font-size: 12px; color: var(--text-primary); cursor: pointer; }
+.home-chip:hover { border-color: var(--accent); color: var(--accent); }
+.home-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loc-set-home { display: inline-flex; align-items: center; gap: 5px; margin: 8px 0 4px; background: transparent; border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; font-size: 12px; color: var(--text-muted); cursor: pointer; }
+.loc-set-home:hover { border-color: var(--accent); color: var(--accent); }
+.loc-set-home.is-home { border-color: var(--accent); color: var(--accent); cursor: default; }
 .rate-or { text-align: center; font-size: 11px; color: var(--text-muted); margin: 14px 0 10px; }
 .rate-search-row { display: flex; gap: 8px; }
 .rate-search-input { flex: 1; min-width: 0; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 14px; font-family: inherit; }
@@ -2552,6 +2568,7 @@ body.bmg-onboarding #search-container { z-index: 9100; }
         <input id="search-input" type="text" placeholder="Search species, location, or region…" autocomplete="off" spellcheck="false" autocorrect="off" autocapitalize="none">
         <button id="search-clear" title="Clear search">×</button>
       </div>
+      <button id="home-chip" class="home-chip" title="Open your saved home location's climate">🏠 <span id="home-chip-name"></span></button>
       <div id="search-suggestions"></div>
     </div>
 
@@ -5447,6 +5464,34 @@ function matchTempBadgesHtml(m) {
   return b('Cold', m.coldTier) + b('Heat', m.heatTier);
 }
 
+// Collapsible legend explaining what triggers the ✓ / ⚠ / ✗ Cold & Heat labels
+// (the survival gates) and the score chip colours.
+function matchBadgeLegendHtml() {
+  return `
+    <details class="match-legend">
+      <summary>What do the ✓ ⚠ ✗ Cold / Heat labels mean?</summary>
+      <div class="match-legend-body">
+        <p>They are <b>survival gates</b> — whether your location's temperature <i>extremes</i> fall within the species' tolerance (its coldest/hottest survivable temperatures, from the coldest 10% / hottest 10% of days across its native range):</p>
+        <ul>
+          <li><b>✓ Cold</b> — your coldest extreme is at or above the species' cold limit.</li>
+          <li><b>⚠ Cold</b> — within 2&nbsp;°C below the limit (borderline; winter protection helps).</li>
+          <li><b>✗ Cold</b> — colder than it can survive outdoors.</li>
+          <li><b>✓ Heat</b> — your hottest extreme is at or below its heat limit.</li>
+          <li><b>⚠ Heat</b> — within 3&nbsp;°C above the limit.</li>
+          <li><b>✗ Heat</b> — hotter than it tolerates.</li>
+        </ul>
+        <p>A ✗ on either gate means <b>"won't survive outdoors."</b> The 0–100 <b>score</b> then ranks the survivors by overall climate similarity — <span style="color:hsl(134,60%,72%)">green ≥75</span>, <span style="color:hsl(45,60%,72%)">amber ≥50</span>, grey below.</p>
+      </div>
+    </details>`;
+}
+
+// Tiny note listing the score weights (derived from MATCH_WEIGHTS so it can't drift).
+function matchWeightsNoteHtml() {
+  const labels = { low: 'Low temp', high: 'High temp', monthly: 'Monthly alignment', sun: 'Sunlight', rh: 'Humidity', precip: 'Rainfall' };
+  const parts = Object.keys(MATCH_WEIGHTS).map(k => `${labels[k]} ${MATCH_WEIGHTS[k]}%`);
+  return `<div class="cmp-weights-note">How the score is weighted: ${parts.join(' · ')}. Survival depends on the temperature gates above; any factor with no data is dropped and the rest rescaled.</div>`;
+}
+
 // Render the match results in the side panel. Survivors are ranked by score;
 // failures (too cold / too hot) are hidden behind a toggle.
 function renderSpeciesMatchPanel(state, matches) {
@@ -5528,6 +5573,7 @@ function renderSpeciesMatchPanel(state, matches) {
       species' winter dormancy can be provided artificially). Treat low scores as "needs more
       attention," not "impossible."
     </div>
+    ${matchBadgeLegendHtml()}
     ${filterRowHtml}
     <div class="match-card-list">${shownSurvivors.map(cardHtml).join('')}</div>
     ${failHtml}
@@ -5607,6 +5653,7 @@ function renderSpeciesComparePanel(state, m, matches) {
       </div>
     </div>
     <div class="match-card-badges" style="margin:6px 0 10px">${matchTempBadgesHtml(m)}</div>
+    ${matchBadgeLegendHtml()}
 
     <div class="cmp-sub-list">
       ${subRow('Low temperature',   'low',     'coldest month vs native')}
@@ -5651,6 +5698,7 @@ function renderSpeciesComparePanel(state, m, matches) {
     <button class="find-species-btn" id="cmp-open-species" style="margin-top:14px">
       <span class="find-species-icon">${BMG_ICONS.leaf}</span> Full species details
     </button>
+    ${matchWeightsNoteHtml()}
   `;
   wireNavBackBtn();
   document.getElementById('cmp-shift-all')?.addEventListener('change', e => {
@@ -5729,6 +5777,7 @@ function openRateLocationModal(entry) {
   body.innerHTML = `
     <h2 class="bmg-modal-title">Will <i>${esc(entry.scientific_name)}</i> grow where you are?</h2>
     <p class="bmg-modal-text">Compare your local <b>outdoor</b> climate to this species' native range. (Greenhouse/terrarium conditions will differ.)</p>
+    ${(() => { const h = getHomeLocation(); return h ? `<button class="find-species-btn" id="rate-home" style="width:100%;justify-content:center;margin-bottom:8px"><span class="find-species-icon">🏠</span> Rate at my home (${esc(h.name)})</button>` : ''; })()}
     <button class="find-species-btn" id="rate-geolocate" style="width:100%;justify-content:center">
       <span class="find-species-icon">📍</span> Use my location
     </button>
@@ -5741,6 +5790,11 @@ function openRateLocationModal(entry) {
   `;
   document.getElementById('bmg-modal-overlay').classList.remove('hidden');
   const status = document.getElementById('rate-status');
+
+  document.getElementById('rate-home')?.addEventListener('click', () => {
+    const h = getHomeLocation();
+    if (h) runReverseMatch(entry, h.lat, h.lng, h.name);
+  });
 
   document.getElementById('rate-geolocate').addEventListener('click', () => {
     if (!navigator.geolocation) { status.textContent = 'Geolocation unavailable — search a place instead.'; return; }
@@ -5977,6 +6031,7 @@ function buildLocationPanel(state) {
     ${subLabel ? `<div class="p-common-name">${esc(subLabel)}</div>` : ''}
     <div class="p-location">${lat.toFixed(4)}, ${lng.toFixed(4)}</div>
     ${copyLinkBtnHtml('at', `${lat.toFixed(4)},${lng.toFixed(4)},${Math.round(map.getZoom())}`, 'loc-copy-link')}
+    <button class="loc-set-home" id="loc-set-home" title="Save this place to reuse for climate comparisons">🏠 Set as home</button>
     ${koppenBadgeHtml}
     <div class="section-divider"></div>
     <div class="section-label">Climate (2014–2023 avg)</div>
@@ -5991,6 +6046,19 @@ function buildLocationPanel(state) {
 
   // Wire the climate-match button (only present when climate has loaded)
   document.getElementById('find-species-btn')?.addEventListener('click', () => runSpeciesMatch(state));
+
+  // "Set as home" — save this place for repeated climate comparisons.
+  const setHomeBtn = document.getElementById('loc-set-home');
+  if (setHomeBtn) {
+    const home = getHomeLocation();
+    const isHome = home && Math.abs(home.lat - lat) < 0.01 && Math.abs(home.lng - lng) < 0.01;
+    if (isHome) { setHomeBtn.textContent = '🏠 This is your home'; setHomeBtn.classList.add('is-home'); }
+    setHomeBtn.addEventListener('click', () => {
+      setHomeLocation({ lat, lng, name });
+      setHomeBtn.textContent = '✓ Saved as home';
+      setHomeBtn.classList.add('is-home');
+    });
+  }
 
   // Fetch soil data asynchronously and populate the section once data arrives
   if (!loading) loadAndRenderSoilSection(lat, lng);
@@ -6160,6 +6228,34 @@ function isAdminRegionResult(r) {
   if (r.class === 'boundary' && r.type === 'administrative') return true;
   if (r.class === 'place' && ['state','region','province','county','island','archipelago','country'].includes(r.type)) return true;
   return false;
+}
+
+// ── Home location ──────────────────────────────────────────────────────────
+// A saved {lat,lng,name} the user can reuse to compare climates repeatedly.
+function getHomeLocation() {
+  try { const s = lsGet('bmg_home_location'); return s ? JSON.parse(s) : null; } catch { return null; }
+}
+function setHomeLocation(loc) {
+  lsSet('bmg_home_location', JSON.stringify({ lat: loc.lat, lng: loc.lng, name: loc.name || 'Home' }));
+  refreshHomeChip();
+}
+function refreshHomeChip() {
+  const chip = document.getElementById('home-chip');
+  if (!chip) return;
+  const home = getHomeLocation();
+  if (home) {
+    chip.style.display = 'inline-flex';
+    document.getElementById('home-chip-name').textContent = home.name || 'Home';
+  } else {
+    chip.style.display = 'none';
+  }
+}
+// Open the climate panel for the saved home (which offers "Find species suited
+// to this climate"). Reuses the normal place-pick path.
+function openHomeLocation() {
+  const home = getHomeLocation();
+  if (!home) return;
+  selectSearchResult({ display_name: home.name, _name: home.name, lat: String(home.lat), lon: String(home.lng), place_rank: 30, address: {} });
 }
 
 function selectSearchResult(result) {
@@ -7637,6 +7733,8 @@ async function init() {
   initMobileControlsToggle();
   initGalleryLightbox();
   initSearch();
+  refreshHomeChip();
+  document.getElementById('home-chip')?.addEventListener('click', openHomeLocation);
 
   // UI wiring. Use optional chaining so one missing element can never throw and
   // halt init() (which would leave the whole map blank). Defensive against a
