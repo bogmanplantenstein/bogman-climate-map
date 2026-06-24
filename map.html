@@ -991,7 +991,7 @@ html, body {
 .loc-set-home.is-home { border-color: var(--accent); color: var(--accent); cursor: default; }
 .rate-or { text-align: center; font-size: 11px; color: var(--text-muted); margin: 14px 0 10px; }
 .rate-search-row { display: flex; gap: 8px; }
-.rate-search-input { flex: 1; min-width: 0; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 14px; font-family: inherit; }
+.rate-search-input { flex: 1; min-width: 0; background: var(--bg-elevated); color: var(--text-primary); border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 16px; font-family: inherit; }
 .rate-search-input:focus { outline: none; border-color: var(--accent); }
 .rate-search-go { flex-shrink: 0; background: var(--accent-dim, rgba(63,185,80,0.15)); color: var(--accent); border: 1px solid var(--accent); border-radius: 8px; padding: 0 16px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .rate-search-go:hover { background: var(--accent); color: #0d1117; }
@@ -1201,6 +1201,8 @@ html, body {
   /* Search bar: leave room for BOTH the controls toggle (top-right) and a small
      gutter, so it never overlaps the control stack / its group labels. */
   #search-container { left: 10px; transform: none; width: calc(100% - 64px); max-width: none; }
+  /* 16px prevents iOS Safari/Chrome from auto-zooming the page on input focus. */
+  #search-input { font-size: 16px; }
 
   /* The hamburger toggle sits in the top-right corner where the stack used to
      crowd the search bar. */
@@ -7339,6 +7341,16 @@ function initSearch() {
     clearBtn.classList.toggle('visible', q.length > 0);
     if (!q) { suggestions.classList.remove('open'); return; }
     doSearch(q);
+  });
+
+  // Re-show live results when the user taps back into the bar with text already
+  // present (e.g. after clicking through a result and exiting).
+  input.addEventListener('focus', () => {
+    const q = input.value.trim();
+    if (q.length < 2 || suggestions.classList.contains('open')) return;
+    const taxonResults = searchInatTaxa(q);
+    if (taxonResults.length) renderSuggestions(taxonResults);   // instant in-memory matches
+    doSearch(q);                                                // then append location results
   });
 
   function updateHighlight() {
