@@ -726,37 +726,75 @@ function applyLapseRate(climate, elev) {
 }
 
 // ── iNat taxa info batch fetch ────────────────────────────────────────────────
+// Photo + Wikipedia summary + iNat link per species. These change very rarely, so
+// they're cached (same TTL pattern as phenology) with a long window; only cache
+// misses are batch-fetched. Keyed by stable taxonId. null is cached too, so a
+// species the API doesn't return isn't re-queried every run.
+const TAXAINFO_CACHE_PATH   = join(ROOT, 'inat', 'taxa-info-cache.json');
+const TAXAINFO_CACHE_VER    = 1;     // bump if the stored shape changes
+const TAXAINFO_MAX_AGE_DAYS = 60;    // photos/summaries are near-static
 
 async function fetchInatTaxaInfo(taxaToFetch) {
   // taxaToFetch: [{ti, taxonId}]
-  const info  = new Map(); // ti → {photo_url, wikipedia_summary, inat_url}
-  const BATCH = 30;
+  let cache = { _v: TAXAINFO_CACHE_VER, _fetched: null, data: {} };
+  if (existsSync(TAXAINFO_CACHE_PATH)) {
+    try {
+      const raw = JSON.parse(readFileSync(TAXAINFO_CACHE_PATH, 'utf8'));
+      if (raw._v === TAXAINFO_CACHE_VER && raw.data) cache = raw;
+    } catch { /* ignore corrupt cache */ }
+  }
+  const ageDays = cache._fetched ? (Date.now() - Date.parse(cache._fetched)) / 86_400_000 : Infinity;
+  const fresh   = ageDays < TAXAINFO_MAX_AGE_DAYS;
 
-  for (let i = 0; i < taxaToFetch.length; i += BATCH) {
-    const batch = taxaToFetch.slice(i, i + BATCH);
+  const info = new Map(); // ti → {photo_url, wikipedia_summary, inat_url}
+  const need = [];        // taxa not served from a fresh cache
+  for (const t of taxaToFetch) {
+    if (fresh && Object.prototype.hasOwnProperty.call(cache.data, t.taxonId)) {
+      const c = cache.data[t.taxonId];
+      if (c) info.set(t.ti, c);
+    } else {
+      need.push(t);
+    }
+  }
+  console.log(`  Taxa-info cache: ${Object.keys(cache.data).length} entries, ${cache._fetched ? ageDays.toFixed(0) + 'd old' : 'none'} — reusing ${taxaToFetch.length - need.length}, fetching ${need.length}`);
+
+  const BATCH = 30;
+  for (let i = 0; i < need.length; i += BATCH) {
+    const batch = need.slice(i, i + BATCH);
     const ids   = batch.map(t => t.taxonId).join(',');
     try {
       const data = await apiGet('/taxa', { id: ids, per_page: BATCH });
+      const returned = new Set();
       if (data?.results) {
         for (const t of data.results) {
           const match = batch.find(b => b.taxonId === t.id);
           if (match) {
-            info.set(match.ti, {
+            const rec = {
               photo_url:         t.default_photo?.medium_url || t.default_photo?.square_url || null,
               wikipedia_summary: t.wikipedia_summary || null,
               inat_url:          `https://www.inaturalist.org/taxa/${t.id}`,
-            });
+            };
+            cache.data[match.taxonId] = rec;
+            info.set(match.ti, rec);
+            returned.add(match.taxonId);
           }
         }
       }
+      // Cache a null for any batch taxon the API didn't return, so we don't keep
+      // re-querying it. (Only when the request itself succeeded.)
+      for (const b of batch) if (!returned.has(b.taxonId)) cache.data[b.taxonId] = null;
     } catch (err) {
-      console.warn(`  ⚠ taxa-info batch ${i}–${i + BATCH}: ${err.message}`);
+      console.warn(`  ⚠ taxa-info batch ${i}–${i + BATCH}: ${err.message}`);   // leave uncached → retried next run
     }
     if ((i / BATCH + 1) % 10 === 0) {
-      console.log(`  ${Math.min(i + BATCH, taxaToFetch.length)}/${taxaToFetch.length} taxa info fetched`);
+      console.log(`  ${Math.min(i + BATCH, need.length)}/${need.length} taxa info fetched`);
     }
   }
 
+  if (!fresh || !cache._fetched) cache._fetched = new Date().toISOString();
+  cache._v = TAXAINFO_CACHE_VER;
+  try { writeFileSync(TAXAINFO_CACHE_PATH, JSON.stringify(cache)); } catch (err) { console.warn(`  ⚠ Could not write taxa-info cache: ${err.message}`); }
+  console.log(`  ✓ Taxa-info: ${taxaToFetch.length - need.length} reused, ${need.length} fetched`);
   return info;
 }
 
