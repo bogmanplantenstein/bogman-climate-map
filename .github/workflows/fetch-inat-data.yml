@@ -4,6 +4,14 @@ on:
   schedule:
     - cron: '0 3 1 * *'   # 3am UTC on the 1st of each month
   workflow_dispatch:        # manual trigger any time via Actions tab
+    inputs:
+      stage:
+        description: 'Stages to run'
+        type: choice
+        options:
+          - full           # obs fetch + species climate (the monthly default)
+          - species-only   # skip obs fetch; recompute envelopes from committed data + caches
+        default: full
 
 permissions:
   contents: write           # needed to commit updated inat/ files back to repo
@@ -15,6 +23,9 @@ jobs:
 
   # ── Job 1: fetch all observations ──────────────────────────────────────────
   fetch-obs:
+    # Skipped only on a manual "species-only" dispatch. On the schedule the input
+    # is empty (≠ 'species-only'), so the monthly run always fetches obs.
+    if: ${{ github.event.inputs.stage != 'species-only' }}
     runs-on: ubuntu-latest
     timeout-minutes: 90    # obs fetch runs ~55-65 min
 
@@ -62,7 +73,10 @@ jobs:
 
   # ── Job 2: precompute species climate envelopes ───────────────────────────
   species-climate:
-    needs: fetch-obs        # starts only after fetch-obs succeeds
+    needs: fetch-obs
+    # Run when fetch-obs succeeded (full/scheduled run) OR was skipped
+    # (species-only dispatch); do NOT run if the obs fetch actually failed.
+    if: ${{ always() && needs.fetch-obs.result != 'failure' && needs.fetch-obs.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 360   # climate fetch alone takes ~240 min (10k cells × ~1.4s/cell incl. response latency)
 
