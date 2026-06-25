@@ -797,10 +797,38 @@ async function phenoHistogram(taxonId, valueId, hemi) {
   }
 }
 
+// Phenology is the slowest part of a species run (≈3–6 iNat calls per species).
+// We persist it so off-cycle re-runs (e.g. an elevation-band tweak) don't re-hit
+// the API. A TTL keeps it honest: once the cache passes PHENO_MAX_AGE_DAYS the
+// monthly refresh re-fetches everything so seasonality stays current, while
+// re-runs within the window reuse it. Cached entries are keyed by the stable
+// taxonId (the per-run `ti` index can change). null is cached too, so species
+// with no phenology aren't re-queried every time.
+const PHENO_CACHE_PATH   = join(ROOT, 'inat', 'phenology-cache.json');
+const PHENO_CACHE_VER    = 1;     // bump if the phenology shape changes
+const PHENO_MAX_AGE_DAYS = 20;    // < monthly cadence, so the cron always refreshes
+
 async function fetchPhenology(taxaToFetch) {
-  const out = new Map();   // ti → { flowering:{nh,sh}, budding:{...}, fruiting:{...} }
-  let done = 0;
+  let cache = { _v: PHENO_CACHE_VER, _fetched: null, data: {} };
+  if (existsSync(PHENO_CACHE_PATH)) {
+    try {
+      const raw = JSON.parse(readFileSync(PHENO_CACHE_PATH, 'utf8'));
+      if (raw._v === PHENO_CACHE_VER && raw.data) cache = raw;
+    } catch { /* ignore corrupt cache */ }
+  }
+  const ageDays = cache._fetched ? (Date.now() - Date.parse(cache._fetched)) / 86_400_000 : Infinity;
+  const fresh   = ageDays < PHENO_MAX_AGE_DAYS;
+  console.log(`  Phenology cache: ${Object.keys(cache.data).length} entries, ${cache._fetched ? ageDays.toFixed(0) + 'd old' : 'none'} — ${fresh ? 'reusing fresh entries, fetching only gaps' : 'stale → re-fetching'}`);
+
+  const out = new Map();   // ti → { flowering:{nh,sh}, ... }
+  let reused = 0, fetched = 0;
   for (const { ti, taxonId, hasNH, hasSH } of taxaToFetch) {
+    if (fresh && Object.prototype.hasOwnProperty.call(cache.data, taxonId)) {
+      const cached = cache.data[taxonId];
+      if (cached) out.set(ti, cached);
+      reused++;
+      continue;
+    }
     const hemis = [];
     if (hasNH) hemis.push('nh');
     if (hasSH) hemis.push('sh');
@@ -813,9 +841,18 @@ async function fetchPhenology(taxaToFetch) {
       }
       if (Object.keys(byHemi).length) ph[key] = byHemi;
     }
-    if (Object.keys(ph).length) out.set(ti, ph);
-    if (++done % 50 === 0) console.log(`  ${done}/${taxaToFetch.length} phenology fetched`);
+    const result = Object.keys(ph).length ? ph : null;
+    cache.data[taxonId] = result;
+    if (result) out.set(ti, result);
+    if (++fetched % 50 === 0) console.log(`  ${fetched} phenology fetched (${reused} reused)`);
   }
+
+  // Stamp a fresh time only when we (re)fetched the whole set; gap-fills on a
+  // still-fresh cache keep the original timestamp so it keeps ageing toward the TTL.
+  if (!fresh || !cache._fetched) cache._fetched = new Date().toISOString();
+  cache._v = PHENO_CACHE_VER;
+  try { writeFileSync(PHENO_CACHE_PATH, JSON.stringify(cache)); } catch (err) { console.warn(`  ⚠ Could not write phenology cache: ${err.message}`); }
+  console.log(`  ✓ Phenology: ${reused} reused, ${fetched} fetched; cache now ${Object.keys(cache.data).length} entries`);
   return out;
 }
 
