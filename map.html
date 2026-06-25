@@ -2040,6 +2040,9 @@ html, body {
   border-radius: 6px;
 }
 .sp-refine-note strong { color: var(--text-primary); font-weight: 600; }
+.sp-quick-actions { display: flex; gap: 8px; margin: 8px 0; }
+.sp-quick-btn { flex: 1; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: var(--bg-elevated); border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px; font-size: 12px; font-weight: 500; color: var(--text-primary); cursor: pointer; }
+.sp-quick-btn:hover { border-color: var(--accent); color: var(--accent); }
 
 /* ── Soil layer controls ─────────────────────────────────── */
 .soil-layer-wrap { position: relative; }
@@ -6768,6 +6771,12 @@ function buildSpeciesSidebarContent(entry) {
       </div>
     </div>
     ${copyLinkBtnHtml('sp', entry.taxon_id, 'sp-copy-link')}
+    ${speciesObsAll.length ? `
+    <div class="sp-quick-actions">
+      ${speciesObsAll.some(o => o[OBS_FLAGS] & F_PHOTO)
+        ? `<button class="sp-quick-btn" id="sp-gallery-top"><span class="btn-icon">${BMG_ICONS.grid}</span> Photo gallery</button>` : ''}
+      <button class="sp-quick-btn" id="sp-obs-top"><span class="btn-icon">${BMG_ICONS.eye}</span> All observations</button>
+    </div>` : ''}
     <button class="find-species-btn" id="sp-rate-location" title="Compare your local outdoor climate to this species' native range">
       <span class="find-species-icon">${BMG_ICONS.leaf}</span> Will it grow at my location?
     </button>
@@ -6785,6 +6794,21 @@ function buildSpeciesSidebarContent(entry) {
   wireCopyLinkButtons(document.getElementById('panel-content'));
   if (entry.taxon_id != null) setDeepLink('sp', entry.taxon_id);
   document.getElementById('sp-rate-location')?.addEventListener('click', () => openRateLocationModal(entry));
+
+  // Shared by the top "Photo gallery" button and the one inside the obs section.
+  const openSpeciesGallery = () => openPhotoGallery(
+    speciesObsAll.map(galleryDescFromObs),
+    entry.scientific_name,
+    { label: esc(entry.scientific_name), restore: () => openSpeciesSidebar(entry.taxon_id, entry.scientific_name) }
+  );
+  document.getElementById('sp-gallery-top')?.addEventListener('click', openSpeciesGallery);
+  // "All observations" → open the (lazy-rendered) obs section and scroll to it.
+  document.getElementById('sp-obs-top')?.addEventListener('click', () => {
+    const sec = document.getElementById('sp-obs-section');
+    if (!sec) return;
+    sec.open = true;   // setting .open fires the toggle handler → lazy renders the list
+    sec.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
 
   // ── Wire All-Observations section ──
   // Lazy-render: filter the per-species obs (already computed above) and
@@ -6867,13 +6891,7 @@ function buildSpeciesSidebarContent(entry) {
       sortedSpeciesObs = sortSpeciesObsBy(e.target.value);
       renderSpeciesObsCards(0);
     });
-    document.getElementById('sp-gallery-btn')?.addEventListener('click', () => {
-      openPhotoGallery(
-        speciesObsAll.map(galleryDescFromObs),
-        entry.scientific_name,
-        { label: esc(entry.scientific_name), restore: () => openSpeciesSidebar(entry.taxon_id, entry.scientific_name) }
-      );
-    });
+    document.getElementById('sp-gallery-btn')?.addEventListener('click', openSpeciesGallery);
 
     // Delegated click handler for opening the observation detail panel.
     // Converts raw obs back to the feature shape openInatObsPanel expects.
