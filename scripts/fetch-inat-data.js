@@ -62,6 +62,16 @@ const CLIM_CACHE_VER  = 4;   // bump when climate API source or cache shape chan
                               // v4 = adds ALLSKY_SFC_SW_DWN → monthly DLI (mol/m²/day) for the
                               //      climate-match sunlight factor
 
+// ── Elevation-band refinement (obscured-location accuracy) ────────────────────
+// Published per-species elevation ranges (curated, see scripts/build-elevation-bands.py).
+// For a species' cells whose observations are mostly obscured, the representative
+// coordinate is imprecise (iNat snaps obscured points to ~0.2°/±22 km), so its
+// sampled elevation can be far from the plant's real montane habitat. We clamp the
+// elevation into the species' published band before the lapse-rate correction,
+// giving a temperature closer to where the plant actually grows.
+const ELEV_BANDS_PATH       = join(ROOT, 'inat', 'elevation-bands.json');
+const ELEV_CLAMP_OBSC_FRAC  = 0.5;   // clamp a cell only if ≥ this fraction of the taxon's obs in it are obscured
+
 // ── Soil constants ────────────────────────────────────────────────────────────
 // NOTE: WRB (soil type) is a *classification* property — it has its own endpoint.
 //       Mixing &property=wrb into /properties/query causes HTTP 500 for all cells.
@@ -809,6 +819,40 @@ async function fetchPhenology(taxaToFetch) {
   return out;
 }
 
+// ── Elevation-band helpers (obscured-cell refinement) ─────────────────────────
+
+// Load the curated bands → Map<"genus species", [min,max]>. Empty Map if the file
+// is missing, in which case the refinement is simply a no-op.
+function loadElevBands() {
+  const m = new Map();
+  try {
+    const j = JSON.parse(readFileSync(ELEV_BANDS_PATH, 'utf8'));
+    for (const [k, v] of Object.entries(j.species || {})) m.set(k, v);
+    console.log(`  Loaded ${m.size} species elevation bands (obscured-cell refinement)`);
+  } catch (err) {
+    console.warn(`  ⚠ No elevation bands loaded (${err.message}) — obscured-cell clamp disabled`);
+  }
+  return m;
+}
+
+// Band for a taxon name, matched on the lowercase "genus species" binomial so
+// subspecies/varieties fall back to their species' band. Returns [min,max] or null.
+function elevBandFor(bands, taxonName) {
+  if (!taxonName) return null;
+  const key = String(taxonName).toLowerCase().split(/\s+/).slice(0, 2).join(' ');
+  return bands.get(key) || null;
+}
+
+// Clamp a ground elevation into [min,max] (either bound may be null). Only moves
+// the value when it's OUTSIDE the band, so correctly-placed points are unchanged.
+function clampElevToBand(elev, band) {
+  if (elev == null || !band) return elev;
+  let e = elev;
+  if (band[0] != null && e < band[0]) e = band[0];
+  if (band[1] != null && e > band[1]) e = band[1];
+  return e;
+}
+
 // ── Main species precompute orchestrator ──────────────────────────────────────
 
 async function computeSpeciesData(allTaxa, allObs) {
@@ -918,9 +962,11 @@ async function computeSpeciesData(allTaxa, allObs) {
 
   // ── 4. Build per-taxon indices ────────────────────────────────────────────
   console.log('▶ Building species indices...');
+  const elevBands     = loadElevBands();            // "genus species" → [min,max]
   const taxonCells    = new Map(); // taxonIdx → Set<cellKey>
   const taxonKoppen   = new Map(); // taxonIdx → Map<zone, count>
   const taxonObsCount = new Map(); // taxonIdx → count
+  const taxonCellObsc = new Map(); // `${ti}|${key}` → { obsc, total } for the obscured-cell clamp
 
   for (const o of allObs) {
     const ti   = o[3];
@@ -937,6 +983,13 @@ async function computeSpeciesData(allTaxa, allObs) {
       m.set(zone, (m.get(zone) || 0) + 1);
     }
 
+    // Per-taxon-per-cell obscured tally (flags bit 2 = obscured).
+    const ck = `${ti}|${key}`;
+    let agg = taxonCellObsc.get(ck);
+    if (!agg) { agg = { obsc: 0, total: 0 }; taxonCellObsc.set(ck, agg); }
+    agg.total++;
+    if (o[5] & 2) agg.obsc++;
+
     taxonObsCount.set(ti, (taxonObsCount.get(ti) || 0) + 1);
   }
 
@@ -949,16 +1002,36 @@ async function computeSpeciesData(allTaxa, allObs) {
     const cells = taxonCells.get(ti);
     if (!cells || cells.size < OM_MIN_CELLS) continue;
 
-    // Gather climate objects for this taxon's occupied cells
+    const [taxonId, taxonName, genus, commonName] = allTaxa[ti];
+    const band = elevBandFor(elevBands, taxonName);
+
+    // Gather climate objects for this taxon's occupied cells. For a species with a
+    // published elevation band, cells whose obs are mostly obscured get their
+    // elevation clamped into that band and the lapse correction re-applied — the
+    // obscured coordinate's own sampled elevation is unreliable, so this pulls the
+    // temperature toward the plant's real habitat elevation.
+    let clampedCells = 0;
     const climates = []; // [{c: climate, lat, lng, elev}]
     for (const key of cells) {
-      const c = cellClimates.get(key);
       const r = cellReps.get(key);
-      if (c && r) climates.push({ c, lat: r.lat, lng: r.lng, elev: elevs.get(key) ?? null });
+      let c = cellClimates.get(key);
+      if (!c || !r) continue;
+      let cellElev = elevs.get(key) ?? null;
+      if (band && cellElev != null) {
+        const agg = taxonCellObsc.get(`${ti}|${key}`);
+        if (agg && agg.total && agg.obsc / agg.total >= ELEV_CLAMP_OBSC_FRAC) {
+          const clamped = clampElevToBand(cellElev, band);
+          const raw = climCache[key];
+          if (clamped !== cellElev && raw) {
+            c = applyLapseRate(raw, clamped);   // re-correct temperature at the band elevation
+            cellElev = clamped;
+            clampedCells++;
+          }
+        }
+      }
+      climates.push({ c, lat: r.lat, lng: r.lng, elev: cellElev });
     }
     if (climates.length < OM_MIN_CELLS) continue;
-
-    const [taxonId, taxonName, genus, commonName] = allTaxa[ti];
 
     // Annual headline metrics (one value per sample point)
     const annualMaxT  = [], annualMinT  = [], annualPrec = [], annualRH = [];
@@ -1090,6 +1163,16 @@ async function computeSpeciesData(allTaxa, allObs) {
       koppen,
       // photo_url, wikipedia_summary, inat_url added in step 6
     };
+
+    // Record when the published elevation band actually refined this species'
+    // climate (≥1 obscured cell clamped) so the species page can explain it.
+    if (clampedCells > 0) {
+      speciesData[taxonId].elevBandRefine = {
+        min: band[0], max: band[1],
+        cellsClamped: clampedCells,
+        cells: climates.length,
+      };
+    }
 
     taxaToFetch.push({ ti, taxonId, hasNH: nhC.length > 0, hasSH: shC.length > 0 });
   }

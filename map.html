@@ -2029,6 +2029,17 @@ html, body {
   border-top: 1px solid var(--border);
   line-height: 1.5;
 }
+.sp-refine-note {
+  font-size: 10.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+  margin-top: 8px;
+  padding: 8px 10px;
+  background: rgba(63, 185, 80, 0.06);
+  border: 1px solid rgba(63, 185, 80, 0.22);
+  border-radius: 6px;
+}
+.sp-refine-note strong { color: var(--text-primary); font-weight: 600; }
 
 /* ── Soil layer controls ─────────────────────────────────── */
 .soil-layer-wrap { position: relative; }
@@ -6689,11 +6700,26 @@ function buildSpeciesSidebarContent(entry) {
 
   const nCells = entry.sample_count || 0;
   const lowSample = nCells < 3;
+  // Obscured-location elevation refinement (set by the pipeline when a published
+  // elevation band corrected this species' obscured cells — see fetch-inat-data.js).
+  const ebr = entry.elevBandRefine;
+  const ebrRange = ebr
+    ? (ebr.min != null && ebr.max != null ? `${ebr.min.toLocaleString()}–${ebr.max.toLocaleString()} m`
+      : ebr.min != null ? `above ${ebr.min.toLocaleString()} m` : `below ${ebr.max.toLocaleString()} m`)
+    : '';
+  const refineNote = ebr ? `<div class="sp-refine-note">
+    <strong>Obscured-location refinement.</strong> ${ebr.cellsClamped} of this species' ${ebr.cells} climate
+    sample area${ebr.cells === 1 ? '' : 's'} had mostly hidden (<em>obscured</em>) coordinates. Because an obscured
+    point can sit ~22&nbsp;km off — often at the wrong elevation — those areas' elevations were corrected to the
+    species' published range (${ebrRange}) from external literature before computing temperatures, giving a more
+    accurate climate estimate than the raw obscured coordinates would.
+  </div>` : '';
+
   const sampleNote = `<div class="sp-sample-note">
     Climate envelope from ${nCells.toLocaleString()} representative location${nCells === 1 ? '' : 's'}
     (one per occupied 0.5° grid cell), drawn from ${entry.obs_count.toLocaleString()} total sighting${entry.obs_count === 1 ? '' : 's'}.
     ${lowSample ? `<span style="display:block;margin-top:4px;color:#d9a441">⚠ Small sample (${nCells} location${nCells === 1 ? '' : 's'}) — treat as indicative only. With so few sites the across-site limits collapse toward a single place.</span>` : ''}
-  </div>`;
+  </div>${refineNote}`;
 
   // ── All Observations section (lazy-loaded list of iNat obs for this species) ──
   // Filtered from the already-loaded inatObs array. Lazy-rendered on first
