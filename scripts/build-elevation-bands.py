@@ -82,6 +82,19 @@ def main():
                 dupes.append(name)
             species[key] = [mn, mx]
 
+    # Fold in the existing curated Nepenthes bands (their own source file) so the
+    # pipeline's envelope refinement covers Nepenthes too — they're heavily obscured.
+    nep_path = ROOT / "inat" / "nepenthes-elevation.json"
+    nep_added = 0
+    if nep_path.exists():
+        nep = json.loads(nep_path.read_text(encoding="utf-8")).get("species", {})
+        for k, v in nep.items():
+            key = str(k).strip().lower()
+            if isinstance(v, list) and len(v) == 2 and key not in species:
+                species[key] = [v[0], v[1]]
+                nep_added += 1
+        print(f"  Folded in {nep_added} Nepenthes bands from nepenthes-elevation.json")
+
     out = {
         "_about": (
             "Curated published elevation bands [minMetres, maxMetres] (either may be "
