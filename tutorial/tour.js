@@ -107,10 +107,10 @@
     var el = $(sel); if (el) el.click();
     return delay(150);
   }
-  // "What can I grow?" demo — Wilmington, NC (Venus-flytrap country) makes a rich
-  // outdoor match. Keep the place name here in sync with grow.results copy.
+  // "What can I grow?" demo location — Los Angeles. Keep the place name here in
+  // sync with grow.results copy.
   function matchDemoLocation() {
-    if (typeof runMatchForLocation === 'function') return runMatchForLocation(34.2257, -77.9447, 'Wilmington');
+    if (typeof runMatchForLocation === 'function') return runMatchForLocation(34.0522, -118.2437, 'Los Angeles');
   }
   // Open the Köppen colour-key panel (map control) so a step can highlight it.
   function openKoppenLegend() {
@@ -118,6 +118,38 @@
     if (panel && panel.classList.contains('open')) return delay(0);
     var btn = $('.koppen-legend-wrap .map-btn'); if (btn) btn.click();
     return delay(150);
+  }
+  // Close the Köppen colour-key panel (map control).
+  function closeKoppenLegend() {
+    var panel = $('.koppen-legend-panel'); if (panel) panel.classList.remove('open');
+    var btn = $('.koppen-legend-wrap .map-btn'); if (btn) btn.classList.remove('active');
+    return delay(80);
+  }
+  // Open a species, expand its All-Observations section, and scroll the panel so
+  // the list is framed at the top. scrollIntoView under-scrolls here, so set the
+  // scroll offset directly (by the measured delta), twice, to survive reflow.
+  function scrollSectionToTop(secId) {
+    var sec = document.getElementById(secId), sc = document.getElementById('panel-scroll');
+    if (sec && sc) { sc.scrollTop += sec.getBoundingClientRect().top - sc.getBoundingClientRect().top - 10; }
+  }
+  function openObsList(name) {
+    return openSpeciesByName(name).then(function () {
+      var sec = document.getElementById('sp-obs-section');
+      if (sec && !sec.open) sec.open = true;   // fires the toggle handler → lazy renders
+      return waitForTarget('#sp-obs-list', 3000);
+    }).then(function () { return delay(150); })
+      .then(function () { scrollSectionToTop('sp-obs-section'); return delay(200); })
+      .then(function () { scrollSectionToTop('sp-obs-section'); return delay(60); });
+  }
+  // "What can I grow?" hemisphere-shift demo — a southern-hemisphere species
+  // (Cephalotus, SW Australia) scored against Los Angeles shows the seasonal
+  // shift, so the scores + shift-toggle steps have something to point at.
+  function openCompareForShiftDemo() {
+    if (typeof runReverseMatch !== 'function' || typeof inatSpeciesData === 'undefined') return;
+    var tid = taxonIdByName('Cephalotus follicularis');
+    var entry = tid != null ? inatSpeciesData[tid] : null;
+    if (!entry) return;
+    return runReverseMatch(entry, 34.0522, -118.2437, 'Los Angeles');
   }
 
   // ── the path definitions (text comes from tour-content) ────────────────
@@ -144,8 +176,8 @@
         // Interactive: let the user scroll the gallery and click a photo (which
         // opens the full-screen lightbox — the tour hides itself while it's up).
         { id: 'gallery', before: function () { return clickTarget('#sp-gallery-top'); }, target: '#side-panel', interactive: true },
-        // Reopen the species, then expand the All Observations list.
-        { id: 'obs',     before: function () { return openSpeciesByName('Dionaea muscipula').then(function () { return clickTarget('#sp-obs-top'); }); }, target: '#side-panel', interactive: true },
+        // Reopen the species, expand the All Observations list, scroll it into frame.
+        { id: 'obs',     before: function () { return openObsList('Dionaea muscipula'); }, target: '#side-panel', interactive: true },
       ],
     },
 
@@ -157,6 +189,10 @@
         { id: 'results', before: function () { return matchDemoLocation(); }, target: '.match-panel-header', timeout: 9000 },
         { id: 'card',    target: '.match-card' },
         { id: 'filter',  target: '.match-filter-row' },
+        // Drill into a species' full score breakdown (uses a southern-hemisphere
+        // species so the seasonal-shift row/toggle is present).
+        { id: 'scores',  before: function () { return openCompareForShiftDemo(); }, target: '.cmp-sub-list', timeout: 9000 },
+        { id: 'shift',   target: ['.cmp-shift-note', '.cmp-shift-toggle'] },
       ],
     },
 
@@ -166,7 +202,8 @@
         { id: 'search', before: function () { return toCleanMap(); }, target: '#search-container' },
         { id: 'layers', target: '.leaflet-top.leaflet-right' },
         { id: 'zones',  before: function () { return openKoppenLegend(); }, target: '.koppen-legend-panel' },
-        { id: 'click',  target: null },
+        // Minimize the key before the final (map-wide) step.
+        { id: 'click',  before: function () { return closeKoppenLegend(); }, target: null },
       ],
     },
   };

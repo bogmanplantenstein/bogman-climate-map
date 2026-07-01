@@ -3468,6 +3468,23 @@ function buildMapControls() {
     }
   });
 
+  // Guided-tour launcher — sits under the About button. Lazily loads the
+  // isolated tutorial scripts (tutorial/*.js) on first click, then opens the
+  // walkthrough picker. Everything is guarded: if the tour fails to load, the
+  // map is entirely unaffected (this button is the only thing that references it).
+  const HelpCtrl = L.Control.extend({
+    options: { position: 'topright' },
+    onAdd() {
+      const btn = L.DomUtil.create('button', 'map-btn');
+      btn.id        = 'tour-toggle';
+      btn.title     = 'Guided tour · how to use this map';
+      btn.innerHTML = `<span class="map-btn-icon">${BMG_ICONS.help}</span>`;
+      L.DomEvent.on(btn, 'click', L.DomEvent.stop);
+      L.DomEvent.on(btn, 'click', () => bmgOpenTour());
+      return btn;
+    }
+  });
+
   // Small uppercase label control used to introduce each functional group of
   // buttons in the top-right stack ("LAYER" / "KEYS" / "SPECIES"). Replaces
   // the previous invisible SpacerCtrl with explicit labels so users can see
@@ -3504,6 +3521,22 @@ function buildMapControls() {
 
   new (makeLabelCtrl('About'))().addTo(map);
   new InfoCtrl().addTo(map);
+  new HelpCtrl().addTo(map);
+}
+
+// Guided-tour loader. Isolated from the map: the tutorial lives in tutorial/*.js
+// and is only fetched when the user clicks the "?" control. Failures are
+// swallowed so a broken/absent tour never affects the map itself.
+function bmgOpenTour() {
+  if (window.BMG_TOUR) { window.BMG_TOUR.openPicker(); return; }
+  const add = src => new Promise((res, rej) => {
+    const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej;
+    document.head.appendChild(s);
+  });
+  add('tutorial/tour-content.js')
+    .then(() => add('tutorial/tour.js'))
+    .then(() => { if (window.BMG_TOUR) window.BMG_TOUR.openPicker(); })
+    .catch(err => console.error('Guided tour failed to load:', err));
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -9453,6 +9486,7 @@ const BMG_ICONS = {
   palette:     `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="13.5" cy="6.5" r=".5" fill="currentColor"/><circle cx="17.5" cy="10.5" r=".5" fill="currentColor"/><circle cx="8.5" cy="7.5" r=".5" fill="currentColor"/><circle cx="6.5" cy="12.5" r=".5" fill="currentColor"/><path d="M12 22a10 10 0 1 1 10-10c0 3.31-2.69 6-6 6h-1.5a2 2 0 0 0-2 2 2.5 2.5 0 0 1-2.5 2.5z"/></svg>`,
   link:        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>`,
   check:       `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`,
+  help:        `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`,
 };
 
 function getWelcomeHtml() {

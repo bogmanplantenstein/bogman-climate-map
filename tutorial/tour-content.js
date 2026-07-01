@@ -54,9 +54,11 @@ window.BMG_TOUR_CONTENT = {
       title: "What can I grow?",
       steps: {
         entry:   "Curious what you could grow outdoors? Start by telling the map where you are — search your town or click the map.",
-        results: "Here we've picked Wilmington, North Carolina. The map pulls its climate and ranks every species by how well it suits an outdoor life there.",
+        results: "Here we've picked Los Angeles. The map pulls its climate and ranks every species by how well it suits an outdoor life there.",
         card:    "Each species gets a suitability score and quick flags — whether your winters, summer heat, or humidity are the sticking point.",
         filter:  "Narrow to a genus you like, or score on temperature alone.",
+        scores:  "Click any species for the full breakdown — a score for each factor: winter cold, summer heat, seasonal timing, light, humidity, and rainfall, all against where it grows wild.",
+        shift:   "This one lives in the southern hemisphere, so its seasons are flipped. The shift lines its native climate up with your calendar, so the month-by-month comparison actually makes sense.",
       },
     },
 
@@ -65,9 +67,9 @@ window.BMG_TOUR_CONTENT = {
       title: "Explore the map",
       steps: {
         search: "Search finds any species, a town, or a whole region — type a name and jump straight to it.",
-        layers: "These buttons switch to satellite, toggle the climate-zone tint, open the color key, and add soil layers.",
-        zones:  "The map is tinted by Köppen climate zone. Open the key to see what each color means — and click a zone to show only the plants that grow there.",
-        click:  "And anywhere you click on the map, you'll get that spot's climate, soil, and USDA hardiness zone.",
+        layers: "This toolbar runs the map, top to bottom: satellite view, the climate-zone tint, soil layers, the colour key, species pins, and an About panel for the data.",
+        zones:  "The map is tinted by Köppen climate zone. Open the key to see what each colour means — and click any zone in the key to show only the plants that grow there.",
+        click:  "And anywhere you click on the map, you'll get that spot's local climate and soil.",
       },
     },
   },
