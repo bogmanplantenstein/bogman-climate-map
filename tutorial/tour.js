@@ -66,18 +66,55 @@
       })();
     });
   }
+  // A step target may be a single selector or an array (highlight several
+  // elements at once, e.g. the temperature chart + the phenology chart).
+  function resolveTargets(target) {
+    if (!target) return [];
+    var sels = Array.isArray(target) ? target : [target];
+    var els = [];
+    for (var i = 0; i < sels.length; i++) { var e = $(sels[i]); if (e) els.push(e); }
+    return els;
+  }
+  // Wait for the primary (first) selector, then return every present target.
+  function waitForTargets(target, timeout) {
+    if (!target) return Promise.resolve([]);
+    var sels = Array.isArray(target) ? target : [target];
+    return waitForTarget(sels[0], timeout).then(function () { return resolveTargets(target); });
+  }
+  // Union bounding rect (viewport coords) of the elements, ignoring zero-size
+  // (collapsed/hidden) ones. Returns null if nothing is visible.
+  function unionRect(els) {
+    var top = Infinity, left = Infinity, right = -Infinity, bottom = -Infinity, any = false;
+    for (var i = 0; i < els.length; i++) {
+      var r = els[i].getBoundingClientRect();
+      if (!r.width && !r.height) continue;
+      any = true;
+      top = Math.min(top, r.top); left = Math.min(left, r.left);
+      right = Math.max(right, r.right); bottom = Math.max(bottom, r.bottom);
+    }
+    return any ? { top: top, left: left, right: right, bottom: bottom, width: right - left, height: bottom - top } : null;
+  }
+  // Return the map to a clean state (clear species filter, close panel) so the
+  // first step can point at the search bar with nothing else open.
+  function toCleanMap() {
+    try { if ($('#search-clear')) $('#search-clear').click(); } catch (e) {}
+    try { if (typeof closePanel === 'function') closePanel(); } catch (e) {}
+    return delay(150);
+  }
 
   // ── the path definitions (text comes from tour-content) ────────────────
   var PATHS = {
     needs: {
       titleKey: 'needs',
       steps: [
+        { id: 'entry',    before: function () { return toCleanMap(); }, target: '#search-container' },
         { id: 'intro',    before: function () { return openSpeciesByName('Drosera rotundifolia'); }, target: '.sp-header' },
         { id: 'stats',    target: '.sp-stats-grid' },
-        { id: 'chart',    target: '#sp-chart-container' },
-        { id: 'zones',    before: function () { expandSection('Soil'); }, target: '#sp-koppen-body' },
+        // chart + phenology (both mentioned in the copy) highlighted together.
+        { id: 'chart',    target: ['#sp-chart-container', '#sp-pheno-section'] },
+        // climate zones + soils highlighted together (soil section expanded first).
+        { id: 'zones',    before: function () { expandSection('Soil'); }, target: ['#sp-koppen-body', '#soil-section-body'] },
         { id: 'obscured', before: function () { return openSpeciesByName('Nepenthes edwardsiana'); }, target: '.sp-refine-note' },
-        { id: 'end',      target: null },
       ],
     },
   };
@@ -117,11 +154,12 @@
       '.bmg-tour-pcard[disabled]{opacity:.55;cursor:default}',
       '.bmg-tour-pcard .ic{color:var(--accent,#3fb950);width:26px;height:26px;display:block;margin-bottom:8px}',
       '.bmg-tour-pcard .ic svg{width:26px;height:26px}',
-      '.bmg-tour-pcard .t{font-weight:600;font-size:14px}',
-      '.bmg-tour-pcard .s{font-size:12px;color:var(--text-muted,#8b949e);margin-top:3px;line-height:1.4}',
-      '.bmg-tour-pcard .soon{font-size:10px;color:var(--accent,#3fb950);margin-top:6px;opacity:0;transition:opacity .2s}',
+      '.bmg-tour-pcard .t{display:block;font-weight:600;font-size:14px}',
+      '.bmg-tour-pcard .s{display:block;font-size:12px;color:var(--text-muted,#8b949e);margin-top:5px;line-height:1.4}',
+      '.bmg-tour-pcard .soon{display:block;font-size:10px;color:var(--accent,#3fb950);margin-top:6px;opacity:0;transition:opacity .2s}',
       '.bmg-tour-pcard.show-soon .soon{opacity:1}',
-      '.bmg-tour-skip{display:block;width:100%;text-align:center;margin-top:16px;background:none;border:none;color:var(--text-muted,#8b949e);font:13px system-ui,sans-serif;cursor:pointer}',
+      '.bmg-tour-picknote{margin:14px 0 0;color:var(--text-muted,#8b949e);font-size:12px;text-align:center}',
+      '.bmg-tour-skip{display:block;width:100%;text-align:center;margin-top:12px;background:none;border:none;color:var(--text-muted,#8b949e);font:13px system-ui,sans-serif;cursor:pointer}',
     ].join('');
     document.head.appendChild(s);
   }
@@ -145,28 +183,29 @@
     document.removeEventListener('keydown', onKey, true);
   }
 
-  function positionSpot(el) {
+  function positionSpot(els) {
     var spot = $('#bmg-tour-spot'), dim = $('#bmg-tour-dim');
-    if (!el) { spot.style.display = 'none'; dim.style.display = 'block'; return; }  // no target → plain dim
+    var r = (els && els.length) ? unionRect(els) : null;
+    if (!r) { spot.style.display = 'none'; dim.style.display = 'block'; return; }  // no target → plain dim
     dim.style.display = 'none';
-    var r = el.getBoundingClientRect(), pad = 6;
+    var pad = 6;
     spot.style.display = 'block';
     spot.style.top = (r.top - pad) + 'px';
     spot.style.left = (r.left - pad) + 'px';
     spot.style.width = (r.width + pad * 2) + 'px';
     spot.style.height = (r.height + pad * 2) + 'px';
   }
-  function positionCard(el) {
+  function positionCard(els) {
     var card = $('#bmg-tour-card');
     if (isMobile()) { card.classList.add('bmg-tour-card--bottom'); return; }
     card.classList.remove('bmg-tour-card--bottom');
     var cw = card.offsetWidth, ch = card.offsetHeight, m = 14;
-    if (!el) {  // centered
+    var r = (els && els.length) ? unionRect(els) : null;
+    if (!r) {  // centered
       card.style.left = Math.round((window.innerWidth - cw) / 2) + 'px';
       card.style.top = Math.round((window.innerHeight - ch) / 2) + 'px';
       return;
     }
-    var r = el.getBoundingClientRect();
     // Prefer left of the target (the side panel sits on the right); else below.
     var left = r.left - cw - 16;
     if (left < m) left = r.left;                              // not enough room left → align under
@@ -181,9 +220,8 @@
   function onResize() { if (state) repositionCurrent(); }
   function onKey(e) { if (e.key === 'Escape') { e.preventDefault(); end(); } }
   function repositionCurrent() {
-    var step = state.steps[state.i];
-    var el = step.target ? $(step.target) : null;
-    positionSpot(el); positionCard(el);
+    var els = resolveTargets(state.steps[state.i].target);
+    positionSpot(els); positionCard(els);
   }
 
   function renderCard() {
@@ -207,7 +245,7 @@
       b.addEventListener('click', function () {
         var a = b.getAttribute('data-act');
         if (a === 'back') go(state.i - 1);
-        else if (a === 'next') { if (last) end(); else go(state.i + 1); }
+        else if (a === 'next') { if (last) finishToPicker(); else go(state.i + 1); }
         else end();
       });
     });
@@ -221,16 +259,16 @@
     card.style.opacity = '0.001';
     Promise.resolve()
       .then(function () { return step.before ? step.before() : null; })
-      .then(function () { return waitForTarget(step.target, 2500); })
-      .then(function (el) {
-        if (el && el.scrollIntoView) { el.scrollIntoView({ block: 'center' }); return delay(160).then(function () { return el; }); }
-        return el;
+      .then(function () { return waitForTargets(step.target, 2500); })
+      .then(function (els) {
+        var first = els && els[0];
+        if (first && first.scrollIntoView) { first.scrollIntoView({ block: 'center' }); return delay(160); }
       })
       .then(function () {
         // Position synchronously — reading getBoundingClientRect after renderCard()
         // forces layout, so we don't need (throttled) requestAnimationFrame.
         renderCard();
-        var place = function () { if (!state || state.i !== i) return; var t = step.target ? $(step.target) : null; positionSpot(t); positionCard(t); };
+        var place = function () { if (!state || state.i !== i) return; positionSpot(resolveTargets(step.target)); positionCard(resolveTargets(step.target)); };
         place();
         card.style.opacity = '1';
         // Re-measure a couple of times to catch late layout shifts (the species
@@ -261,6 +299,14 @@
     try { if (typeof closePanel === 'function') closePanel(); } catch (e) {}
   }
 
+  // Finishing a path drops you back on the 4-goal picker (instead of a dead-end
+  // "the end" step) so it's easy to try another walkthrough.
+  function finishToPicker() {
+    state = null;
+    removeOverlay();
+    openPicker();
+  }
+
   // ── picker ──────────────────────────────────────────────────────────────
   function openPicker() {
     injectCss();
@@ -280,6 +326,7 @@
         '<h2>' + esc(p.title) + '</h2>' +
         '<p class="bmg-tour-picksub">' + esc(p.subtitle) + '</p>' +
         '<div class="bmg-tour-grid">' + cards + '</div>' +
+        (p.note ? '<p class="bmg-tour-picknote">' + esc(p.note) + '</p>' : '') +
         '<button class="bmg-tour-skip" data-skip="1">' + esc(p.skip) + '</button>' +
       '</div>';
     document.body.appendChild(wrap);
