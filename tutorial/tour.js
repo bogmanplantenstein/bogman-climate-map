@@ -140,8 +140,12 @@
       titleKey: 'browse',
       steps: [
         { id: 'entry',   before: function () { return toCleanMap(); }, target: '#search-container' },
-        { id: 'species', before: function () { return openSpeciesByName('Dionaea muscipula'); }, target: '.sp-header' },
-        { id: 'gallery', before: function () { return clickTarget('#sp-gallery-top'); }, target: '#gallery-grid' },
+        { id: 'species', before: function () { return openSpeciesByName('Dionaea muscipula'); }, target: ['.sp-header', '.sp-quick-actions'] },
+        // Interactive: let the user scroll the gallery and click a photo (which
+        // opens the full-screen lightbox — the tour hides itself while it's up).
+        { id: 'gallery', before: function () { return clickTarget('#sp-gallery-top'); }, target: '#side-panel', interactive: true },
+        // Reopen the species, then expand the All Observations list.
+        { id: 'obs',     before: function () { return openSpeciesByName('Dionaea muscipula').then(function () { return clickTarget('#sp-obs-top'); }); }, target: '#side-panel', interactive: true },
       ],
     },
 
@@ -224,11 +228,37 @@
     return { block: block, dim: dim, spot: spot, card: card };
   }
   function removeOverlay() {
+    watchLightbox(false);
     ['bmg-tour-block', 'bmg-tour-dim', 'bmg-tour-spot', 'bmg-tour-card', 'bmg-tour-pick'].forEach(function (id) {
       var el = document.getElementById(id); if (el) el.remove();
     });
     window.removeEventListener('resize', onResize);
     document.removeEventListener('keydown', onKey, true);
+  }
+
+  // ── interactive steps ───────────────────────────────────────────────────
+  // Some steps invite the user to actually use the feature (scroll the gallery,
+  // click a photo). For those we let clicks pass through the full-screen block,
+  // and — because the photo lightbox sits *below* the tour's z-index — hide the
+  // tour while the lightbox is open so it isn't occluded.
+  var lightboxObs = null;
+  function setOverlayHidden(hidden) {
+    ['bmg-tour-block', 'bmg-tour-dim', 'bmg-tour-spot', 'bmg-tour-card'].forEach(function (id) {
+      var el = document.getElementById(id); if (el) el.style.visibility = hidden ? 'hidden' : '';
+    });
+  }
+  function watchLightbox(on) {
+    if (lightboxObs) { lightboxObs.disconnect(); lightboxObs = null; }
+    if (!on) { setOverlayHidden(false); return; }
+    var lb = document.getElementById('gallery-lightbox');
+    if (!lb) return;
+    lightboxObs = new MutationObserver(function () { setOverlayHidden(lb.classList.contains('open')); });
+    lightboxObs.observe(lb, { attributes: true, attributeFilter: ['class'] });
+  }
+  function applyInteractive(interactive) {
+    var block = $('#bmg-tour-block');
+    if (block) block.style.pointerEvents = interactive ? 'none' : 'auto';
+    watchLightbox(interactive);
   }
 
   function positionSpot(els) {
@@ -316,6 +346,7 @@
         // Position synchronously — reading getBoundingClientRect after renderCard()
         // forces layout, so we don't need (throttled) requestAnimationFrame.
         renderCard();
+        applyInteractive(!!step.interactive);
         var place = function () { if (!state || state.i !== i) return; positionSpot(resolveTargets(step.target)); positionCard(resolveTargets(step.target)); };
         place();
         card.style.opacity = '1';

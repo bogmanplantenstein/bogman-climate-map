@@ -42,9 +42,10 @@ window.BMG_TOUR_CONTENT = {
     browse: {
       title: "See the plants",
       steps: {
-        entry:   "Every dot on the map is a real, wild sighting from iNaturalist. Search a plant by name, or zoom in and click the dots to explore.",
-        species: "Open any species to meet it — a photo, its native range, and how many people have logged it in the wild.",
-        gallery: "Sightings often carry photos. Open the gallery to browse them all — each one links back to the original observation.",
+        entry:   "Every dot on the map is a real, wild sighting from iNaturalist. Search by species, place, or region — or zoom in and click the dots to explore.",
+        species: "Open any species to meet it — a photo up top, plus buttons to browse its full photo gallery or every wild observation.",
+        gallery: "The full photo gallery. Scroll through it, and click any photo to open it full-size — every image is a real iNaturalist observation.",
+        obs:     "The All Observations list: every individual sighting with its date, location, and data quality. Scroll through, or open one for the detail.",
       },
     },
 
