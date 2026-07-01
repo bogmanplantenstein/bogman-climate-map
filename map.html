@@ -3151,6 +3151,17 @@ function initMap() {
   map.getPane('koppenPane').style.zIndex = 250;
   map.on('zoomend', updateKoppenBlur);
 
+  // georaster-layer occasionally drops async tile renders on zoom, leaving blank
+  // bands — most visible fully zoomed out, where the missing tile repeats across
+  // world copies. Force a repaint once the view settles to fill any gaps. On
+  // pan (moveend) only bother at low zoom, where those world-copies appear, so
+  // we don't needlessly repaint during normal use.
+  const redrawKoppen = debounce(() => {
+    if (koppenVisible && koppenLayer && typeof koppenLayer.redraw === 'function') koppenLayer.redraw();
+  }, 200);
+  map.on('zoomend', redrawKoppen);
+  map.on('moveend', () => { if (map.getZoom() <= 4) redrawKoppen(); });
+
   // Re-render map tiles whenever the side panel finishes opening/closing.
   // Without this Leaflet leaves a blank strip where the panel was.
   document.getElementById('side-panel').addEventListener('transitionend', e => {
