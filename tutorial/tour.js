@@ -101,6 +101,24 @@
     try { if (typeof closePanel === 'function') closePanel(); } catch (e) {}
     return delay(150);
   }
+  // Click an element on the page if present (used to open panels the next step
+  // will point at, e.g. the species photo gallery).
+  function clickTarget(sel) {
+    var el = $(sel); if (el) el.click();
+    return delay(150);
+  }
+  // "What can I grow?" demo — Wilmington, NC (Venus-flytrap country) makes a rich
+  // outdoor match. Keep the place name here in sync with grow.results copy.
+  function matchDemoLocation() {
+    if (typeof runMatchForLocation === 'function') return runMatchForLocation(34.2257, -77.9447, 'Wilmington');
+  }
+  // Open the Köppen colour-key panel (map control) so a step can highlight it.
+  function openKoppenLegend() {
+    var panel = $('.koppen-legend-panel');
+    if (panel && panel.classList.contains('open')) return delay(0);
+    var btn = $('.koppen-legend-wrap .map-btn'); if (btn) btn.click();
+    return delay(150);
+  }
 
   // ── the path definitions (text comes from tour-content) ────────────────
   var PATHS = {
@@ -115,6 +133,36 @@
         // climate zones + soils highlighted together (soil section expanded first).
         { id: 'zones',    before: function () { expandSection('Soil'); }, target: ['#sp-koppen-body', '#soil-section-body'] },
         { id: 'obscured', before: function () { return openSpeciesByName('Nepenthes edwardsiana'); }, target: '.sp-refine-note' },
+      ],
+    },
+
+    browse: {
+      titleKey: 'browse',
+      steps: [
+        { id: 'entry',   before: function () { return toCleanMap(); }, target: '#search-container' },
+        { id: 'species', before: function () { return openSpeciesByName('Dionaea muscipula'); }, target: '.sp-header' },
+        { id: 'gallery', before: function () { return clickTarget('#sp-gallery-top'); }, target: '#gallery-grid' },
+      ],
+    },
+
+    grow: {
+      titleKey: 'grow',
+      steps: [
+        { id: 'entry',   before: function () { return toCleanMap(); }, target: '#search-container' },
+        // Fetches the location's climate from the network, so allow extra time.
+        { id: 'results', before: function () { return matchDemoLocation(); }, target: '.match-panel-header', timeout: 9000 },
+        { id: 'card',    target: '.match-card' },
+        { id: 'filter',  target: '.match-filter-row' },
+      ],
+    },
+
+    explore: {
+      titleKey: 'explore',
+      steps: [
+        { id: 'search', before: function () { return toCleanMap(); }, target: '#search-container' },
+        { id: 'layers', target: '.leaflet-top.leaflet-right' },
+        { id: 'zones',  before: function () { return openKoppenLegend(); }, target: '.koppen-legend-panel' },
+        { id: 'click',  target: null },
       ],
     },
   };
@@ -259,7 +307,7 @@
     card.style.opacity = '0.001';
     Promise.resolve()
       .then(function () { return step.before ? step.before() : null; })
-      .then(function () { return waitForTargets(step.target, 2500); })
+      .then(function () { return waitForTargets(step.target, step.timeout || 2500); })
       .then(function (els) {
         var first = els && els[0];
         if (first && first.scrollIntoView) { first.scrollIntoView({ block: 'center' }); return delay(160); }
