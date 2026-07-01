@@ -1,44 +1,44 @@
 {
-  "generated": "2026-06-17T02:18:18.097Z",
+  "generated": "2026-07-01T07:09:14.899Z",
   "genera": {
     "Aldrovanda": {
-      "fetched": 114,
-      "expected": 118,
+      "fetched": 115,
+      "expected": 119,
       "failed": []
     },
     "Byblis": {
-      "fetched": 393,
-      "expected": 396,
+      "fetched": 396,
+      "expected": 399,
       "failed": []
     },
     "Cephalotus": {
-      "fetched": 371,
-      "expected": 384,
+      "fetched": 381,
+      "expected": 394,
       "failed": []
     },
     "Darlingtonia": {
-      "fetched": 4605,
-      "expected": 4643,
+      "fetched": 4691,
+      "expected": 4730,
       "failed": []
     },
     "Dionaea": {
-      "fetched": 3091,
-      "expected": 3194,
+      "fetched": 3141,
+      "expected": 3245,
       "failed": []
     },
     "Drosera": {
-      "fetched": 166043,
-      "expected": 167774,
+      "fetched": 168879,
+      "expected": 170635,
       "failed": []
     },
     "Drosophyllum": {
-      "fetched": 469,
-      "expected": 485,
+      "fetched": 473,
+      "expected": 489,
       "failed": []
     },
     "Genlisea": {
-      "fetched": 232,
-      "expected": 233,
+      "fetched": 234,
+      "expected": 235,
       "failed": []
     },
     "Heliamphora": {
@@ -47,13 +47,13 @@
       "failed": []
     },
     "Nepenthes": {
-      "fetched": 12353,
-      "expected": 12714,
+      "fetched": 12502,
+      "expected": 12868,
       "failed": []
     },
     "Pinguicula": {
-      "fetched": 39495,
-      "expected": 40238,
+      "fetched": 40630,
+      "expected": 41383,
       "failed": []
     },
     "Roridula": {
@@ -62,17 +62,17 @@
       "failed": []
     },
     "Sarracenia": {
-      "fetched": 62084,
-      "expected": 63235,
+      "fetched": 63107,
+      "expected": 64268,
       "failed": []
     },
     "Utricularia": {
-      "fetched": 63103,
-      "expected": 63769,
+      "fetched": 63915,
+      "expected": 64582,
       "failed": []
     }
   },
-  "totalRequests": 2791,
-  "totalObs": 352746,
-  "durationMin": 46
+  "totalRequests": 2815,
+  "totalObs": 358857,
+  "durationMin": 45
 }
