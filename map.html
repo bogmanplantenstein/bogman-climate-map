@@ -9,8 +9,8 @@
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-<script src="https://unpkg.com/georaster"></script>
-<script src="https://unpkg.com/georaster-layer-for-leaflet"></script>
+<script src="https://unpkg.com/georaster@1.6.0/dist/georaster.browser.bundle.min.js"></script>
+<script src="https://unpkg.com/georaster-layer-for-leaflet@4.1.2/dist/v3/webpack/bundle/georaster-layer-for-leaflet.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/supercluster@8.0.1/dist/supercluster.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -3590,7 +3590,11 @@ async function loadKoppen() {
     koppenLayer = new GeoRasterLayer({
       georaster: koppenGeoRaster, pane: 'koppenPane',
       opacity: satelliteActive ? 0.35 : 0.55,
-      resolution: 64, pixelValuesToColorFn: koppenColorFn
+      resolution: 64, pixelValuesToColorFn: koppenColorFn,
+      // Reduce the tile churn that makes georaster-layer drop async renders:
+      // don't add tiles mid zoom-animation, and only refresh after motion stops.
+      // Combined with the zoomend/moveend redraw, this fills the blank squares.
+      updateWhenZooming: false, updateWhenIdle: true
     });
     if (koppenVisible) koppenLayer.addTo(map);
     updateKoppenBlur();
