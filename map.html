@@ -2537,6 +2537,24 @@ body.bmg-onboarding #search-container { z-index: 9100; }
   cursor: pointer;
 }
 .bmg-modal-primary:hover { background: #4ed366; }
+/* Guided-tour callout at the top of the welcome guide */
+.bmg-tour-callout {
+  margin: 0 0 18px;
+  padding: 14px 16px;
+  background: rgba(63,185,80,0.08);
+  border: 1px solid rgba(63,185,80,0.35);
+  border-radius: 10px;
+}
+.bmg-tour-callout-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.bmg-tour-callout-icon { width: 24px; height: 24px; color: var(--accent); flex-shrink: 0; }
+.bmg-tour-callout-icon svg { width: 24px; height: 24px; display: block; }
+.bmg-tour-callout-title { font-weight: 600; color: var(--text-primary); font-size: 15px; }
+.bmg-tour-callout-sub { font-size: 13px; color: var(--text-muted); line-height: 1.45; margin-bottom: 12px; }
+.bmg-tour-callout-btn {
+  background: var(--accent); color: #0d1117; border: none; border-radius: 4px;
+  padding: 8px 18px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.bmg-tour-callout-btn:hover { background: #4ed366; }
 .bmg-modal-link {
   background: none;
   border: none;
@@ -9474,7 +9492,7 @@ function enableInatDefault() {
 
 // Bump this if the welcome content meaningfully changes — users who'd already
 // dismissed an older version will see the new one once.
-const WELCOME_VERSION = '3';   // bumped: added onboarding arrows + control spotlight
+const WELCOME_VERSION = '4';   // bumped: added guided-tour callout
 
 // Inline SVG icons — Feather/Lucide-style outline, 24×24 viewBox, currentColor
 // stroke so the CSS rule controls the colour. Used in two places:
@@ -9510,6 +9528,18 @@ function getWelcomeHtml() {
     <div class="bmg-modal-subtitle">
       A habitat reference for cultivators — built from real iNaturalist observations
       of 14 carnivorous plant genera worldwide.
+    </div>
+
+    <div class="bmg-tour-callout">
+      <div class="bmg-tour-callout-head">
+        <span class="bmg-tour-callout-icon">${BMG_ICONS.help}</span>
+        <span class="bmg-tour-callout-title">New here? Take a quick guided tour</span>
+      </div>
+      <div class="bmg-tour-callout-sub">
+        Pick a goal — see the plants, find what you can grow, or learn to read the map —
+        and we'll walk you through it live. You can replay it anytime from the “?” button.
+      </div>
+      <button class="bmg-tour-callout-btn" id="bmg-welcome-tour">Start the tour →</button>
     </div>
 
     <ul>
@@ -9634,6 +9664,8 @@ function bmgOpenWelcome() {
   // Wire dismiss buttons (re-bind each open since innerHTML replaces the nodes)
   document.getElementById('bmg-welcome-dismiss')?.addEventListener('click', bmgCloseModal);
   document.getElementById('bmg-show-info-from-welcome')?.addEventListener('click', bmgOpenInfo);
+  // Guided-tour callout → close the guide, then open the walkthrough picker.
+  document.getElementById('bmg-welcome-tour')?.addEventListener('click', () => { bmgCloseModal(); bmgOpenTour(); });
   // Draw connector arrows after layout settles (rAF lets the modal size first).
   requestAnimationFrame(drawOnboardingArrows);
 }
