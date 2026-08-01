@@ -1,8 +1,8 @@
 {
-  "generated": "2026-07-01T07:55:18.814Z",
-  "obs_loaded": 358857,
+  "generated": "2026-08-01T07:21:13.026Z",
+  "obs_loaded": 372910,
   "taxa_loaded": 974,
   "species_count": 974,
-  "cell_count": 10519,
-  "durationMin": 1
+  "cell_count": 10692,
+  "durationMin": 41
 }
