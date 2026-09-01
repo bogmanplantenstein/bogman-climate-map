@@ -1,78 +1,78 @@
 {
-  "generated": "2026-08-01T05:52:38.619Z",
+  "generated": "2026-09-01T08:16:17.352Z",
   "genera": {
     "Aldrovanda": {
-      "fetched": 116,
-      "expected": 120,
+      "fetched": 122,
+      "expected": 126,
       "failed": []
     },
     "Byblis": {
-      "fetched": 405,
-      "expected": 408,
+      "fetched": 420,
+      "expected": 424,
       "failed": []
     },
     "Cephalotus": {
-      "fetched": 383,
-      "expected": 396,
+      "fetched": 384,
+      "expected": 397,
       "failed": []
     },
     "Darlingtonia": {
-      "fetched": 4905,
-      "expected": 4946,
+      "fetched": 5075,
+      "expected": 5118,
       "failed": []
     },
     "Dionaea": {
-      "fetched": 3187,
-      "expected": 3292,
+      "fetched": 3247,
+      "expected": 3352,
       "failed": []
     },
     "Drosera": {
-      "fetched": 175654,
-      "expected": 177453,
+      "fetched": 183057,
+      "expected": 184898,
       "failed": []
     },
     "Drosophyllum": {
-      "fetched": 475,
-      "expected": 491,
+      "fetched": 476,
+      "expected": 492,
       "failed": []
     },
     "Genlisea": {
-      "fetched": 240,
-      "expected": 241,
+      "fetched": 247,
+      "expected": 248,
       "failed": []
     },
     "Heliamphora": {
-      "fetched": 118,
-      "expected": 120,
+      "fetched": 120,
+      "expected": 123,
       "failed": []
     },
     "Nepenthes": {
-      "fetched": 12749,
-      "expected": 13125,
+      "fetched": 13058,
+      "expected": 13434,
       "failed": []
     },
     "Pinguicula": {
-      "fetched": 42635,
-      "expected": 43427,
+      "fetched": 43816,
+      "expected": 44626,
       "failed": []
     },
     "Roridula": {
-      "fetched": 278,
-      "expected": 287,
+      "fetched": 283,
+      "expected": 292,
       "failed": []
     },
     "Sarracenia": {
-      "fetched": 65424,
-      "expected": 66646,
+      "fetched": 67137,
+      "expected": 68592,
       "failed": []
     },
     "Utricularia": {
-      "fetched": 66341,
-      "expected": 67034,
+      "fetched": 68754,
+      "expected": 69453,
       "failed": []
     }
   },
-  "totalRequests": 2863,
-  "totalObs": 372910,
-  "durationMin": 47
+  "totalRequests": 2954,
+  "totalObs": 386196,
+  "durationMin": 54
 }
