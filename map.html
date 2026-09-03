@@ -2957,6 +2957,11 @@ const ENTRY_LABELS = {
 
 let map, darkTiles, darkLabelsTiles, satTiles, koppenLayer, koppenGeoRaster, regionHighlight;
 let searchMarker = null;
+
+// CARTO basemaps require a free API key (basemaps.cartocdn.com). This is a
+// public, throttled basemap token (necessarily visible in client-side source);
+// rotate it by requesting a new one at carto.com/basemaps/apikey if ever needed.
+const CARTO_API_KEY = 'cb1_2vlz_1_f56ef61863f111a9e5159490';
 let searchPanelOpen = false;
 let searchState = null; // { result, lat, lng, normals, loading }
 let lightChart = null;
@@ -3192,12 +3197,12 @@ function initMap() {
   map.getPane('labelsPane').style.pointerEvents = 'none';
 
   darkTiles = L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png',
+    `https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`,
     { attribution: '© <a href="https://openstreetmap.org/copyright">OpenStreetMap</a> © <a href="https://carto.com/">CARTO</a>', subdomains: 'abcd', maxZoom: 20 }
   ).addTo(map);
 
   darkLabelsTiles = L.tileLayer(
-    'https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png',
+    `https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png?key=${CARTO_API_KEY}`,
     { pane: 'labelsPane', subdomains: 'abcd', maxZoom: 20 }
   ).addTo(map);
 
